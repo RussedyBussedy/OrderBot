@@ -65,11 +65,6 @@
             padding-bottom: 1rem;
             border-color: #f1f5f9;
         }
-        #image-paste-box {
-            border: 2px dashed #9ca3af;
-            background-color: #f9fafb;
-            min-height: 8rem;
-        }
         .confidence-score {
             position: absolute;
             top: 2px;
@@ -80,6 +75,26 @@
         }
         .mismatch-cell .confidence-score {
             color: #991b1b;
+        }
+        .image-preview-wrapper {
+            position: relative;
+            display: inline-block;
+        }
+        .delete-image-btn {
+            position: absolute;
+            top: -0.5rem;
+            right: -0.5rem;
+            background-color: #4f46e5;
+            color: white;
+            border-radius: 9999px;
+            width: 1.5rem;
+            height: 1.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            font-weight: bold;
+            line-height: 1;
         }
     </style>
 </head>
@@ -204,8 +219,11 @@
             <div class="p-6 border-b"><h3 id="feedback-modal-title" class="text-xl font-semibold text-slate-800">Report an Error</h3><p class="text-sm text-slate-500">Help OrderBot learn by explaining what it got wrong.</p></div>
             <div class="p-6 space-y-4">
                 <div class="bg-slate-50 p-4 rounded-md"><h4 class="font-semibold text-slate-700">Incorrect Data:</h4><pre id="incorrect-item-details" class="text-sm text-slate-600 whitespace-pre-wrap font-mono"></pre></div>
-                <div><label for="feedback-explanation" class="block text-sm font-medium text-slate-700 mb-2">What is the correct interpretation?</label><textarea id="feedback-explanation" rows="3" class="w-full p-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" placeholder="e.g., The AI misread the handwritten '5' as an 'S'. The value should be 1500mm, making it a MATCH."></textarea></div>
-                <div><label class="block text-sm font-medium text-slate-700 mb-2">Add Visual Evidence (Optional)</label><div id="image-paste-box" class="p-4 rounded-md flex items-center justify-center text-center cursor-pointer"><div id="image-preview-container" class="hidden"></div><div id="paste-placeholder"><svg class="w-8 h-8 text-slate-400 mx-auto mb-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h.01M15 12h.01M21 12c0 4.243-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.243 4.03-8 9-8s9 3.757 9 8z" /><path stroke-linecap="round" stroke-linejoin="round" d="M12 1.5v.01M12 6v.01M12 10.5v.01M12 15v.01M12 19.5v.01M4.5 7.5v.01M19.5 7.5v.01M7.5 4.5v.01M16.5 4.5v.01M7.5 19.5v.01M16.5 19.5v.01" /></svg><p class="text-xs text-slate-500">Click here and press Cmd/Ctrl+V to paste image</p></div></div></div>
+                <div>
+                    <label for="feedback-explanation" class="block text-sm font-medium text-slate-700 mb-2">What is the correct interpretation?</label>
+                    <div id="image-preview-container" class="mb-2"></div>
+                    <textarea id="feedback-explanation" rows="3" class="w-full p-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" placeholder="e.g., The AI misread the handwritten '5' as an 'S'. You can also paste an image directly into this text box."></textarea>
+                </div>
             </div>
             <div class="px-6 py-4 bg-slate-50 rounded-b-lg flex justify-end gap-3"><button id="cancel-feedback-btn" class="bg-white text-slate-700 font-semibold py-2 px-4 rounded-md border border-slate-300 hover:bg-slate-100">Cancel</button><button id="submit-feedback-btn" class="bg-indigo-600 text-white font-bold py-2 px-4 rounded-md hover:bg-indigo-700">Submit Feedback</button></div>
         </div>
@@ -260,8 +278,7 @@
             feedbackExplanation: document.getElementById('feedback-explanation'), cancelFeedbackBtn: document.getElementById('cancel-feedback-btn'), submitFeedbackBtn: document.getElementById('submit-feedback-btn'),
             historySection: document.getElementById('history-section'), historySearchInput: document.getElementById('history-search-input'), historySearchBtn: document.getElementById('history-search-btn'),
             historyResults: document.getElementById('history-results'), uploadSection: document.getElementById('upload-section'), newComparisonBtn: document.getElementById('new-comparison-btn'),
-            clearHistoryBtn: document.getElementById('clear-history-btn'), imagePasteBox: document.getElementById('image-paste-box'), imagePreviewContainer: document.getElementById('image-preview-container'),
-            pastePlaceholder: document.getElementById('paste-placeholder'),
+            clearHistoryBtn: document.getElementById('clear-history-btn'), imagePreviewContainer: document.getElementById('image-preview-container'),
             guidelineModal: document.getElementById('guideline-modal'), addGuidelineBtn: document.getElementById('add-guideline-btn'), cancelGuidelineBtn: document.getElementById('cancel-guideline-btn'),
             saveGuidelineBtn: document.getElementById('save-guideline-btn'), guidelineInput: document.getElementById('guideline-input'), guidelinesList: document.getElementById('guidelines-list'),
             guidelinesSection: document.getElementById('guidelines-section'), toggleGuidelinesBtn: document.getElementById('toggle-guidelines-btn'),
@@ -380,29 +397,7 @@
             
             try {
                 const learningIndicator = document.getElementById('learning-indicator');
-                let feedbackExamples = "";
-                let guidelines = "";
-
-                if (db) {
-                    const feedbackQuery = query(collection(db, `orderbot_feedback`));
-                    const guidelineQuery = query(collection(db, `orderbot_guidelines`));
-
-                    const [feedbackSnapshot, guidelineSnapshot] = await Promise.all([getDocs(feedbackQuery), getDocs(guidelineQuery)]);
-                    
-                    const feedbackDocs = [];
-                    feedbackSnapshot.forEach(doc => feedbackDocs.push(doc.data()));
-                    if (feedbackDocs.length > 0) {
-                        learningIndicator.innerHTML = `<div class="flex items-center gap-2 text-sm text-indigo-600 font-semibold"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 8a6 6 0 01-7.743 5.743L10 14l-1 1-1 1H6v2H2v-4l4.257-4.257A6 6 0 1118 8zm-6-4a1 1 0 100 2 1 1 0 000-2z" clip-rule="evenodd" /></svg><span>Applying learnings from past corrections...</span></div>`;
-                        feedbackDocs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-                        feedbackExamples = "\n## 5. CORRECTION EXAMPLES (LEARNING)\n" + feedbackDocs.slice(0, 10).map((fb, i) => `Example ${i + 1}:\n- Incorrect Item: ${JSON.stringify(fb.incorrectItem)}\n- Enhanced Explanation: "${fb.enhancedExplanation}"\n`).join("\n");
-                    }
-
-                    const guidelineDocs = [];
-                    guidelineSnapshot.forEach(doc => guidelineDocs.push(doc.data().enhancedGuideline));
-                    if (guidelineDocs.length > 0) {
-                        guidelines = "\n## 6. USER-DEFINED GUIDELINES (CRITICAL)\nYou must follow these rules without exception:\n- " + guidelineDocs.join("\n- ") + "\n";
-                    }
-                }
+                const parts = [];
 
                 const systemPrompt = `
                     # OrderBot - System Prompt
@@ -418,13 +413,44 @@
                     - For each key-value pair in the secondary line (e.g., "Val Returns=None"), treat it as a distinct specification.
                     - Compare all primary fields, all parsed specifications, and the special instructions between the two documents.
                     ## 4. JSON OUTPUT STRUCTURE: Respond ONLY with a single JSON object conforming to the schema. The 'specifications' array should contain all the parsed key-value pairs from the secondary line.
-                    ${guidelines}
-                    ${feedbackExamples}
                 `;
+                parts.push({ text: systemPrompt });
+
+                if (db) {
+                    const guidelineQuery = query(collection(db, `orderbot_guidelines`));
+                    const guidelineSnapshot = await getDocs(guidelineQuery);
+                    const guidelineDocs = [];
+                    guidelineSnapshot.forEach(doc => guidelineDocs.push(doc.data().enhancedGuideline));
+                    if (guidelineDocs.length > 0) {
+                        const guidelinesText = "\n## 5. USER-DEFINED GUIDELINES (CRITICAL)\nYou must follow these rules without exception:\n- " + guidelineDocs.join("\n- ") + "\n";
+                        parts.push({ text: guidelinesText });
+                    }
+
+                    const feedbackQuery = query(collection(db, `orderbot_feedback`));
+                    const feedbackSnapshot = await getDocs(feedbackQuery);
+                    const feedbackDocs = [];
+                    feedbackSnapshot.forEach(doc => feedbackDocs.push(doc.data()));
+                    if (feedbackDocs.length > 0) {
+                        learningIndicator.innerHTML = `<div class="flex items-center gap-2 text-sm text-indigo-600 font-semibold"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 8a6 6 0 01-7.743 5.743L10 14l-1 1-1 1H6v2H2v-4l4.257-4.257A6 6 0 1118 8zm-6-4a1 1 0 100 2 1 1 0 000-2z" clip-rule="evenodd" /></svg><span>Applying learnings from past corrections...</span></div>`;
+                        feedbackDocs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+                        
+                        parts.push({ text: "\n## 6. CORRECTION EXAMPLES (LEARNING)\nUse these multimodal examples of past corrections to improve your accuracy." });
+                        feedbackDocs.slice(0, 5).forEach((fb, i) => {
+                            parts.push({ text: `\n--- START CORRECTION EXAMPLE ${i + 1} ---` });
+                            if (fb.imageSnippet) {
+                                parts.push({ text: "Here is a visual snippet of the error:" });
+                                parts.push({ inlineData: { mimeType: 'image/png', data: fb.imageSnippet.split(',')[1] } });
+                            }
+                            parts.push({ text: `The incorrect data was: ${JSON.stringify(fb.incorrectItem)}. The correct interpretation is: "${fb.enhancedExplanation}"` });
+                            parts.push({ text: `--- END CORRECTION EXAMPLE ${i + 1} ---` });
+                        });
+                    }
+                }
+                
+                parts.push({ text: "\n## 7. NEW DOCUMENTS FOR COMPARISON\nNow, analyze and compare the following new documents." });
 
                 const fileToB64 = (file) => new Promise((resolve, reject) => { const reader = new FileReader(); reader.readAsDataURL(file); reader.onload = () => resolve(reader.result.split(',')[1]); reader.onerror = error => reject(error); });
 
-                const parts = [{ text: systemPrompt }];
                 for (const file of customerFiles) { parts.push({ text: `\n--- START CUSTOMER FILE: ${file.name} ---` }); parts.push({ inlineData: { mimeType: file.type, data: await fileToB64(file) } }); }
                 for (const file of blindIQFiles) { parts.push({ text: `\n--- START BLIND IQ FILE: ${file.name} ---` }); parts.push({ inlineData: { mimeType: file.type, data: await fileToB64(file) } }); }
 
@@ -600,8 +626,6 @@
              allDomElements.feedbackExplanation.value = '';
              itemToCorrect = null; pastedImageB64 = null;
              allDomElements.imagePreviewContainer.innerHTML = '';
-             allDomElements.imagePreviewContainer.classList.add('hidden');
-             allDomElements.pastePlaceholder.classList.remove('hidden');
         });
 
         allDomElements.submitFeedbackBtn.addEventListener('click', async () => {
@@ -640,7 +664,7 @@
             }
         });
 
-        allDomElements.imagePasteBox.addEventListener('paste', (event) => {
+        allDomElements.feedbackExplanation.addEventListener('paste', (event) => {
             const items = (event.clipboardData || event.originalEvent.clipboardData).items;
             for (const item of items) {
                 if (item.kind === 'file') {
@@ -648,9 +672,11 @@
                     const reader = new FileReader();
                     reader.onload = (e) => {
                         pastedImageB64 = e.target.result;
-                        allDomElements.imagePreviewContainer.innerHTML = `<img src="${pastedImageB64}" class="max-h-24 border rounded shadow-sm" alt="Pasted snippet">`;
-                        allDomElements.imagePreviewContainer.classList.remove('hidden');
-                        allDomElements.pastePlaceholder.classList.add('hidden');
+                        allDomElements.imagePreviewContainer.innerHTML = `<div class="image-preview-wrapper"><img src="${pastedImageB64}" class="max-h-24 border rounded shadow-sm" alt="Pasted snippet"><button id="delete-image-btn" class="delete-image-btn">&times;</button></div>`;
+                        document.getElementById('delete-image-btn').addEventListener('click', () => {
+                            pastedImageB64 = null;
+                            allDomElements.imagePreviewContainer.innerHTML = '';
+                        });
                     };
                     reader.readAsDataURL(blob);
                     event.preventDefault();

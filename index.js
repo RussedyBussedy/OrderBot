@@ -8,7 +8,6 @@ app.use(express.json()); // Middleware to parse JSON bodies
 
 // --- Secret Manager Configuration ---
 const secretManagerClient = new SecretManagerServiceClient();
-// Updated with your Project ID and Secret Name
 const secretName = 'projects/orderbot-2b212/secrets/gemini-api-key/versions/latest';
 let cachedSecret;
 
@@ -23,7 +22,8 @@ async function getApiKey() {
 // --- Main Proxy Route ---
 app.post('/', async (req, res) => {
   // Set CORS headers to allow your website to call this endpoint
-  res.set('Access-Control-Allow-Origin', 'https://RussedyBussedy.github.io');
+  // CORRECTED: Origin is now all lowercase to match the actual GitHub Pages URL
+  res.set('Access-Control-Allow-Origin', 'https://russedybussedy.github.io');
   res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.set('Access-Control-Allow-Headers', 'Content-Type');
 
@@ -31,8 +31,6 @@ app.post('/', async (req, res) => {
     const apiKey = await getApiKey();
     if (!apiKey) throw new Error("API Key not found in Secret Manager.");
 
-    // The frontend now sends the full payload, including the model name in the URL
-    // This makes the proxy more flexible. We will construct the URL here.
     const { model, payload } = req.body;
     if (!model || !payload) {
         return res.status(400).json({ error: "Request body must include 'model' and 'payload' keys." });
@@ -43,18 +41,15 @@ app.post('/', async (req, res) => {
     const apiResponse = await fetch(geminiApiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload) // Pass the inner payload to Gemini
+      body: JSON.stringify(payload)
     });
 
-    // Improved error handling: get the response body regardless of status
     const responseBody = await apiResponse.text();
     if (!apiResponse.ok) {
         console.error("Gemini API Error:", responseBody);
-        // Forward the exact error and status from Gemini
         return res.status(apiResponse.status).send(responseBody);
     }
     
-    // If successful, forward the JSON response
     res.status(200).json(JSON.parse(responseBody));
 
   } catch (error) {
@@ -65,7 +60,8 @@ app.post('/', async (req, res) => {
 
 // --- CORS Preflight Handling ---
 app.options('/', (req, res) => {
-    res.set('Access-Control-Allow-Origin', 'https://RussedyBussedy.github.io');
+    // CORRECTED: Origin is now all lowercase here as well
+    res.set('Access-Control-Allow-Origin', 'https://russedybussedy.github.io');
     res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
     res.set('Access-Control-Allow-Headers', 'Content-Type');
     res.status(204).send('');

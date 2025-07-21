@@ -268,6 +268,20 @@
             dashboardSection: document.getElementById('dashboard-section'), toggleDashboardBtn: document.getElementById('toggle-dashboard-btn'), dashboardContent: document.getElementById('dashboard-content')
         };
 
+        const fileToB64 = (file) => new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.readAsDataURL(file);
+            reader.onload = () => resolve({
+                name: file.name,
+                type: file.type,
+                data: reader.result.split(',')[1]
+            });
+            reader.onerror = (error) => {
+                console.error("FileReader error on file:", file.name, error);
+                reject(new Error(`Failed to read file "${file.name}".`));
+            };
+        });
+
         function setupDropZone(dropZone, fileInput, fileList, fileArray) {
             dropZone.addEventListener('click', () => fileInput.click());
             dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
@@ -422,11 +436,23 @@
                     ${feedbackExamples}
                 `;
 
-                const fileToB64 = (file) => new Promise((resolve, reject) => { const reader = new FileReader(); reader.readAsDataURL(file); reader.onload = () => resolve(reader.result.split(',')[1]); reader.onerror = error => reject(error); });
-
                 const parts = [{ text: systemPrompt }];
-                for (const file of customerFiles) { parts.push({ text: `\n--- START CUSTOMER FILE: ${file.name} ---` }); parts.push({ inlineData: { mimeType: file.type, data: await fileToB64(file) } }); }
-                for (const file of blindIQFiles) { parts.push({ text: `\n--- START BLIND IQ FILE: ${file.name} ---` }); parts.push({ inlineData: { mimeType: file.type, data: await fileToB64(file) } }); }
+                
+                const customerFilePromises = customerFiles.map(fileToB64);
+                const blindIQFilePromises = blindIQFiles.map(fileToB64);
+                const [customerB64FileObjects, blindIQB64FileObjects] = await Promise.all([
+                    Promise.all(customerFilePromises),
+                    Promise.all(blindIQFilePromises)
+                ]);
+
+                for (const fileObj of customerB64FileObjects) {
+                    parts.push({ text: `\n--- START CUSTOMER FILE: ${fileObj.name} ---` });
+                    parts.push({ inlineData: { mimeType: fileObj.type, data: fileObj.data } });
+                }
+                for (const fileObj of blindIQB64FileObjects) {
+                    parts.push({ text: `\n--- START BLIND IQ FILE: ${fileObj.name} ---` });
+                    parts.push({ inlineData: { mimeType: fileObj.type, data: fileObj.data } });
+                }
 
                 const comparisonFieldSchema = { type: "OBJECT", properties: { "customerValue": { "type": "STRING" }, "blindIQValue": { "type": "STRING" }, "result": { "type": "STRING", "enum": ["MATCH", "MISMATCH", "OMISSION", "NOTE"] }, "confidence": { "type": "NUMBER" } }, required: ["customerValue", "blindIQValue", "result", "confidence"] };
                 const schema = {
@@ -468,19 +494,32 @@
 
                 const geminiPayload = { contents: [{ role: "user", parts: parts }], generationConfig: { responseMimeType: "application/json", responseSchema: schema } };
                 
-                // This is the new payload for our proxy
                 const proxyPayload = {
                     model: 'gemini-2.5-pro',
                     payload: geminiPayload
                 };
 
                 const response = await fetch(PROXY_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proxyPayload) });
+                
+                const resultText = await response.text();
                 if (!response.ok) {
-                    const errorText = await response.text();
-                    throw new Error(`API Error: ${response.status} ${response.statusText} - ${errorText}`);
+                    throw new Error(`API Error: ${response.status} ${response.statusText} - ${resultText}`);
                 }
                 
-                const data = await response.json();
+                const result = JSON.parse(resultText);
+                console.log("Raw API Response:", result);
+
+                if (!result.candidates || result.candidates.length === 0 || !result.candidates[0].content) {
+                    let errorMessage = "No valid content received from the API.";
+                    if (result.promptFeedback?.blockReason) {
+                        errorMessage += ` Reason: ${result.promptFeedback.blockReason}.`;
+                    } else if (result.error) {
+                        errorMessage += ` Details: ${result.error.message}`;
+                    }
+                    throw new Error(`${errorMessage} Raw Response: <pre>${JSON.stringify(result, null, 2)}</pre>`);
+                }
+
+                const data = JSON.parse(result.candidates[0].content.parts[0].text);
                 currentReportData = data;
                 renderReport(currentReportData);
 
@@ -497,6 +536,10 @@
         }
 
         function renderReport(data) {
+            if (!data || (!data.lineItems && !data.bdoOrderNumber)) {
+                allDomElements.reportContent.innerHTML = `<div class="bg-blue-100 border-l-4 border-blue-500 text-blue-700 p-4 rounded-md"><p>No items to compare were found in the documents.</p></div>`;
+                return;
+            }
             allDomElements.reportContent.innerHTML = renderReportTable(data, true);
             setupReportInteraction();
         }
@@ -542,8 +585,6 @@
         }
 
         function renderReportTable(data, includeFeedbackButton = false) {
-            if (!data || !data.lineItems) { return `<div class="bg-blue-100 border-l-4 border-blue-500 text-blue-700 p-4 rounded-md"><p>No items to compare were found in the documents.</p></div>`; }
-            
             const getIndicator = (result) => ({ 'MISMATCH': '🔴', 'OMISSION': '🟡', 'MATCH': '🟢', 'NOTE': '🔵' }[result] || '');
             
             const renderCell = (field, fieldName) => {
@@ -695,7 +736,11 @@
                 const response = await fetch(PROXY_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proxyPayload) });
                 if (!response.ok) throw new Error('Failed to enhance guideline.');
 
-                const data = await response.json();
+                const result = await response.json();
+                if (!result.candidates?.[0]?.content?.parts?.[0]?.text) {
+                    throw new Error('Failed to enhance guideline. API returned empty or invalid JSON.');
+                }
+                const data = JSON.parse(result.candidates[0].content.parts[0].text);
                 const enhancedGuidelines = data.guidelines;
 
                 const savePromises = enhancedGuidelines.map(guideline => {

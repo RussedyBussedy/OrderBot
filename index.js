@@ -4,7 +4,7 @@ const express = require('express');
 const { SecretManagerServiceClient } = require('@google-cloud/secret-manager');
 
 const app = express();
-// CORRECTED: Increased the JSON payload limit to handle large image data
+// Increased the JSON payload limit to handle large image data
 app.use(express.json({ limit: '10mb' }));
 
 // --- Secret Manager Configuration ---
@@ -42,10 +42,21 @@ app.post('/', async (req, res) => {
         return res.status(500).json({ error: "API Key is not configured on the server." });
     }
 
-    const { model, payload } = req.body;
+    let { model, payload } = req.body;
     if (!model || !payload) {
         return res.status(400).json({ error: "Request body must include 'model' and 'payload' keys." });
     }
+    
+    // ADDED: Safety settings to reduce the chance of the AI blocking the response.
+    const safetySettings = [
+        { "category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE" },
+        { "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE" },
+        { "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE" },
+        { "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE" }
+    ];
+
+    // Add safety settings to the payload sent to Gemini
+    payload.safetySettings = safetySettings;
 
     const geminiApiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
     

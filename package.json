@@ -1,0 +1,15 @@
+// File: package.json
+
+{
+  "name": "cloudrun-gemini-proxy",
+  "version": "1.0.0",
+  "description": "Secure proxy for Google Gemini API on Cloud Run",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@google-cloud/secret-manager": "^5.0.1",
+    "express": "^4.18.2"
+  }
+}

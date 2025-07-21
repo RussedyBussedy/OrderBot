@@ -233,9 +233,9 @@
 
         // =================================================================================
         // === STEP 2: YOUR SECURE PROXY URL ===
-        // Replace the placeholder below with the actual URL of your deployed Cloud Run service.
+        // This now points to your secure Cloud Run service.
         // =================================================================================
-        const PROXY_API_URL = 'YOUR_CLOUD_RUN_PROXY_URL'; // <-- IMPORTANT: REPLACE THIS
+        const PROXY_API_URL = 'https://gemini-secure-proxy-51064902388.africa-south1.run.app';
         // =================================================================================
 
 
@@ -471,19 +471,22 @@
                 const payload = { contents: [{ role: "user", parts: parts }], generationConfig: { responseMimeType: "application/json", responseSchema: schema } };
                 
                 const response = await fetch(PROXY_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-                if (!response.ok) throw new Error(`API Error: ${response.status} ${response.statusText}`);
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`API Error: ${response.status} ${response.statusText} - ${errorText}`);
+                }
                 const result = await response.json();
                 
-                if (result.candidates?.[0]?.content?.parts?.[0]?.text) {
-                    const data = JSON.parse(result.candidates[0].content.parts[0].text);
-                    currentReportData = data;
-                    renderReport(currentReportData);
+                // The proxy now directly returns the Gemini response, so we don't need to parse result.candidates...
+                const data = result;
+                currentReportData = data;
+                renderReport(currentReportData);
 
-                    if (db && data.bdoOrderNumber) {
-                        await addDoc(collection(db, `orderbot_comparisons`), { ...data, timestamp: new Date().toISOString(), userId: userId });
-                    }
-                    allDomElements.newComparisonBtn.classList.remove('hidden');
-                } else { throw new Error("No valid content received from the API."); }
+                if (db && data.bdoOrderNumber) {
+                    await addDoc(collection(db, `orderbot_comparisons`), { ...data, timestamp: new Date().toISOString(), userId: userId });
+                }
+                allDomElements.newComparisonBtn.classList.remove('hidden');
+
             } catch (error) {
                 console.error("Comparison failed:", error);
                 allDomElements.reportContent.innerHTML = `<div class="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 rounded-md" role="alert"><p class="font-bold">Comparison Failed</p><p>${error.message}</p></div>`;

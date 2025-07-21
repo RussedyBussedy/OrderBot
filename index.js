@@ -4,7 +4,8 @@ const express = require('express');
 const { SecretManagerServiceClient } = require('@google-cloud/secret-manager');
 
 const app = express();
-app.use(express.json()); // Middleware to parse JSON bodies
+// CORRECTED: Increased the JSON payload limit to handle large image data
+app.use(express.json({ limit: '10mb' }));
 
 // --- Secret Manager Configuration ---
 const secretManagerClient = new SecretManagerServiceClient();
@@ -19,17 +20,27 @@ async function getApiKey() {
   return apiKey;
 }
 
+// --- CORS Preflight Handling ---
+// This must come before the main route to handle OPTIONS requests correctly.
+app.options('/', (req, res) => {
+    res.set('Access-Control-Allow-Origin', 'https://russedybussedy.github.io');
+    res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.set('Access-Control-Allow-Headers', 'Content-Type');
+    res.status(204).send('');
+});
+
 // --- Main Proxy Route ---
 app.post('/', async (req, res) => {
-  // Set CORS headers to allow your website to call this endpoint
-  // CORRECTED: Origin is now all lowercase to match the actual GitHub Pages URL
   res.set('Access-Control-Allow-Origin', 'https://russedybussedy.github.io');
-  res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.set('Access-Control-Allow-Methods', 'POST');
   res.set('Access-Control-Allow-Headers', 'Content-Type');
 
   try {
     const apiKey = await getApiKey();
-    if (!apiKey) throw new Error("API Key not found in Secret Manager.");
+    if (!apiKey) {
+        console.error("API Key not found in Secret Manager.");
+        return res.status(500).json({ error: "API Key is not configured on the server." });
+    }
 
     const { model, payload } = req.body;
     if (!model || !payload) {
@@ -45,28 +56,18 @@ app.post('/', async (req, res) => {
     });
 
     const responseBody = await apiResponse.text();
-    if (!apiResponse.ok) {
-        console.error("Gemini API Error:", responseBody);
-        return res.status(apiResponse.status).send(responseBody);
-    }
     
-    res.status(200).json(JSON.parse(responseBody));
+    // Set the same status code as the Gemini API response
+    res.status(apiResponse.status);
+    
+    // Forward the exact response body (whether it's an error or success)
+    res.send(responseBody);
 
   } catch (error) {
     console.error("Error in Cloud Run service:", error);
-    res.status(500).send(`Internal Server Error: ${error.message}`);
+    res.status(500).json({ error: `Internal Server Error: ${error.message}` });
   }
 });
-
-// --- CORS Preflight Handling ---
-app.options('/', (req, res) => {
-    // CORRECTED: Origin is now all lowercase here as well
-    res.set('Access-Control-Allow-Origin', 'https://russedybussedy.github.io');
-    res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.set('Access-Control-Allow-Headers', 'Content-Type');
-    res.status(204).send('');
-});
-
 
 // --- Start the server ---
 const port = process.env.PORT || 8080;

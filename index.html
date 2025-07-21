@@ -218,7 +218,6 @@
 
         // =================================================================================
         // === STEP 1: FIREBASE CONFIGURATION (Publicly Visible) ===
-        // Your Firebase config is okay to be here. Security is handled by Firestore Rules.
         // =================================================================================
         const firebaseConfig = {
             apiKey: "AIzaSyB3x__sOsj8EPS9KnpweD6uWIhVt9ACNBM",
@@ -233,7 +232,6 @@
 
         // =================================================================================
         // === STEP 2: YOUR SECURE PROXY URL ===
-        // This now points to your secure Cloud Run service.
         // =================================================================================
         const PROXY_API_URL = 'https://gemini-secure-proxy-51064902388.africa-south1.run.app';
         // =================================================================================
@@ -468,17 +466,21 @@
                     required: ["bdoOrderNumber", "customerOrderNumber"]
                 };
 
-                const payload = { contents: [{ role: "user", parts: parts }], generationConfig: { responseMimeType: "application/json", responseSchema: schema } };
+                const geminiPayload = { contents: [{ role: "user", parts: parts }], generationConfig: { responseMimeType: "application/json", responseSchema: schema } };
                 
-                const response = await fetch(PROXY_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                // This is the new payload for our proxy
+                const proxyPayload = {
+                    model: 'gemini-2.5-pro',
+                    payload: geminiPayload
+                };
+
+                const response = await fetch(PROXY_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proxyPayload) });
                 if (!response.ok) {
                     const errorText = await response.text();
                     throw new Error(`API Error: ${response.status} ${response.statusText} - ${errorText}`);
                 }
-                const result = await response.json();
                 
-                // The proxy now directly returns the Gemini response, so we don't need to parse result.candidates...
-                const data = result;
+                const data = await response.json();
                 currentReportData = data;
                 renderReport(currentReportData);
 
@@ -617,10 +619,12 @@
                 const enhancementParts = [{ text: enhancementPrompt }];
                 if (pastedImageB64) { enhancementParts.push({ inlineData: { mimeType: 'image/png', data: pastedImageB64.split(',')[1] } }); }
 
-                const enhancementPayload = { contents: [{ role: "user", parts: enhancementParts }] };
+                const geminiPayload = { contents: [{ role: "user", parts: enhancementParts }] };
+                const proxyPayload = { model: 'gemini-2.0-flash', payload: geminiPayload };
                 
-                const response = await fetch(PROXY_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(enhancementPayload) });
+                const response = await fetch(PROXY_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proxyPayload) });
                 if (!response.ok) throw new Error('Failed to enhance explanation.');
+                
                 const result = await response.json();
                 const enhancedExplanation = result.candidates[0].content.parts[0].text;
 
@@ -685,12 +689,13 @@
                 User's text: "${guidelineText}"`;
                 
                 const enhancementSchema = { type: "OBJECT", properties: { "guidelines": { type: "ARRAY", items: { "type": "STRING" } } }, required: ["guidelines"] };
-                const enhancementPayload = { contents: [{ role: "user", parts: [{ text: enhancementPrompt }] }], generationConfig: { responseMimeType: "application/json", responseSchema: enhancementSchema } };
+                const geminiPayload = { contents: [{ role: "user", parts: [{ text: enhancementPrompt }] }], generationConfig: { responseMimeType: "application/json", responseSchema: enhancementSchema } };
+                const proxyPayload = { model: 'gemini-2.0-flash', payload: geminiPayload };
                 
-                const response = await fetch(PROXY_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(enhancementPayload) });
+                const response = await fetch(PROXY_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proxyPayload) });
                 if (!response.ok) throw new Error('Failed to enhance guideline.');
-                const result = await response.json();
-                const data = JSON.parse(result.candidates[0].content.parts[0].text);
+
+                const data = await response.json();
                 const enhancedGuidelines = data.guidelines;
 
                 const savePromises = enhancedGuidelines.map(guideline => {

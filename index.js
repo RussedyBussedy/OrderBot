@@ -20,21 +20,34 @@ async function getApiKey() {
   return apiKey;
 }
 
-// --- CORS Preflight Handling ---
-// This must come before the main route to handle OPTIONS requests correctly.
+// --- CORS Configuration ---
+const allowedOrigins = [
+    'https://russedybussedy.github.io',    // Your live GitHub Pages site
+    'https://app.lab-pa.googleapis.com', // The Canvas preview environment
+    'https://blinddesignscoza.sharepoint.com' // ADDED: Your SharePoint site
+];
+
+const handleCors = (req, res, next) => {
+    const origin = req.headers.origin;
+    if (allowedOrigins.includes(origin)) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+    }
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    next();
+};
+
+// --- Routes ---
+// Use the CORS handler for all routes
+app.use(handleCors);
+
 app.options('/', (req, res) => {
-    res.set('Access-Control-Allow-Origin', 'https://russedybussedy.github.io');
-    res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.set('Access-Control-Allow-Headers', 'Content-Type');
+    // The handleCors middleware already sets the headers.
+    // Just send a success status for the preflight request.
     res.status(204).send('');
 });
 
-// --- Main Proxy Route ---
 app.post('/', async (req, res) => {
-  res.set('Access-Control-Allow-Origin', 'https://russedybussedy.github.io');
-  res.set('Access-Control-Allow-Methods', 'POST');
-  res.set('Access-Control-Allow-Headers', 'Content-Type');
-
   try {
     const apiKey = await getApiKey();
     if (!apiKey) {
@@ -47,7 +60,6 @@ app.post('/', async (req, res) => {
         return res.status(400).json({ error: "Request body must include 'model' and 'payload' keys." });
     }
     
-    // ADDED: Safety settings to reduce the chance of the AI blocking the response.
     const safetySettings = [
         { "category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE" },
         { "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE" },
@@ -55,7 +67,6 @@ app.post('/', async (req, res) => {
         { "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE" }
     ];
 
-    // Add safety settings to the payload sent to Gemini
     payload.safetySettings = safetySettings;
 
     const geminiApiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
@@ -67,11 +78,7 @@ app.post('/', async (req, res) => {
     });
 
     const responseBody = await apiResponse.text();
-    
-    // Set the same status code as the Gemini API response
     res.status(apiResponse.status);
-    
-    // Forward the exact response body (whether it's an error or success)
     res.send(responseBody);
 
   } catch (error) {

@@ -23,7 +23,6 @@ async function getApiKey() {
 // --- Main Proxy Route ---
 app.post('/', async (req, res) => {
   // Set CORS headers to allow your website to call this endpoint
-  // This is now locked down to your specific GitHub Pages URL
   res.set('Access-Control-Allow-Origin', 'https://RussedyBussedy.github.io');
   res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.set('Access-Control-Allow-Headers', 'Content-Type');
@@ -32,21 +31,31 @@ app.post('/', async (req, res) => {
     const apiKey = await getApiKey();
     if (!apiKey) throw new Error("API Key not found in Secret Manager.");
 
-    const geminiApiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${apiKey}`;
+    // The frontend now sends the full payload, including the model name in the URL
+    // This makes the proxy more flexible. We will construct the URL here.
+    const { model, payload } = req.body;
+    if (!model || !payload) {
+        return res.status(400).json({ error: "Request body must include 'model' and 'payload' keys." });
+    }
 
+    const geminiApiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    
     const apiResponse = await fetch(geminiApiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(req.body)
+      body: JSON.stringify(payload) // Pass the inner payload to Gemini
     });
 
-    const data = await apiResponse.json();
+    // Improved error handling: get the response body regardless of status
+    const responseBody = await apiResponse.text();
     if (!apiResponse.ok) {
-        console.error("Gemini API Error:", data);
-        return res.status(apiResponse.status).json(data);
+        console.error("Gemini API Error:", responseBody);
+        // Forward the exact error and status from Gemini
+        return res.status(apiResponse.status).send(responseBody);
     }
-
-    res.status(200).json(data);
+    
+    // If successful, forward the JSON response
+    res.status(200).json(JSON.parse(responseBody));
 
   } catch (error) {
     console.error("Error in Cloud Run service:", error);

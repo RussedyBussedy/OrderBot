@@ -47,24 +47,26 @@
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
-        .mismatch-cell {
-            background-color: #fee2e2 !important;
-            color: #b91c1c;
-            font-weight: 600;
-        }
         .reportable-cell, .reportable-spec {
             cursor: pointer;
             position: relative;
         }
-        .reportable-cell:hover, .reportable-spec:hover {
+        .reportable-cell:hover {
             outline: 2px solid #4f46e5;
             outline-offset: -2px;
         }
-        .spec-row td {
-            padding-top: 0;
-            padding-bottom: 1rem;
-            border-color: #f1f5f9;
+        .spec-text {
+            cursor: pointer;
+            padding: 2px 4px;
+            border-radius: 4px;
+            transition: background-color 0.2s;
         }
+        .spec-text:hover {
+            background-color: rgba(79, 70, 229, 0.1);
+        }
+        .spec-match { color: #166534; }
+        .spec-mismatch { color: #b91c1c; font-weight: 600; }
+        .spec-omission { color: #b45309; }
         #image-paste-box {
             border: 2px dashed #9ca3af;
             background-color: #f9fafb;
@@ -77,9 +79,6 @@
             font-size: 0.65rem;
             color: #64748b;
             font-weight: 500;
-        }
-        .mismatch-cell .confidence-score {
-            color: #991b1b;
         }
     </style>
 </head>
@@ -423,15 +422,11 @@
                     ## 1. IDENTITY & PERSONA: You are OrderBot, an AI assistant.
                     ## 2. CORE DIRECTIVE: Analyze 'customer' vs 'blindiq' files, extract parameters, compare them, and return a structured JSON report.
                     ## 3. DATA EXTRACTION & ANALYSIS LOGIC:
-                    - BDO Order Number: Find the order number starting with 'BDO'.
-                    - Customer Order Number: Find the 'Customer O/N'.
-                    - Special Instructions: Look for sections labeled "Order Message", "Special Instructions", or "Notes" and extract their content.
-                    - CRITICAL RULE FOR CHECKBOXES: You MUST correctly identify selections made with a checkmark (✔), a cross (X), or a filled-in box. The text associated with the marked box is the customer's choice. Example Rule: If you see a 'Louvre Size' section with an empty box next to '63mm' and a ticked box next to '89mm', the correct value to extract is ALWAYS '89mm'. This is a frequent point of error and requires careful visual analysis.
-                    - For each line item, extract the primary fields: Item, Location, QTY, Width, Drop, Colour, and Control. Also extract a confidence score (0-100) for each value.
+                    - For each line item, extract the primary fields: Item, Location, QTY, Width, Drop, Colour, Control, Blind Type, Range, and Fix. The 'Item' should correspond to the alphabetical identifier (A, B, C...).
                     - CRITICAL: Look for a secondary line of text below the primary fields. This line contains detailed specifications separated by '|' and using '='. You MUST parse this line.
                     - For each key-value pair in the secondary line (e.g., "Val Returns=None"), treat it as a distinct specification.
                     - Compare all primary fields, all parsed specifications, and the special instructions between the two documents.
-                    ## 4. JSON OUTPUT STRUCTURE: Respond ONLY with a single JSON object conforming to the schema. The 'specifications' array should contain all the parsed key-value pairs from the secondary line.
+                    ## 4. JSON OUTPUT STRUCTURE: Respond ONLY with a single JSON object conforming to the schema.
                     ${guidelines}
                     ${feedbackExamples}
                 `;
@@ -473,6 +468,9 @@
                                     "drop": comparisonFieldSchema,
                                     "colour": comparisonFieldSchema,
                                     "control": comparisonFieldSchema,
+                                    "blindType": comparisonFieldSchema,
+                                    "range": comparisonFieldSchema,
+                                    "fix": comparisonFieldSchema,
                                     "specifications": {
                                         type: "ARRAY",
                                         items: {
@@ -485,7 +483,7 @@
                                         }
                                     }
                                 },
-                                required: ["item", "location", "qty", "width", "drop", "colour", "control"]
+                                required: ["item", "location", "qty", "width", "drop", "colour", "control", "blindType", "range", "fix"]
                             }
                         }
                     },
@@ -540,64 +538,68 @@
                 allDomElements.reportContent.innerHTML = `<div class="bg-blue-100 border-l-4 border-blue-500 text-blue-700 p-4 rounded-md"><p>No items to compare were found in the documents.</p></div>`;
                 return;
             }
-            allDomElements.reportContent.innerHTML = renderReportTable(data, true);
-            setupReportInteraction();
+            allDomElements.reportContent.innerHTML = renderReportTable(data);
         }
 
         function setupReportInteraction() {
-            const reportTable = allDomElements.reportContent.querySelector('table');
-            if (!reportTable) return;
+            const reportContainer = allDomElements.reportContent;
+            if (!reportContainer) return;
 
-            reportTable.addEventListener('click', (e) => {
-                const cell = e.target.closest('.reportable-cell, .reportable-spec');
-                if (cell) {
-                    if (!db) { alert("Feedback system is not available."); return; }
-                    
-                    const rowIndex = cell.closest('tr[data-row-index], div[data-spec-index]')?.closest('tr[data-row-index]')?.dataset.rowIndex;
-                    if(rowIndex === undefined) return;
+            reportContainer.addEventListener('click', (e) => {
+                const target = e.target.closest('.reportable-cell, .reportable-spec');
+                if (!target) return;
+                if (!db) { alert("Feedback system is not available."); return; }
+                
+                const lineItemElement = target.closest('.line-item-container');
+                if (!lineItemElement) return;
 
-                    const lineItem = currentReportData.lineItems[rowIndex];
-                    let fieldName = cell.dataset.fieldName;
-                    let fieldData;
+                const rowIndex = lineItemElement.dataset.rowIndex;
+                const lineItem = currentReportData.lineItems[rowIndex];
+                let fieldName, fieldData;
 
-                    if (cell.classList.contains('reportable-spec')) {
-                        const specIndex = cell.dataset.specIndex;
-                        const spec = lineItem.specifications[specIndex];
-                        fieldName = spec.specName;
-                        fieldData = spec.specComparison;
-                    } else {
-                        fieldData = lineItem[fieldName];
-                    }
-
-                    if (!fieldData) return;
-
-                    itemToCorrect = {
-                        lineItemIdentifier: { item: lineItem.item.blindIQValue, location: lineItem.location.blindIQValue },
-                        fieldName: fieldName,
-                        fieldData: fieldData
-                    };
-                    
-                    allDomElements.feedbackModalTitle.textContent = `Correcting error for: ${fieldName}`;
-                    allDomElements.incorrectItemDetails.textContent = JSON.stringify(fieldData, null, 2);
-                    allDomElements.feedbackModal.style.display = 'flex';
+                if (target.classList.contains('reportable-spec')) {
+                    const specIndex = target.dataset.specIndex;
+                    const spec = lineItem.specifications[specIndex];
+                    fieldName = spec.specName;
+                    fieldData = spec.specComparison;
+                } else {
+                    fieldName = target.dataset.fieldName;
+                    fieldData = lineItem[fieldName];
                 }
+
+                if (!fieldData) return;
+
+                itemToCorrect = {
+                    lineItemIdentifier: { item: lineItem.item.blindIQValue, location: lineItem.location.blindIQValue },
+                    fieldName: fieldName,
+                    fieldData: fieldData
+                };
+                
+                allDomElements.feedbackModalTitle.textContent = `Correcting error for: ${fieldName}`;
+                allDomElements.incorrectItemDetails.textContent = JSON.stringify(fieldData, null, 2);
+                allDomElements.feedbackModal.style.display = 'flex';
             });
         }
 
-        function renderReportTable(data, includeFeedbackButton = false) {
+        function renderReportTable(data) {
             const getIndicator = (result) => ({ 'MISMATCH': '🔴', 'OMISSION': '🟡', 'MATCH': '🟢', 'NOTE': '🔵' }[result] || '');
             
-            const renderCell = (field, fieldName) => {
-                if (!field) return `<td class="p-2 text-sm text-slate-700 reportable-cell" data-field-name="${fieldName}"></td>`;
-                const isMismatch = field.result === 'MISMATCH';
-                const customerVal = field.customerValue || 'N/A';
-                const blindIQVal = field.blindIQValue || 'N/A';
-                let content = blindIQVal;
+            const renderCell = (field, fieldName, label) => {
+                const isMismatch = field && field.result === 'MISMATCH';
+                const value = field ? field.blindIQValue : 'N/A';
+                const customerVal = field ? field.customerValue : 'N/A';
+                
+                let content = value;
                 if (isMismatch) {
-                    content = `<div>${blindIQVal} <span class="text-xs font-normal">(vs ${customerVal})</span></div>`;
+                    content = `${value} <span class="text-xs font-normal">(vs ${customerVal})</span>`;
                 }
-                const confidence = field.confidence ? `<span class="confidence-score">${field.confidence}</span>` : '';
-                return `<td class="p-2 text-sm text-slate-700 reportable-cell ${isMismatch ? 'mismatch-cell' : ''}" data-field-name="${fieldName}">${content}${confidence}</td>`;
+
+                return `
+                    <div class="px-4 py-2 reportable-cell ${isMismatch ? 'bg-red-100' : ''}" data-field-name="${fieldName}">
+                        <div class="text-xs font-semibold text-slate-500">${label}</div>
+                        <div class="text-sm text-slate-800 ${isMismatch ? 'font-bold text-red-700' : ''}">${content}</div>
+                    </div>
+                `;
             };
 
             const orderNumberRow = `
@@ -615,30 +617,46 @@
                 specialInstructionsRow = `<div class="mb-4 p-4 rounded-lg bg-amber-100"><h3 class="font-bold text-lg text-amber-800">Special Instructions</h3><p class="text-sm text-amber-700">Customer Doc: <strong>${data.specialInstructions.customerValue || 'None'}</strong></p><p class="text-sm text-amber-700">Blind IQ Doc: <strong>${data.specialInstructions.blindIQValue || 'None'}</strong></p></div>`;
             }
             
-            const primaryHeaders = ['item', 'location', 'qty', 'width', 'drop', 'colour', 'control'];
-            const headerRow = primaryHeaders.map(header => `<th class="p-2 text-sm font-semibold text-slate-600 capitalize">${header}</th>`).join('');
+            const lineItemsHtml = (data.lineItems || []).map((lineItem, index) => {
+                const specHtml = (lineItem.specifications || []).map((spec, specIndex) => {
+                    const resultClass = {
+                        'MATCH': 'spec-match',
+                        'MISMATCH': 'spec-mismatch',
+                        'OMISSION': 'spec-omission'
+                    }[spec.specComparison.result] || '';
+                    
+                    let text = `${spec.specName}=${spec.specComparison.blindIQValue}`;
+                    if (spec.specComparison.result === 'MISMATCH') {
+                        text += ` (vs ${spec.specComparison.customerValue})`;
+                    }
 
-            const tableRows = (data.lineItems || []).map((lineItem, index) => {
-                const primaryCells = primaryHeaders.map(header => renderCell(lineItem[header], header)).join('');
-                let specRow = '';
-                if (lineItem.specifications && lineItem.specifications.length > 0) {
-                    const specList = lineItem.specifications.map((spec, specIndex) => {
-                        const isMismatch = spec.specComparison.result === 'MISMATCH';
-                        const customerVal = spec.specComparison.customerValue || 'N/A';
-                        const blindIQVal = spec.specComparison.blindIQValue || 'N/A';
-                        let content = blindIQVal;
-                        if (isMismatch) { content = `<div>${blindIQVal} <span class="text-xs font-normal">(vs ${customerVal})</span></div>`; }
-                        const confidence = spec.specComparison.confidence ? `<span class="confidence-score">${spec.specComparison.confidence}</span>` : '';
-                        return `<div class="reportable-spec px-2 py-1 rounded inline-block mr-2 mb-1 relative ${isMismatch ? 'mismatch-cell' : 'bg-slate-100'}" data-spec-index="${specIndex}"><strong>${spec.specName}:</strong> ${content}${confidence}</div>`;
-                    }).join('');
-                    specRow = `<tr class="spec-row" data-row-index="${index}"><td colspan="${primaryHeaders.length}" class="p-2 pl-6 bg-slate-50">${specList}</td></tr>`;
-                }
-                return `<tr class="border-b border-slate-200 hover:bg-slate-50 group" data-row-index="${index}">${primaryCells}</tr>${specRow}`;
+                    return `<span class="spec-text reportable-spec ${resultClass}" data-spec-index="${specIndex}">${text}</span>`;
+                }).join(' | ');
+
+                return `
+                    <div class="line-item-container border border-slate-200 rounded-lg mb-4" data-row-index="${index}">
+                        <div class="grid grid-cols-10 bg-slate-50 font-semibold text-sm text-slate-700 border-b border-slate-200">
+                            ${renderCell(lineItem.item, 'item', 'Item')}
+                            ${renderCell(lineItem.qty, 'qty', 'QTY')}
+                            ${renderCell(lineItem.location, 'location', 'Location')}
+                            ${renderCell(lineItem.blindType, 'blindType', 'Blind Type')}
+                            ${renderCell(lineItem.range, 'range', 'Range')}
+                            ${renderCell(lineItem.colour, 'colour', 'Colour')}
+                            ${renderCell(lineItem.width, 'width', 'Width')}
+                            ${renderCell(lineItem.drop, 'drop', 'Drop')}
+                            ${renderCell(lineItem.control, 'control', 'Control')}
+                            ${renderCell(lineItem.fix, 'fix', 'Fix')}
+                        </div>
+                        <div class="p-4 bg-white text-sm text-slate-600">
+                            ${specHtml}
+                        </div>
+                    </div>
+                `;
             }).join('');
 
             setTimeout(setupReportInteraction, 0);
 
-            return `${orderNumberRow}${specialInstructionsRow}<div class="overflow-x-auto"><table class="w-full text-left border-collapse"><thead class="bg-slate-100"><tr>${headerRow}</tr></thead><tbody>${tableRows}</tbody></table></div>`;
+            return `${orderNumberRow}${specialInstructionsRow}${lineItemsHtml}`;
         }
         
         allDomElements.cancelFeedbackBtn.addEventListener('click', () => {

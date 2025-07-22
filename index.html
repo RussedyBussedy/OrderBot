@@ -52,33 +52,25 @@
             position: relative;
         }
         .reportable-cell:hover {
-            outline: 2px solid #4f46e5;
-            outline-offset: -2px;
+            background-color: #eef2ff !important;
         }
         .spec-text {
             cursor: pointer;
             padding: 2px 4px;
             border-radius: 4px;
             transition: background-color 0.2s;
+            display: inline-block;
         }
         .spec-text:hover {
             background-color: rgba(79, 70, 229, 0.1);
         }
         .spec-match { color: #166534; }
         .spec-mismatch { color: #b91c1c; font-weight: 600; }
-        .spec-omission { color: #b45309; }
+        .spec-low-confidence { color: #b45309; }
         #image-paste-box {
             border: 2px dashed #9ca3af;
             background-color: #f9fafb;
             min-height: 8rem;
-        }
-        .confidence-score {
-            position: absolute;
-            top: 2px;
-            right: 4px;
-            font-size: 0.65rem;
-            color: #64748b;
-            font-weight: 500;
         }
     </style>
 </head>
@@ -344,7 +336,7 @@
         }
 
         async function findHistory() {
-            const searchTerm = allDomElements.historySearchInput.value.trim().toLowerCase();
+            const searchTerm = allDomElements.historySearchInput.value.trim();
             if (!searchTerm) { alert("Please enter an order number to search."); return; }
             if (!db) { alert("History feature is unavailable. Database not connected."); return; }
 
@@ -357,7 +349,10 @@
                 const allDocs = [];
                 querySnapshot.forEach(doc => { allDocs.push(doc.data()); });
 
-                const filteredDocs = allDocs.filter(doc => doc.bdoOrderNumber && doc.bdoOrderNumber.toLowerCase().includes(searchTerm));
+                const filteredDocs = allDocs.filter(doc => 
+                    (doc.bdoOrderNumber && doc.bdoOrderNumber.toLowerCase().includes(searchTerm.toLowerCase())) ||
+                    (doc.customerOrderNumber && doc.customerOrderNumber.customerValue && doc.customerOrderNumber.customerValue.toLowerCase().includes(searchTerm.toLowerCase()))
+                );
 
                 if (filteredDocs.length === 0) {
                     allDomElements.historyResults.innerHTML = `<p class="text-slate-500">No history found for search term: <strong>${searchTerm}</strong></p>`;
@@ -365,10 +360,23 @@
                     return;
                 }
                 
-                filteredDocs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-                
+                // Group by order number and find the latest for each
+                const latestComparisons = new Map();
+                filteredDocs.forEach(doc => {
+                    const orderNum = doc.bdoOrderNumber || (doc.customerOrderNumber ? doc.customerOrderNumber.customerValue : null);
+                    if (orderNum) {
+                        const existing = latestComparisons.get(orderNum);
+                        if (!existing || new Date(doc.timestamp) > new Date(existing.timestamp)) {
+                            latestComparisons.set(orderNum, doc);
+                        }
+                    }
+                });
+
+                const finalResults = Array.from(latestComparisons.values())
+                    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
                 allDomElements.historyResults.innerHTML = '';
-                filteredDocs.forEach(data => {
+                finalResults.forEach(data => {
                     const historyItemDiv = document.createElement('div');
                     historyItemDiv.className = 'history-item border border-slate-200 rounded-lg p-4';
                     const formattedDate = new Date(data.timestamp).toLocaleString('en-ZA');
@@ -546,7 +554,7 @@
             if (!reportContainer) return;
 
             reportContainer.addEventListener('click', (e) => {
-                const target = e.target.closest('.reportable-cell, .reportable-spec');
+                const target = e.target.closest('.reportable-cell, .spec-text');
                 if (!target) return;
                 if (!db) { alert("Feedback system is not available."); return; }
                 
@@ -557,7 +565,7 @@
                 const lineItem = currentReportData.lineItems[rowIndex];
                 let fieldName, fieldData;
 
-                if (target.classList.contains('reportable-spec')) {
+                if (target.classList.contains('spec-text')) {
                     const specIndex = target.dataset.specIndex;
                     const spec = lineItem.specifications[specIndex];
                     fieldName = spec.specName;
@@ -586,6 +594,7 @@
             
             const renderCell = (field, fieldName, label) => {
                 const isMismatch = field && field.result === 'MISMATCH';
+                const isLowConfidence = field && field.confidence < 90;
                 const value = field ? field.blindIQValue : 'N/A';
                 const customerVal = field ? field.customerValue : 'N/A';
                 
@@ -594,10 +603,21 @@
                     content = `${value} <span class="text-xs font-normal">(vs ${customerVal})</span>`;
                 }
 
+                let cellClasses = 'px-2 py-1 reportable-cell';
+                let textClasses = 'text-sm text-slate-800';
+
+                if (isMismatch) {
+                    cellClasses += ' bg-red-50';
+                    textClasses += ' font-bold text-red-700';
+                } else if (isLowConfidence) {
+                    cellClasses += ' bg-orange-50';
+                    textClasses += ' text-orange-700';
+                }
+
                 return `
-                    <div class="px-4 py-2 reportable-cell ${isMismatch ? 'bg-red-100' : ''}" data-field-name="${fieldName}">
+                    <div class="${cellClasses}" data-field-name="${fieldName}">
                         <div class="text-xs font-semibold text-slate-500">${label}</div>
-                        <div class="text-sm text-slate-800 ${isMismatch ? 'font-bold text-red-700' : ''}">${content}</div>
+                        <div class="${textClasses}">${content}</div>
                     </div>
                 `;
             };
@@ -619,23 +639,28 @@
             
             const lineItemsHtml = (data.lineItems || []).map((lineItem, index) => {
                 const specHtml = (lineItem.specifications || []).map((spec, specIndex) => {
-                    const resultClass = {
-                        'MATCH': 'spec-match',
-                        'MISMATCH': 'spec-mismatch',
-                        'OMISSION': 'spec-omission'
-                    }[spec.specComparison.result] || '';
-                    
+                    const isMismatch = spec.specComparison.result === 'MISMATCH';
+                    const isOmission = spec.specComparison.result === 'OMISSION';
+                    const isLowConfidence = spec.specComparison.confidence < 90;
+
+                    let resultClass = 'spec-match';
+                    if (isMismatch) resultClass = 'spec-mismatch';
+                    else if (isLowConfidence) resultClass = 'spec-low-confidence';
+
                     let text = `${spec.specName}=${spec.specComparison.blindIQValue}`;
-                    if (spec.specComparison.result === 'MISMATCH') {
+                    if (isMismatch) {
                         text += ` (vs ${spec.specComparison.customerValue})`;
                     }
+                    if (isOmission) {
+                        text += ` (Omission)`;
+                    }
 
-                    return `<span class="spec-text reportable-spec ${resultClass}" data-spec-index="${specIndex}">${text}</span>`;
+                    return `<span class="spec-text ${resultClass}" data-spec-index="${specIndex}">${text}</span>`;
                 }).join(' | ');
 
                 return `
                     <div class="line-item-container border border-slate-200 rounded-lg mb-4" data-row-index="${index}">
-                        <div class="grid grid-cols-10 bg-slate-50 font-semibold text-sm text-slate-700 border-b border-slate-200">
+                        <div class="grid grid-cols-10 bg-slate-50 font-semibold text-sm text-slate-700 border-b border-slate-200 divide-x divide-slate-200">
                             ${renderCell(lineItem.item, 'item', 'Item')}
                             ${renderCell(lineItem.qty, 'qty', 'QTY')}
                             ${renderCell(lineItem.location, 'location', 'Location')}
@@ -647,7 +672,7 @@
                             ${renderCell(lineItem.control, 'control', 'Control')}
                             ${renderCell(lineItem.fix, 'fix', 'Fix')}
                         </div>
-                        <div class="p-4 bg-white text-sm text-slate-600">
+                        <div class="p-3 bg-white text-xs text-slate-600">
                             ${specHtml}
                         </div>
                     </div>

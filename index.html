@@ -974,7 +974,13 @@
                 const result = await response.json();
                 const enhancedExplanation = result.candidates[0].content.parts[0].text;
 
-                const feedbackData = { userId: userId, timestamp: new Date().toISOString(), incorrectItem: itemToCorrect, userExplanation: allDomElements.feedbackExplanation.value.trim(), enhancedExplanation: enhancedExplanation, customerFileNames: customerFiles.map(f => f.name), blindIQFileNames: blindIQFiles.map(f => f.name) };
+                const feedbackData = { 
+                    userId: userId, 
+                    timestamp: new Date().toISOString(), 
+                    incorrectItem: itemToCorrect, 
+                    userExplanation: allDomElements.feedbackExplanation.value.trim(), 
+                    enhancedExplanation: enhancedExplanation,
+                };
                 if (pastedImageB64) { feedbackData.imageSnippet = pastedImageB64; }
 
                 await addDoc(collection(db, `orderbot_feedback`), feedbackData);
@@ -982,7 +988,13 @@
             } catch (error) { 
                 console.error("Error submitting feedback: ", error); 
                 alert("Failed to submit feedback. The original explanation will be saved.");
-                const fallbackData = { userId: userId, timestamp: new Date().toISOString(), incorrectItem: itemToCorrect, userExplanation: allDomElements.feedbackExplanation.value.trim(), enhancedExplanation: `RAW: ${allDomElements.feedbackExplanation.value.trim()}`, customerFileNames: customerFiles.map(f => f.name), blindIQFileNames: blindIQFiles.map(f => f.name) };
+                const fallbackData = { 
+                    userId: userId, 
+                    timestamp: new Date().toISOString(), 
+                    incorrectItem: itemToCorrect, 
+                    userExplanation: allDomElements.feedbackExplanation.value.trim(), 
+                    enhancedExplanation: `RAW: ${allDomElements.feedbackExplanation.value.trim()}`,
+                };
                 if (pastedImageB64) { fallbackData.imageSnippet = pastedImageB64; }
                 await addDoc(collection(db, `orderbot_feedback`), fallbackData);
                 allDomElements.cancelFeedbackBtn.click();

@@ -308,8 +308,9 @@
         }
 
         let comparisonPairs = [];
-        let currentReportData = {}, itemToCorrect = null, pastedImageB64 = null;
+        let itemToCorrect = null, pastedImageB64 = null;
         let historyDataCache = [];
+        let summaryResultsCache = [];
 
         const allDomElements = {
             uploadPairsContainer: document.getElementById('upload-pairs-container'),
@@ -505,42 +506,9 @@
                 });
                 
                 allDomElements.historyResults.querySelectorAll('.history-item').forEach(item => {
-                    item.addEventListener('click', (e) => {
-                        const target = e.target.closest('.reportable-cell, .spec-text');
-                        if (!target) return;
-
-                        const historyIndex = item.dataset.historyIndex;
-                        const reportData = finalResults[historyIndex];
-                        
-                        const lineItemElement = target.closest('.line-item-container');
-                        if (!lineItemElement) return;
-
-                        const rowIndex = lineItemElement.dataset.rowIndex;
-                        const lineItem = reportData.lineItems[rowIndex];
-                        let fieldName, fieldData;
-
-                        if (target.classList.contains('spec-text')) {
-                            const specIndex = target.dataset.specIndex;
-                            const spec = lineItem.specifications[specIndex];
-                            fieldName = spec.specName;
-                            fieldData = spec.specComparison;
-                        } else {
-                            fieldName = target.dataset.fieldName;
-                            fieldData = lineItem[fieldName];
-                        }
-
-                        if (!fieldData) return;
-
-                        itemToCorrect = {
-                            lineItemIdentifier: { item: lineItem.item.blindIQValue, location: lineItem.location.blindIQValue },
-                            fieldName: fieldName,
-                            fieldData: fieldData
-                        };
-                        
-                        allDomElements.feedbackModalTitle.textContent = `Correcting error for: ${fieldName}`;
-                        allDomElements.incorrectItemDetails.textContent = JSON.stringify(fieldData, null, 2);
-                        allDomElements.feedbackModal.style.display = 'flex';
-                    });
+                    const historyIndex = item.dataset.historyIndex;
+                    const reportData = finalResults[historyIndex];
+                    setupReportInteraction(item, reportData);
                 });
 
                 allDomElements.clearHistoryBtn.classList.remove('hidden');
@@ -559,47 +527,41 @@
             allDomElements.reportContent.innerHTML = `<div class="flex flex-col items-center justify-center p-8"><div class="loader"></div><p id="batch-status" class="mt-4 text-slate-600 font-semibold">Starting batch comparison...</p></div>`;
             
             const batchStatus = document.getElementById('batch-status');
-            const results = [];
+            summaryResultsCache = [];
             let failedPairs = [];
 
             for (let i = 0; i < comparisonPairs.length; i++) {
                 batchStatus.textContent = `Processing order ${i + 1} of ${comparisonPairs.length}...`;
                 try {
                     const result = await processSingleComparison(comparisonPairs[i]);
-                    results.push({ status: 'success', data: result });
+                    summaryResultsCache.push({ status: 'success', data: result });
                 } catch (error) {
                     console.error(`Failed comparison for pair ${i}:`, error);
-                    results.push({ status: 'failed', error: error.message, orderNumber: `Pair ${i+1}` });
-                    failedPairs.push(comparisonPairs[i]);
+                    summaryResultsCache.push({ status: 'failed', error: error.message, orderNumber: `Pair ${i+1}` });
+                    failedPairs.push({pair: comparisonPairs[i], originalIndex: i});
                 }
             }
 
             if (failedPairs.length > 0) {
                  batchStatus.textContent = `Retrying ${failedPairs.length} failed orders...`;
-                 const retriedResults = [];
                  for (let i = 0; i < failedPairs.length; i++) {
                      try {
-                         const result = await processSingleComparison(failedPairs[i]);
-                         // Find the original failed result and update it
-                         const originalIndex = results.findIndex(r => r.orderNumber === `Pair ${i+1}`);
-                         if(originalIndex !== -1) results[originalIndex] = { status: 'success', data: result };
+                         const result = await processSingleComparison(failedPairs[i].pair);
+                         summaryResultsCache[failedPairs[i].originalIndex] = { status: 'success', data: result };
                      } catch (error) {
-                         // It failed again, so we leave the original error message.
-                         console.error(`Retry failed for pair ${i}:`, error);
+                         console.error(`Retry failed for pair ${failedPairs[i].originalIndex}:`, error);
                      }
                  }
             }
 
             batchStatus.textContent = 'All comparisons complete.';
-            renderSummaryReport(results);
+            renderSummaryReport(summaryResultsCache);
             allDomElements.newComparisonBtn.classList.remove('hidden');
         }
 
         async function processSingleComparison(pair) {
-            // This function contains the logic for a single API call
             const { customerFiles, blindIQFiles } = pair;
             
-            const learningIndicator = document.getElementById('learning-indicator');
             let feedbackExamples = "";
             let guidelines = "";
 
@@ -728,8 +690,7 @@
                     let hasMismatch = false;
                     let hasLowConfidence = false;
 
-                    // Check for mismatches or omissions
-                    if (data.customerOrderNumber.result === 'MISMATCH' || data.customerOrderNumber.result === 'OMISSION') hasMismatch = true;
+                    // Check for mismatches or omissions in line items only
                     (data.lineItems || []).forEach(item => {
                         Object.values(item).forEach(field => {
                             if (field && (field.result === 'MISMATCH' || field.result === 'OMISSION')) hasMismatch = true;
@@ -739,7 +700,7 @@
                         });
                     });
 
-                    // If no mismatches, check for low confidence
+                    // If no mismatches, check for low confidence in line items only
                     if (!hasMismatch) {
                         (data.lineItems || []).forEach(item => {
                             Object.values(item).forEach(field => {
@@ -789,7 +750,7 @@
                 header.addEventListener('click', () => {
                     const details = header.nextElementSibling;
                     const summaryIndex = header.dataset.summaryIndex;
-                    const reportData = results[summaryIndex].data;
+                    const reportData = summaryResultsCache[summaryIndex].data;
                     
                     if (details.innerHTML.trim() === '<!-- Detailed report will be injected here -->') {
                         details.innerHTML = renderReportTable(reportData);
@@ -806,8 +767,8 @@
         }
 
         function setupReportInteraction(container, reportData) {
-            const reportContainer = container || allDomElements.reportContent;
-            const dataToUse = reportData || currentReportData;
+            const reportContainer = container;
+            const dataToUse = reportData;
 
             reportContainer.addEventListener('click', (e) => {
                 const target = e.target.closest('.reportable-cell, .spec-text');

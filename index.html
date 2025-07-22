@@ -13,6 +13,7 @@
         .drop-zone {
             border: 2px dashed #cbd5e1;
             transition: background-color 0.2s ease-in-out, border-color 0.2s ease-in-out;
+            min-height: 120px; /* Reduced height */
         }
         .drop-zone.drag-over {
             background-color: #e2e8f0;
@@ -119,6 +120,11 @@
             cursor: pointer;
             border: 2px solid white;
         }
+        .summary-item-details {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.5s ease-in-out;
+        }
     </style>
 </head>
 <body class="bg-slate-50 text-slate-800">
@@ -189,38 +195,21 @@
 
             <!-- Upload Section -->
             <div id="upload-section">
-                <div class="grid md:grid-cols-2 gap-8 mb-8">
-                    <!-- Customer Order Upload -->
-                    <div id="customer-drop-zone" class="drop-zone rounded-lg p-6 text-center cursor-pointer bg-white shadow-sm">
-                        <div class="flex flex-col items-center justify-center h-full">
-                            <svg class="w-12 h-12 text-slate-400 mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m.75 12l3 3m0 0l3-3m-3 3v-6m-1.5-9H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" /></svg>
-                            <h3 class="text-lg font-semibold text-slate-700">Customer Order(s)</h3>
-                            <p class="text-sm text-slate-500">Drag & drop files here, or click to select</p>
-                            <input type="file" id="customer-file-input" class="hidden" multiple accept=".pdf,.jpg,.jpeg,.png">
-                        </div>
-                        <ul id="customer-file-list" class="mt-4 text-left"></ul>
-                    </div>
-                    <!-- Blind IQ Order Upload -->
-                    <div id="blindiq-drop-zone" class="drop-zone rounded-lg p-6 text-center cursor-pointer bg-white shadow-sm">
-                        <div class="flex flex-col items-center justify-center h-full">
-                            <svg class="w-12 h-12 text-slate-400 mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75c0-.231-.035-.454-.1-.664M6.75 7.5h10.5a2.25 2.25 0 012.25 2.25v7.5a2.25 2.25 0 01-2.25-2.25H6.75a2.25 2.25 0 01-2.25-2.25v-7.5a2.25 2.25 0 012.25-2.25z" /></svg>
-                            <h3 class="text-lg font-semibold text-slate-700">Blind IQ Order(s)</h3>
-                            <p class="text-sm text-slate-500">Drag & drop files here, or click to select</p>
-                            <input type="file" id="blindiq-file-input" class="hidden" multiple accept=".pdf,.jpg,.jpeg,.png">
-                        </div>
-                        <ul id="blindiq-file-list" class="mt-4 text-left"></ul>
-                    </div>
+                <div id="upload-pairs-container" class="space-y-6">
+                    <!-- Upload pair template will be cloned here -->
                 </div>
-                <!-- Action Button -->
-                <div class="text-center mb-8">
-                    <button id="compare-btn" class="bg-indigo-600 text-white font-bold py-3 px-8 rounded-lg shadow-md hover:bg-indigo-700 disabled:bg-slate-300 disabled:cursor-not-allowed transition-colors" disabled>Compare Orders</button>
+                <div class="mt-6 flex justify-center">
+                    <button id="add-pair-btn" class="bg-slate-200 text-slate-800 font-bold py-2 px-4 rounded-lg hover:bg-slate-300 transition-colors">+ Add Another Order</button>
+                </div>
+                <div class="text-center mt-8 mb-8">
+                    <button id="compare-btn" class="bg-indigo-600 text-white font-bold py-3 px-8 rounded-lg shadow-md hover:bg-indigo-700 disabled:bg-slate-300 disabled:cursor-not-allowed transition-colors" disabled>Run Comparisons</button>
                 </div>
             </div>
 
             <!-- Comparison Report Section -->
             <div id="report-section" class="bg-white rounded-lg shadow-md p-6 md:p-8 hidden">
                 <div id="report-actions" class="flex justify-between items-center mb-6 border-b pb-4">
-                     <h2 class="text-2xl font-bold text-slate-900">Comparison Report</h2>
+                     <h2 class="text-2xl font-bold text-slate-900">Comparison Summary</h2>
                      <button id="new-comparison-btn" class="bg-slate-200 text-slate-800 font-bold py-2 px-4 rounded-lg hover:bg-slate-300 transition-colors hidden">Start New Comparison</button>
                 </div>
                 <div id="report-content"></div>
@@ -254,6 +243,30 @@
             <div class="px-6 py-4 bg-slate-50 rounded-b-lg flex justify-end gap-3"><button id="cancel-feedback-btn" class="bg-white text-slate-700 font-semibold py-2 px-4 rounded-md border border-slate-300 hover:bg-slate-100">Cancel</button><button id="submit-feedback-btn" class="bg-indigo-600 text-white font-bold py-2 px-4 rounded-md hover:bg-indigo-700">Submit Feedback</button></div>
         </div>
     </div>
+
+    <!-- Template for upload pairs -->
+    <template id="upload-pair-template">
+        <div class="upload-pair border-t-2 pt-6">
+            <div class="grid md:grid-cols-2 gap-8">
+                <div class="drop-zone rounded-lg p-4 text-center cursor-pointer bg-white shadow-sm">
+                    <div class="flex flex-col items-center justify-center h-full">
+                        <h3 class="text-lg font-semibold text-slate-700">Customer Order(s)</h3>
+                        <p class="text-sm text-slate-500">Drag & drop or click</p>
+                        <input type="file" class="hidden customer-file-input" multiple accept=".pdf,.jpg,.jpeg,.png">
+                    </div>
+                    <ul class="mt-2 text-left customer-file-list"></ul>
+                </div>
+                <div class="drop-zone rounded-lg p-4 text-center cursor-pointer bg-white shadow-sm">
+                    <div class="flex flex-col items-center justify-center h-full">
+                        <h3 class="text-lg font-semibold text-slate-700">Blind IQ Order(s)</h3>
+                        <p class="text-sm text-slate-500">Drag & drop or click</p>
+                        <input type="file" class="hidden blindiq-file-input" multiple accept=".pdf,.jpg,.jpeg,.png">
+                    </div>
+                    <ul class="mt-2 text-left blindiq-file-list"></ul>
+                </div>
+            </div>
+        </div>
+    </template>
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
@@ -294,25 +307,45 @@
             alert("Could not connect to the database. Please ensure your Firebase configuration is correct.");
         }
 
-        let customerFiles = [], blindIQFiles = [], currentReportData = {}, itemToCorrect = null, pastedImageB64 = null;
+        let comparisonPairs = [];
+        let currentReportData = {}, itemToCorrect = null, pastedImageB64 = null;
+        let historyDataCache = [];
 
         const allDomElements = {
-            customerDropZone: document.getElementById('customer-drop-zone'), customerFileInput: document.getElementById('customer-file-input'), customerFileList: document.getElementById('customer-file-list'),
-            blindIQDropZone: document.getElementById('blindiq-drop-zone'), blindIQFileInput: document.getElementById('blindiq-file-input'), blindIQFileList: document.getElementById('blindiq-file-list'),
-            compareBtn: document.getElementById('compare-btn'), reportSection: document.getElementById('report-section'), reportContent: document.getElementById('report-content'),
-            feedbackModal: document.getElementById('feedback-modal'), feedbackModalTitle: document.getElementById('feedback-modal-title'), incorrectItemDetails: document.getElementById('incorrect-item-details'),
-            feedbackExplanation: document.getElementById('feedback-explanation'), cancelFeedbackBtn: document.getElementById('cancel-feedback-btn'), submitFeedbackBtn: document.getElementById('submit-feedback-btn'),
-            historySection: document.getElementById('history-section'), historySearchInput: document.getElementById('history-search-input'), historySearchBtn: document.getElementById('history-search-btn'),
-            historyResults: document.getElementById('history-results'), uploadSection: document.getElementById('upload-section'), newComparisonBtn: document.getElementById('new-comparison-btn'),
+            uploadPairsContainer: document.getElementById('upload-pairs-container'),
+            addPairBtn: document.getElementById('add-pair-btn'),
+            uploadPairTemplate: document.getElementById('upload-pair-template'),
+            compareBtn: document.getElementById('compare-btn'), 
+            reportSection: document.getElementById('report-section'), 
+            reportContent: document.getElementById('report-content'),
+            feedbackModal: document.getElementById('feedback-modal'), 
+            feedbackModalTitle: document.getElementById('feedback-modal-title'), 
+            incorrectItemDetails: document.getElementById('incorrect-item-details'),
+            feedbackExplanation: document.getElementById('feedback-explanation'), 
+            cancelFeedbackBtn: document.getElementById('cancel-feedback-btn'), 
+            submitFeedbackBtn: document.getElementById('submit-feedback-btn'),
+            historySection: document.getElementById('history-section'), 
+            historySearchInput: document.getElementById('history-search-input'), 
+            historySearchBtn: document.getElementById('history-search-btn'),
+            historyResults: document.getElementById('history-results'), 
+            uploadSection: document.getElementById('upload-section'), 
+            newComparisonBtn: document.getElementById('new-comparison-btn'),
             clearHistoryBtn: document.getElementById('clear-history-btn'),
             feedbackTextareaContainer: document.getElementById('feedback-textarea-container'),
             feedbackImageContainer: document.getElementById('feedback-image-container'),
             feedbackImagePreview: document.getElementById('feedback-image-preview'),
             feedbackImageDelete: document.getElementById('feedback-image-delete'),
-            guidelineModal: document.getElementById('guideline-modal'), addGuidelineBtn: document.getElementById('add-guideline-btn'), cancelGuidelineBtn: document.getElementById('cancel-guideline-btn'),
-            saveGuidelineBtn: document.getElementById('save-guideline-btn'), guidelineInput: document.getElementById('guideline-input'), guidelinesList: document.getElementById('guidelines-list'),
-            guidelinesSection: document.getElementById('guidelines-section'), toggleGuidelinesBtn: document.getElementById('toggle-guidelines-btn'),
-            dashboardSection: document.getElementById('dashboard-section'), toggleDashboardBtn: document.getElementById('toggle-dashboard-btn'), dashboardContent: document.getElementById('dashboard-content')
+            guidelineModal: document.getElementById('guideline-modal'), 
+            addGuidelineBtn: document.getElementById('add-guideline-btn'), 
+            cancelGuidelineBtn: document.getElementById('cancel-guideline-btn'),
+            saveGuidelineBtn: document.getElementById('save-guideline-btn'), 
+            guidelineInput: document.getElementById('guideline-input'), 
+            guidelinesList: document.getElementById('guidelines-list'),
+            guidelinesSection: document.getElementById('guidelines-section'), 
+            toggleGuidelinesBtn: document.getElementById('toggle-guidelines-btn'),
+            dashboardSection: document.getElementById('dashboard-section'), 
+            toggleDashboardBtn: document.getElementById('toggle-dashboard-btn'), 
+            dashboardContent: document.getElementById('dashboard-content')
         };
 
         const fileToB64 = (file) => new Promise((resolve, reject) => {
@@ -354,12 +387,42 @@
             });
         }
         
-        function checkCompareButtonState() { allDomElements.compareBtn.disabled = !(customerFiles.length > 0 && blindIQFiles.length > 0); }
+        function checkCompareButtonState() {
+            const allPairsValid = comparisonPairs.every(pair => pair.customerFiles.length > 0 && pair.blindIQFiles.length > 0);
+            allDomElements.compareBtn.disabled = !allPairsValid;
+        }
 
-        setupDropZone(allDomElements.customerDropZone, allDomElements.customerFileInput, allDomElements.customerFileList, customerFiles);
-        setupDropZone(allDomElements.blindIQDropZone, allDomElements.blindIQFileInput, allDomElements.blindIQFileList, blindIQFiles);
+        function addNewPair() {
+            if (comparisonPairs.length >= 10) {
+                allDomElements.addPairBtn.disabled = true;
+                return;
+            }
+
+            const newPair = { customerFiles: [], blindIQFiles: [] };
+            comparisonPairs.push(newPair);
+            const index = comparisonPairs.length - 1;
+
+            const template = allDomElements.uploadPairTemplate.content.cloneNode(true);
+            const pairElement = template.querySelector('.upload-pair');
+            pairElement.dataset.index = index;
+
+            const customerDropZone = pairElement.querySelector('.drop-zone:first-child');
+            const customerFileInput = pairElement.querySelector('.customer-file-input');
+            const customerFileList = pairElement.querySelector('.customer-file-list');
+            setupDropZone(customerDropZone, customerFileInput, customerFileList, newPair.customerFiles);
+
+            const blindiqDropZone = pairElement.querySelector('.drop-zone:last-child');
+            const blindiqFileInput = pairElement.querySelector('.blindiq-file-input');
+            const blindiqFileList = pairElement.querySelector('.blindiq-file-list');
+            setupDropZone(blindiqDropZone, blindiqFileInput, blindiqFileList, newPair.blindIQFiles);
+
+            allDomElements.uploadPairsContainer.appendChild(template);
+            checkCompareButtonState();
+        }
+
+        allDomElements.addPairBtn.addEventListener('click', addNewPair);
         
-        allDomElements.compareBtn.addEventListener('click', runComparison);
+        allDomElements.compareBtn.addEventListener('click', runAllComparisons);
         allDomElements.newComparisonBtn.addEventListener('click', resetUI);
         allDomElements.historySearchBtn.addEventListener('click', findHistory);
         allDomElements.clearHistoryBtn.addEventListener('click', () => {
@@ -384,15 +447,15 @@
             allDomElements.clearHistoryBtn.classList.add('hidden');
             allDomElements.historyResults.innerHTML = '';
             allDomElements.historySearchInput.value = '';
-            customerFiles.length = 0;
-            blindIQFiles.length = 0;
-            updateFileList(allDomElements.customerFileList, customerFiles);
-            updateFileList(allDomElements.blindIQFileList, blindIQFiles);
+            
+            comparisonPairs = [];
+            allDomElements.uploadPairsContainer.innerHTML = '';
+            addNewPair();
             checkCompareButtonState();
         }
 
         async function findHistory() {
-            const searchTerm = allDomElements.historySearchInput.value.trim();
+            const searchTerm = allDomElements.historySearchInput.value.trim().toLowerCase();
             if (!searchTerm) { alert("Please enter an order number to search."); return; }
             if (!db) { alert("History feature is unavailable. Database not connected."); return; }
 
@@ -402,12 +465,12 @@
                 const historyQuery = query(collection(db, `orderbot_comparisons`));
                 const querySnapshot = await getDocs(historyQuery);
                 
-                const allDocs = [];
-                querySnapshot.forEach(doc => { allDocs.push(doc.data()); });
+                historyDataCache = [];
+                querySnapshot.forEach(doc => { historyDataCache.push(doc.data()); });
 
-                const filteredDocs = allDocs.filter(doc => 
-                    (doc.bdoOrderNumber && doc.bdoOrderNumber.toLowerCase().includes(searchTerm.toLowerCase())) ||
-                    (doc.customerOrderNumber && doc.customerOrderNumber.customerValue && doc.customerOrderNumber.customerValue.toLowerCase().includes(searchTerm.toLowerCase()))
+                const filteredDocs = historyDataCache.filter(doc => 
+                    (doc.bdoOrderNumber && String(doc.bdoOrderNumber).toLowerCase().includes(searchTerm)) ||
+                    (doc.customerOrderNumber && doc.customerOrderNumber.customerValue && doc.customerOrderNumber.customerValue.toLowerCase().includes(searchTerm))
                 );
 
                 if (filteredDocs.length === 0) {
@@ -416,7 +479,6 @@
                     return;
                 }
                 
-                // Group by order number and find the latest for each
                 const latestComparisons = new Map();
                 filteredDocs.forEach(doc => {
                     const orderNum = doc.bdoOrderNumber || (doc.customerOrderNumber ? doc.customerOrderNumber.customerValue : null);
@@ -432,14 +494,55 @@
                     .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 
                 allDomElements.historyResults.innerHTML = '';
-                finalResults.forEach(data => {
+                finalResults.forEach((data, index) => {
                     const historyItemDiv = document.createElement('div');
                     historyItemDiv.className = 'history-item border border-slate-200 rounded-lg p-4';
+                    historyItemDiv.dataset.historyIndex = index;
                     const formattedDate = new Date(data.timestamp).toLocaleString('en-ZA');
                     historyItemDiv.innerHTML = `<h4 class="font-bold text-md text-slate-700">Comparison from: ${formattedDate}</h4>`;
                     historyItemDiv.innerHTML += renderReportTable(data);
                     allDomElements.historyResults.appendChild(historyItemDiv);
                 });
+                
+                allDomElements.historyResults.querySelectorAll('.history-item').forEach(item => {
+                    item.addEventListener('click', (e) => {
+                        const target = e.target.closest('.reportable-cell, .spec-text');
+                        if (!target) return;
+
+                        const historyIndex = item.dataset.historyIndex;
+                        const reportData = finalResults[historyIndex];
+                        
+                        const lineItemElement = target.closest('.line-item-container');
+                        if (!lineItemElement) return;
+
+                        const rowIndex = lineItemElement.dataset.rowIndex;
+                        const lineItem = reportData.lineItems[rowIndex];
+                        let fieldName, fieldData;
+
+                        if (target.classList.contains('spec-text')) {
+                            const specIndex = target.dataset.specIndex;
+                            const spec = lineItem.specifications[specIndex];
+                            fieldName = spec.specName;
+                            fieldData = spec.specComparison;
+                        } else {
+                            fieldName = target.dataset.fieldName;
+                            fieldData = lineItem[fieldName];
+                        }
+
+                        if (!fieldData) return;
+
+                        itemToCorrect = {
+                            lineItemIdentifier: { item: lineItem.item.blindIQValue, location: lineItem.location.blindIQValue },
+                            fieldName: fieldName,
+                            fieldData: fieldData
+                        };
+                        
+                        allDomElements.feedbackModalTitle.textContent = `Correcting error for: ${fieldName}`;
+                        allDomElements.incorrectItemDetails.textContent = JSON.stringify(fieldData, null, 2);
+                        allDomElements.feedbackModal.style.display = 'flex';
+                    });
+                });
+
                 allDomElements.clearHistoryBtn.classList.remove('hidden');
 
             } catch (error) {
@@ -449,165 +552,262 @@
             }
         }
 
-        async function runComparison() {
+        async function runAllComparisons() {
             allDomElements.uploadSection.classList.add('hidden');
             allDomElements.reportSection.classList.remove('hidden');
             allDomElements.newComparisonBtn.classList.add('hidden');
-            allDomElements.reportContent.innerHTML = `<div class="flex flex-col items-center justify-center p-8"><div class="loader"></div><p class="mt-4 text-slate-600 font-semibold">Hi, I am OrderBot! Analyzing documents...</p><div id="learning-indicator" class="mt-2"></div></div>`;
+            allDomElements.reportContent.innerHTML = `<div class="flex flex-col items-center justify-center p-8"><div class="loader"></div><p id="batch-status" class="mt-4 text-slate-600 font-semibold">Starting batch comparison...</p></div>`;
             
-            try {
-                const learningIndicator = document.getElementById('learning-indicator');
-                let feedbackExamples = "";
-                let guidelines = "";
+            const batchStatus = document.getElementById('batch-status');
+            const results = [];
+            let failedPairs = [];
 
-                if (db) {
-                    const feedbackQuery = query(collection(db, `orderbot_feedback`));
-                    const guidelineQuery = query(collection(db, `orderbot_guidelines`));
-
-                    const [feedbackSnapshot, guidelineSnapshot] = await Promise.all([getDocs(feedbackQuery), getDocs(guidelineQuery)]);
-                    
-                    const feedbackDocs = [];
-                    feedbackSnapshot.forEach(doc => feedbackDocs.push(doc.data()));
-                    if (feedbackDocs.length > 0) {
-                        learningIndicator.innerHTML = `<div class="flex items-center gap-2 text-sm text-indigo-600 font-semibold"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 8a6 6 0 01-7.743 5.743L10 14l-1 1-1 1H6v2H2v-4l4.257-4.257A6 6 0 1118 8zm-6-4a1 1 0 100 2 1 1 0 000-2z" clip-rule="evenodd" /></svg><span>Applying learnings from past corrections...</span></div>`;
-                        feedbackDocs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-                        feedbackExamples = "\n## 5. CORRECTION EXAMPLES (LEARNING)\n" + feedbackDocs.slice(0, 10).map((fb, i) => `Example ${i + 1}:\n- Incorrect Item: ${JSON.stringify(fb.incorrectItem)}\n- Enhanced Explanation: "${fb.enhancedExplanation}"\n`).join("\n");
-                    }
-
-                    const guidelineDocs = [];
-                    guidelineSnapshot.forEach(doc => guidelineDocs.push(doc.data().enhancedGuideline));
-                    if (guidelineDocs.length > 0) {
-                        guidelines = "\n## 6. USER-DEFINED GUIDELINES (CRITICAL)\nYou must follow these rules without exception:\n- " + guidelineDocs.join("\n- ") + "\n";
-                    }
+            for (let i = 0; i < comparisonPairs.length; i++) {
+                batchStatus.textContent = `Processing order ${i + 1} of ${comparisonPairs.length}...`;
+                try {
+                    const result = await processSingleComparison(comparisonPairs[i]);
+                    results.push({ status: 'success', data: result });
+                } catch (error) {
+                    console.error(`Failed comparison for pair ${i}:`, error);
+                    results.push({ status: 'failed', error: error.message, orderNumber: `Pair ${i+1}` });
+                    failedPairs.push(comparisonPairs[i]);
                 }
+            }
 
-                const systemPrompt = `
-                    # OrderBot - System Prompt
-                    ## 1. IDENTITY & PERSONA: You are OrderBot, an AI assistant.
-                    ## 2. CORE DIRECTIVE: Analyze 'customer' vs 'blindiq' files, extract parameters, compare them, and return a structured JSON report.
-                    ## 3. DATA EXTRACTION & ANALYSIS LOGIC:
-                    - For each line item, extract the primary fields: Item, Location, QTY, Width, Drop, Colour, Control, Blind Type, Range, and Fix. The 'Item' should correspond to the alphabetical identifier (A, B, C...).
-                    - CRITICAL: Look for a secondary line of text below the primary fields. This line contains detailed specifications separated by '|' and using '='. You MUST parse this line.
-                    - For each key-value pair in the secondary line (e.g., "Val Returns=None"), treat it as a distinct specification.
-                    - Compare all primary fields, all parsed specifications, and the special instructions between the two documents.
-                    ## 4. JSON OUTPUT STRUCTURE: Respond ONLY with a single JSON object conforming to the schema.
-                    ${guidelines}
-                    ${feedbackExamples}
-                `;
+            if (failedPairs.length > 0) {
+                 batchStatus.textContent = `Retrying ${failedPairs.length} failed orders...`;
+                 const retriedResults = [];
+                 for (let i = 0; i < failedPairs.length; i++) {
+                     try {
+                         const result = await processSingleComparison(failedPairs[i]);
+                         // Find the original failed result and update it
+                         const originalIndex = results.findIndex(r => r.orderNumber === `Pair ${i+1}`);
+                         if(originalIndex !== -1) results[originalIndex] = { status: 'success', data: result };
+                     } catch (error) {
+                         // It failed again, so we leave the original error message.
+                         console.error(`Retry failed for pair ${i}:`, error);
+                     }
+                 }
+            }
 
-                const parts = [{ text: systemPrompt }];
+            batchStatus.textContent = 'All comparisons complete.';
+            renderSummaryReport(results);
+            allDomElements.newComparisonBtn.classList.remove('hidden');
+        }
+
+        async function processSingleComparison(pair) {
+            // This function contains the logic for a single API call
+            const { customerFiles, blindIQFiles } = pair;
+            
+            const learningIndicator = document.getElementById('learning-indicator');
+            let feedbackExamples = "";
+            let guidelines = "";
+
+            if (db) {
+                const feedbackQuery = query(collection(db, `orderbot_feedback`));
+                const guidelineQuery = query(collection(db, `orderbot_guidelines`));
+                const [feedbackSnapshot, guidelineSnapshot] = await Promise.all([getDocs(feedbackQuery), getDocs(guidelineQuery)]);
                 
-                const customerFilePromises = customerFiles.map(fileToB64);
-                const blindIQFilePromises = blindIQFiles.map(fileToB64);
-                const [customerB64FileObjects, blindIQB64FileObjects] = await Promise.all([
-                    Promise.all(customerFilePromises),
-                    Promise.all(blindIQFilePromises)
-                ]);
-
-                for (const fileObj of customerB64FileObjects) {
-                    parts.push({ text: `\n--- START CUSTOMER FILE: ${fileObj.name} ---` });
-                    parts.push({ inlineData: { mimeType: fileObj.type, data: fileObj.data } });
-                }
-                for (const fileObj of blindIQB64FileObjects) {
-                    parts.push({ text: `\n--- START BLIND IQ FILE: ${fileObj.name} ---` });
-                    parts.push({ inlineData: { mimeType: fileObj.type, data: fileObj.data } });
+                const feedbackDocs = [];
+                feedbackSnapshot.forEach(doc => feedbackDocs.push(doc.data()));
+                if (feedbackDocs.length > 0) {
+                    feedbackDocs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+                    feedbackExamples = "\n## 5. CORRECTION EXAMPLES (LEARNING)\n" + feedbackDocs.slice(0, 10).map((fb, i) => `Example ${i + 1}:\n- Incorrect Item: ${JSON.stringify(fb.incorrectItem)}\n- Enhanced Explanation: "${fb.enhancedExplanation}"\n`).join("\n");
                 }
 
-                const comparisonFieldSchema = { type: "OBJECT", properties: { "customerValue": { "type": "STRING" }, "blindIQValue": { "type": "STRING" }, "result": { "type": "STRING", "enum": ["MATCH", "MISMATCH", "OMISSION", "NOTE"] }, "confidence": { "type": "NUMBER" } }, required: ["customerValue", "blindIQValue", "result", "confidence"] };
-                const schema = {
-                    type: "OBJECT",
-                    properties: {
-                        "bdoOrderNumber": { "type": "STRING" },
-                        "customerOrderNumber": comparisonFieldSchema,
-                        "specialInstructions": comparisonFieldSchema,
-                        "lineItems": {
-                            type: "ARRAY",
-                            items: {
-                                type: "OBJECT",
-                                properties: {
-                                    "item": comparisonFieldSchema,
-                                    "location": comparisonFieldSchema,
-                                    "qty": comparisonFieldSchema,
-                                    "width": comparisonFieldSchema,
-                                    "drop": comparisonFieldSchema,
-                                    "colour": comparisonFieldSchema,
-                                    "control": comparisonFieldSchema,
-                                    "blindType": comparisonFieldSchema,
-                                    "range": comparisonFieldSchema,
-                                    "fix": comparisonFieldSchema,
-                                    "specifications": {
-                                        type: "ARRAY",
-                                        items: {
-                                            type: "OBJECT",
-                                            properties: {
-                                                "specName": { "type": "STRING" },
-                                                "specComparison": comparisonFieldSchema
-                                            },
-                                            required: ["specName", "specComparison"]
-                                        }
+                const guidelineDocs = [];
+                guidelineSnapshot.forEach(doc => guidelineDocs.push(doc.data().enhancedGuideline));
+                if (guidelineDocs.length > 0) {
+                    guidelines = "\n## 6. USER-DEFINED GUIDELINES (CRITICAL)\nYou must follow these rules without exception:\n- " + guidelineDocs.join("\n- ") + "\n";
+                }
+            }
+
+            const systemPrompt = `
+                # OrderBot - System Prompt
+                ## 1. IDENTITY & PERSONA: You are OrderBot, an AI assistant.
+                ## 2. CORE DIRECTIVE: Analyze 'customer' vs 'blindiq' files, extract parameters, compare them, and return a structured JSON report.
+                ## 3. DATA EXTRACTION & ANALYSIS LOGIC:
+                - For each line item, extract the primary fields: Item, Location, QTY, Width, Drop, Colour, Control, Blind Type, Range, and Fix. The 'Item' should correspond to the alphabetical identifier (A, B, C...).
+                - CRITICAL: Look for a secondary line of text below the primary fields. This line contains detailed specifications separated by '|' and using '='. You MUST parse this line.
+                - For each key-value pair in the secondary line (e.g., "Val Returns=None"), treat it as a distinct specification.
+                - Compare all primary fields, all parsed specifications, and the special instructions between the two documents.
+                ## 4. JSON OUTPUT STRUCTURE: Respond ONLY with a single JSON object conforming to the schema.
+                ${guidelines}
+                ${feedbackExamples}
+            `;
+
+            const parts = [{ text: systemPrompt }];
+            
+            const customerFilePromises = customerFiles.map(fileToB64);
+            const blindIQFilePromises = blindIQFiles.map(fileToB64);
+            const [customerB64FileObjects, blindIQB64FileObjects] = await Promise.all([
+                Promise.all(customerFilePromises),
+                Promise.all(blindIQFilePromises)
+            ]);
+
+            for (const fileObj of customerB64FileObjects) {
+                parts.push({ text: `\n--- START CUSTOMER FILE: ${fileObj.name} ---` });
+                parts.push({ inlineData: { mimeType: fileObj.type, data: fileObj.data } });
+            }
+            for (const fileObj of blindIQB64FileObjects) {
+                parts.push({ text: `\n--- START BLIND IQ FILE: ${fileObj.name} ---` });
+                parts.push({ inlineData: { mimeType: fileObj.type, data: fileObj.data } });
+            }
+
+            const comparisonFieldSchema = { type: "OBJECT", properties: { "customerValue": { "type": "STRING" }, "blindIQValue": { "type": "STRING" }, "result": { "type": "STRING", "enum": ["MATCH", "MISMATCH", "OMISSION", "NOTE"] }, "confidence": { "type": "NUMBER" } }, required: ["customerValue", "blindIQValue", "result", "confidence"] };
+            const schema = {
+                type: "OBJECT",
+                properties: {
+                    "bdoOrderNumber": { "type": "STRING" },
+                    "customerOrderNumber": comparisonFieldSchema,
+                    "specialInstructions": comparisonFieldSchema,
+                    "lineItems": {
+                        type: "ARRAY",
+                        items: {
+                            type: "OBJECT",
+                            properties: {
+                                "item": comparisonFieldSchema,
+                                "location": comparisonFieldSchema,
+                                "qty": comparisonFieldSchema,
+                                "width": comparisonFieldSchema,
+                                "drop": comparisonFieldSchema,
+                                "colour": comparisonFieldSchema,
+                                "control": comparisonFieldSchema,
+                                "blindType": comparisonFieldSchema,
+                                "range": comparisonFieldSchema,
+                                "fix": comparisonFieldSchema,
+                                "specifications": {
+                                    type: "ARRAY",
+                                    items: {
+                                        type: "OBJECT",
+                                        properties: {
+                                            "specName": { "type": "STRING" },
+                                            "specComparison": comparisonFieldSchema
+                                        },
+                                        required: ["specName", "specComparison"]
                                     }
-                                },
-                                required: ["item", "location", "qty", "width", "drop", "colour", "control", "blindType", "range", "fix"]
-                            }
+                                }
+                            },
+                            required: ["item", "location", "qty", "width", "drop", "colour", "control", "blindType", "range", "fix"]
                         }
-                    },
-                    required: ["bdoOrderNumber", "customerOrderNumber"]
-                };
-
-                const geminiPayload = { contents: [{ role: "user", parts: parts }], generationConfig: { responseMimeType: "application/json", responseSchema: schema } };
-                
-                const proxyPayload = {
-                    model: 'gemini-2.5-pro',
-                    payload: geminiPayload
-                };
-
-                const response = await fetch(PROXY_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proxyPayload) });
-                
-                const resultText = await response.text();
-                if (!response.ok) {
-                    throw new Error(`API Error: ${response.status} ${response.statusText} - ${resultText}`);
-                }
-                
-                const result = JSON.parse(resultText);
-                console.log("Raw API Response:", result);
-
-                if (!result.candidates || result.candidates.length === 0 || !result.candidates[0].content) {
-                    let errorMessage = "No valid content received from the API.";
-                    if (result.promptFeedback?.blockReason) {
-                        errorMessage += ` Reason: ${result.promptFeedback.blockReason}.`;
-                    } else if (result.error) {
-                        errorMessage += ` Details: ${result.error.message}`;
                     }
-                    throw new Error(`${errorMessage} Raw Response: <pre>${JSON.stringify(result, null, 2)}</pre>`);
-                }
+                },
+                required: ["bdoOrderNumber", "customerOrderNumber"]
+            };
 
-                const data = JSON.parse(result.candidates[0].content.parts[0].text);
-                currentReportData = data;
-                renderReport(currentReportData);
-
-                if (db && data.bdoOrderNumber) {
-                    await addDoc(collection(db, `orderbot_comparisons`), { ...data, timestamp: new Date().toISOString(), userId: userId });
-                }
-                allDomElements.newComparisonBtn.classList.remove('hidden');
-
-            } catch (error) {
-                console.error("Comparison failed:", error);
-                allDomElements.reportContent.innerHTML = `<div class="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 rounded-md" role="alert"><p class="font-bold">Comparison Failed</p><p>${error.message}</p></div>`;
-                allDomElements.newComparisonBtn.classList.remove('hidden');
+            const geminiPayload = { contents: [{ role: "user", parts: parts }], generationConfig: { responseMimeType: "application/json", responseSchema: schema } };
+            const proxyPayload = { model: 'gemini-2.5-pro', payload: geminiPayload };
+            const response = await fetch(PROXY_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proxyPayload) });
+            const resultText = await response.text();
+            if (!response.ok) {
+                throw new Error(`API Error: ${response.status} ${response.statusText} - ${resultText}`);
             }
+            const result = JSON.parse(resultText);
+            if (!result.candidates || result.candidates.length === 0 || !result.candidates[0].content) {
+                let errorMessage = "No valid content received from the API.";
+                if (result.promptFeedback?.blockReason) {
+                    errorMessage += ` Reason: ${result.promptFeedback.blockReason}.`;
+                } else if (result.error) {
+                    errorMessage += ` Details: ${result.error.message}`;
+                }
+                throw new Error(errorMessage);
+            }
+            const data = JSON.parse(result.candidates[0].content.parts[0].text);
+            if (db && data.bdoOrderNumber) {
+                await addDoc(collection(db, `orderbot_comparisons`), { ...data, timestamp: new Date().toISOString(), userId: userId });
+            }
+            return data;
         }
 
-        function renderReport(data) {
-            if (!data || (!data.lineItems && !data.bdoOrderNumber)) {
-                allDomElements.reportContent.innerHTML = `<div class="bg-blue-100 border-l-4 border-blue-500 text-blue-700 p-4 rounded-md"><p>No items to compare were found in the documents.</p></div>`;
-                return;
-            }
-            allDomElements.reportContent.innerHTML = renderReportTable(data);
+        function renderSummaryReport(results) {
+            let summaryHtml = '';
+            results.forEach((result, index) => {
+                if (result.status === 'success') {
+                    const data = result.data;
+                    let status = 'match';
+                    let hasMismatch = false;
+                    let hasLowConfidence = false;
+
+                    // Check for mismatches or omissions
+                    if (data.customerOrderNumber.result === 'MISMATCH' || data.customerOrderNumber.result === 'OMISSION') hasMismatch = true;
+                    (data.lineItems || []).forEach(item => {
+                        Object.values(item).forEach(field => {
+                            if (field && (field.result === 'MISMATCH' || field.result === 'OMISSION')) hasMismatch = true;
+                        });
+                        (item.specifications || []).forEach(spec => {
+                            if (spec.specComparison.result === 'MISMATCH' || spec.specComparison.result === 'OMISSION') hasMismatch = true;
+                        });
+                    });
+
+                    // If no mismatches, check for low confidence
+                    if (!hasMismatch) {
+                        (data.lineItems || []).forEach(item => {
+                            Object.values(item).forEach(field => {
+                                if (field && (field.confidence * 100) < 90) hasLowConfidence = true;
+                            });
+                            (item.specifications || []).forEach(spec => {
+                                if ((spec.specComparison.confidence * 100) < 90) hasLowConfidence = true;
+                            });
+                        });
+                    }
+
+                    if (hasMismatch) status = 'mismatch';
+                    else if (hasLowConfidence) status = 'low-confidence';
+
+                    const statusClasses = {
+                        'match': 'bg-green-100 text-green-800',
+                        'mismatch': 'bg-red-100 text-red-800',
+                        'low-confidence': 'bg-orange-100 text-orange-800'
+                    }[status];
+
+                    summaryHtml += `
+                        <div class="summary-item border rounded-lg overflow-hidden">
+                            <div class="summary-item-header p-4 cursor-pointer flex justify-between items-center ${statusClasses}" data-summary-index="${index}">
+                                <span class="font-bold">${data.bdoOrderNumber || 'Unknown Order'}</span>
+                                <span class="text-sm font-semibold">${status.replace('-', ' ').toUpperCase()}</span>
+                            </div>
+                            <div class="summary-item-details p-4 border-t border-slate-200">
+                                <!-- Detailed report will be injected here -->
+                            </div>
+                        </div>
+                    `;
+                } else {
+                     summaryHtml += `
+                        <div class="summary-item border rounded-lg overflow-hidden">
+                            <div class="p-4 bg-gray-100 text-gray-800">
+                                <span class="font-bold">${result.orderNumber} - FAILED</span>
+                                <p class="text-sm">${result.error}</p>
+                            </div>
+                        </div>
+                    `;
+                }
+            });
+
+            allDomElements.reportContent.innerHTML = `<div class="space-y-4">${summaryHtml}</div>`;
+            
+            allDomElements.reportContent.querySelectorAll('.summary-item-header').forEach(header => {
+                header.addEventListener('click', () => {
+                    const details = header.nextElementSibling;
+                    const summaryIndex = header.dataset.summaryIndex;
+                    const reportData = results[summaryIndex].data;
+                    
+                    if (details.innerHTML.trim() === '<!-- Detailed report will be injected here -->') {
+                        details.innerHTML = renderReportTable(reportData);
+                        setupReportInteraction(details, reportData);
+                    }
+                    
+                    if (details.style.maxHeight) {
+                        details.style.maxHeight = null;
+                    } else {
+                        details.style.maxHeight = details.scrollHeight + "px";
+                    }
+                });
+            });
         }
 
-        function setupReportInteraction() {
-            const reportContainer = allDomElements.reportContent;
-            if (!reportContainer) return;
+        function setupReportInteraction(container, reportData) {
+            const reportContainer = container || allDomElements.reportContent;
+            const dataToUse = reportData || currentReportData;
 
             reportContainer.addEventListener('click', (e) => {
                 const target = e.target.closest('.reportable-cell, .spec-text');
@@ -618,7 +818,7 @@
                 if (!lineItemElement) return;
 
                 const rowIndex = lineItemElement.dataset.rowIndex;
-                const lineItem = currentReportData.lineItems[rowIndex];
+                const lineItem = dataToUse.lineItems[rowIndex];
                 let fieldName, fieldData;
 
                 if (target.classList.contains('spec-text')) {
@@ -650,7 +850,7 @@
             
             const renderCell = (field, fieldName, label) => {
                 const isMismatch = field && field.result === 'MISMATCH';
-                const isLowConfidence = field && field.confidence < 90;
+                const isLowConfidence = field && (field.confidence * 100) < 90;
                 const value = field ? field.blindIQValue : 'N/A';
                 const customerVal = field ? field.customerValue : 'N/A';
                 
@@ -669,7 +869,7 @@
                 } else if (isLowConfidence) {
                     cellClasses += ' bg-orange-50';
                     textClasses += ' text-orange-700';
-                    tooltip = `<div class="tooltip">Confidence: ${field.confidence}%</div>`;
+                    tooltip = `<div class="tooltip">Confidence: ${Math.round(field.confidence * 100)}%</div>`;
                 }
 
                 return `
@@ -700,7 +900,7 @@
                 const specHtml = (lineItem.specifications || []).map((spec, specIndex) => {
                     const isMismatch = spec.specComparison.result === 'MISMATCH';
                     const isOmission = spec.specComparison.result === 'OMISSION';
-                    const isLowConfidence = spec.specComparison.confidence < 90;
+                    const isLowConfidence = (spec.specComparison.confidence * 100) < 90;
 
                     let resultClass = 'spec-match';
                     if (isMismatch) resultClass = 'spec-mismatch';
@@ -716,7 +916,7 @@
                     
                     let tooltip = '';
                     if (isLowConfidence && !isMismatch) {
-                        tooltip = `<div class="tooltip">Confidence: ${spec.specComparison.confidence}%</div>`;
+                        tooltip = `<div class="tooltip">Confidence: ${Math.round(spec.specComparison.confidence * 100)}%</div>`;
                     }
 
                     return `<span class="spec-text ${resultClass}" data-spec-index="${specIndex}">${text}${tooltip}</span>`;
@@ -742,8 +942,6 @@
                     </div>
                 `;
             }).join('');
-
-            setTimeout(setupReportInteraction, 0);
 
             return `${orderNumberRow}${specialInstructionsRow}${lineItemsHtml}`;
         }
@@ -976,6 +1174,7 @@
         }
 
         // Initial Load
+        addNewPair();
         loadAndDisplayGuidelines();
 
     </script>

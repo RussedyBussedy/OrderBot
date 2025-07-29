@@ -1,0 +1,12 @@
+# Ignore the version control directory
+.git
+
+# Ignore the frontend HTML file, it's not needed by the Node.js server
+index.html
+
+# Ignore markdown files like the README
+*.md
+
+# Ignore local development dependencies if they are ever committed
+node_modules
+npm-debug.log

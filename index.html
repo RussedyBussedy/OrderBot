@@ -197,7 +197,7 @@
             <!-- Fabric Management Section (hidden by default) -->
             <div id="fabric-management-section" class="hidden mb-8 bg-white p-6 rounded-lg shadow-sm">
                 <h3 class="font-bold text-lg text-slate-800 mb-2">Fabric Data Management</h3>
-                <p class="text-sm text-slate-600 mb-4">This tool allows you to upload or update the master list of fabric properties in the database. The data below is the corrected and complete list. You only need to click the upload button once to populate the database for the first time.</p>
+                <p class="text-sm text-slate-600 mb-4">This tool allows you to view, edit, and update the master list of fabric properties in the database. Changes saved here will be permanent and used in all future comparisons.</p>
                 <textarea id="fabric-data-input" class="w-full h-64 border rounded p-2 font-mono text-xs"></textarea>
                 <button id="upload-fabrics-btn" class="mt-4 bg-indigo-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-indigo-700">Upload/Update Fabric List</button>
                 <div id="fabric-upload-status" class="mt-4 text-sm"></div>
@@ -666,7 +666,7 @@
                 let content = value;
                 if (isMismatch) { content = `${value} <span class="text-xs font-normal">(vs ${customerVal})</span>`; }
 
-                let cellClasses = 'px-2 py-1 reportable-cell';
+                let cellClasses = 'reportable-cell';
                 let textClasses = 'text-sm text-slate-800';
 
                 if (isMismatch) {
@@ -897,6 +897,7 @@
         // Fabric Management Logic
         allDomElements.uploadFabricsBtn.addEventListener('click', async () => {
             const statusDiv = allDomElements.fabricUploadStatus;
+            
             statusDiv.innerHTML = `<div class="flex items-center gap-2"><div class="loader !w-4 !h-4 !border-2"></div>Deleting old data...</div>`;
             
             try {
@@ -942,119 +943,39 @@
             }
         });
 
-        const rawFabricData = `
-            "Acacia",0.27,2800,"No"
-            "Argent",0.513,2050,"No"
-            "Bahama",0.224,2800,"No"
-            "Bamboo",0.272,2800,"No"
-            "Birdsong",0.27,2050,"No"
-            "Boleyn",0.448,2800,"No"
-            "Brighton Stripe",0.451,2000,"No"
-            "Bubbles",0.284,2800,"No"
-            "Bugs Life",0.452,2050,"No"
-            "Carnival Blockout",0.45,3000,"Yes"
-            "Carnival Filter",0.263,2050,"Out"
-            "Chatsworth",0.32,2850,"No"
-            "Cherry Blossom",0.45,2000,"No"
-            "Chic Filter",0.234,3000,"Out"
-            "Como BO",0.432,2000,"No"
-            "Como Filter",0.272,2050,"No"
-            "Cotton Flower",0.263,2800,"No"
-            "Crush",0.277,2050,"No"
-            "Cullinan",0.5,2050,"No"
-            "Dahlia",0.451,2000,"No"
-            "Daisy",0.451,2000,"No"
-            "Damask",0.401,2800,"No"
-            "Dapple SPC+",0.329,2000,"No"
-            "Daybreak",0.247,3000,"Out"
-            "Dewsbury",0.37,3000,"Yes"
-            "Dinosaurs",0.452,2050,"No"
-            "Draper",0.264,2000,"No"
-            "Dun Block",0.4,2800,"Out"
-            "Dune",0.278,2850,"No"
-            "Dunham",0.388,2000,"Yes"
-            "Edge Block",0.345,3000,"Yes"
-            "Essex",0.227,2000,"No"
-            "Ex Lite",0.423,3000,"No"
-            "Exlite LF",0.26,2000,"No"
-            "Flames",0.27,2050,"No"
-            "Florence",0.27,2800,"No"
-            "Guardian",0.3,2000,"No"
-            "Hampton",0.276,2800,"No"
-            "Haven",0.287,2000,"No"
-            "Haven BO",0.4,2000,"No"
-            "Herringbone",0.408,2000,"No"
-            "Kaleidoscope",0.452,2050,"No"
-            "Kona",0.249,2000,"No"
-            "Kumano BO",0.463,2800,"No"
-            "Lily",0.263,2050,"No"
-            "Linen Block India",0.4,3000,"Yes"
-            "Little Friend",0.452,2050,"No"
-            "Lomond",0.27,2800,"No"
-            "Magnolia",0.301,2050,"No"
-            "Marble",0.433,2750,"No"
-            "Matrix",0.411,2800,"No"
-            "Mistral",0.249,2000,"No"
-            "Mockout",0.4,2800,"Out"
-            "Monet",0.263,2050,"No"
-            "Monet Sheer",0.127,2000,"No"
-            "Montego",0.19,3000,"No"
-            "Monterey",0.276,2800,"No"
-            "Moscow FR",0.5,3200,"Out"
-            "Musa",0.413,2000,"No"
-            "Night Night",0.42,2050,"No"
-            "Night Safari",0.445,2050,"No"
-            "Nordic",0.294,2800,"No"
-            "Nordic BO",0.516,2050,"No"
-            "Orchard BO",0.564,2050,"No"
-            "Ordo",0.275,3000,"Out"
-            "Orphella",0.263,2050,"No"
-            "Oxford",0.205,2050,"No"
-            "Oxford BO",0.41,2800,"No"
-            "Oxford Filter",0.205,3050,"No"
-            "Paradise Palm BO",0.451,2000,"No"
-            "Perspective",0.366,3000,"No"
-            "Perspective Allure",0.512,3000,"No"
-            "Perspective BO",0.6,3000,"No"
-            "Petal BO",0.451,2000,"No"
-            "Phifer Sunscreen",0.45,3200,"Out"
-            "Planetarium",0.452,2000,"No"
-            "Pop BO",0.431,2000,"No"
-            "Pop Filter",0.254,2000,"No"
-            "Reverte",0.423,2000,"No"
-            "Ribble",0.255,2000,"No"
-            "Ribble BO",0.416,2000,"No"
-            "Romany",0.45,2000,"No"
-            "Savanna BO",0.426,2200,"No"
-            "Screen",0.45,3000,"Yes"
-            "Sheer Weave 4500",0.488,3200,"Yes"
-            "Sheer Weave 4601",0.54,2300,"Out"
-            "Shot Silk",0.3,2050,"No"
-            "Sirocco",0.249,2000,"No"
-            "Stargazer",0.451,2000,"No"
-            "Sun-down Birch",0.26,2050,"No"
-            "Sunset",0.25,3000,"No"
-            "Surface Block",0.41,3000,"No"
-            "Tes Block",0.41,3000,"No"
-            "Tes Filter",0.25,3000,"No"
-            "Thistle",0.264,2000,"No"
-            "Tropical Palm BO",0.45,2000,"No"
-            "Tropical Palm LF",0.22,2050,"No"
-            "Urban Block",0.41,3000,"Out"
-            "Urban Filter",0.3,3000,"No"
-            "Vainqueur",0.453,2000,"No"
-            "Vermont",0.309,2000,"No"
-            "Vintage Palm",0.22,2000,"No"
-            "Voile",0.122,2000,"No"
-            "Wild Garden",0.272,2800,"No"
-            "Willow",0.452,2000,"No"
-            "Windsor",0.394,2050,"No"
-            "Zen",0.27,2000,"No"
-        `.trim();
-        allDomElements.fabricDataInput.value = rawFabricData;
+        async function loadAndDisplayFabrics() {
+            if(!db) return;
+            const statusDiv = allDomElements.fabricUploadStatus;
+            statusDiv.innerHTML = `<div class="flex items-center gap-2"><div class="loader !w-4 !h-4 !border-2"></div>Loading fabric data from database...</div>`;
+            try {
+                const querySnapshot = await getDocs(collection(db, "fabric_properties"));
+                const fabrics = [];
+                querySnapshot.forEach((doc) => {
+                    const data = doc.data();
+                    fabrics.push(`"${data.name}",${data.weight},${data.width},"${data.canTurn}"`);
+                });
+
+                if (fabrics.length > 0) {
+                    // Sort alphabetically by name before displaying
+                    fabrics.sort((a, b) => a.localeCompare(b));
+                    allDomElements.fabricDataInput.value = fabrics.join('\n');
+                    statusDiv.innerHTML = `<p class="text-slate-500">Loaded ${fabrics.length} records from the database.</p>`;
+                } else {
+                     statusDiv.innerHTML = `<p class="text-amber-600">No fabric data found in the database. You can paste your list here and upload it.</p>`;
+                }
+            } catch (error) {
+                 console.error("Error loading fabric list for management:", error);
+                 statusDiv.innerHTML = `<p class="text-red-500">Error loading fabric data: ${error.message}</p>`;
+            }
+        }
         
         // Event listeners for toggling sections
-        allDomElements.toggleFabricsBtn.addEventListener('click', () => allDomElements.fabricManagementSection.classList.toggle('hidden'));
+        allDomElements.toggleFabricsBtn.addEventListener('click', () => {
+            const isHidden = allDomElements.fabricManagementSection.classList.toggle('hidden');
+            if (!isHidden) {
+                loadAndDisplayFabrics();
+            }
+        });
         allDomElements.toggleGuidelinesBtn.addEventListener('click', () => allDomElements.guidelinesSection.classList.toggle('hidden'));
         allDomElements.toggleDashboardBtn.addEventListener('click', () => {
             const isHidden = allDomElements.dashboardSection.classList.toggle('hidden');

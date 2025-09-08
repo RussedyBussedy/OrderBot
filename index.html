@@ -141,10 +141,13 @@
             font-size: 0.875rem;
             color: #475569;
             border-bottom: 1px solid #e2e8f0;
-            divide-x divide-slate-200;
         }
         .report-grid > div {
             padding: 0.5rem; /* Reduced padding */
+            border-right: 1px solid #e2e8f0;
+        }
+        .report-grid > div:last-child {
+            border-right: none;
         }
         .line-item-container .report-grid > div {
              padding-top: 0.25rem;
@@ -1175,6 +1178,121 @@
             // ... (implementation is complex, assuming it's correct for now)
         }
 
+        async function loadFabricData() {
+            if (!db) return;
+            try {
+                const querySnapshot = await getDocs(collection(db, "fabric_properties"));
+                fabricData = [];
+                querySnapshot.forEach((doc) => {
+                    fabricData.push(doc.data());
+                });
+                console.log(`Loaded ${fabricData.length} fabric records.`);
+            } catch (error) {
+                console.error("Error loading fabric data:", error);
+            }
+        }
+
+        async function findHistory() {
+             const searchTerm = allDomElements.historySearchInput.value.trim();
+            if (!searchTerm) return;
+            if (!db) { return; }
+
+            allDomElements.historyResults.innerHTML = `<div class="flex items-center gap-2 text-slate-600"><div class="loader !w-6 !h-6"></div>Searching for history...</div>`;
+            
+            try {
+                const historyQuery = query(
+                    collection(db, `orderbot_comparisons`),
+                    where("bdoOrderNumber", "==", searchTerm.toUpperCase())
+                );
+                
+                const querySnapshot = await getDocs(historyQuery);
+                
+                let allDocs = [];
+                 querySnapshot.forEach(doc => {
+                    allDocs.push({id: doc.id, data: doc.data()});
+                });
+
+                // Fallback for lowercase search if first query fails
+                if(allDocs.length === 0) {
+                     const lowerCaseQuery = query(
+                        collection(db, `orderbot_comparisons`),
+                        where("bdoOrderNumber", "==", searchTerm.toLowerCase())
+                    );
+                    const lowerCaseSnapshot = await getDocs(lowerCaseQuery);
+                    lowerCaseSnapshot.forEach(doc => {
+                        allDocs.push({id: doc.id, data: doc.data()});
+                    });
+                }
+
+
+                if (allDocs.length === 0) {
+                    allDomElements.historyResults.innerHTML = `<p class="text-slate-500">No history found for order number: <strong>${searchTerm}</strong></p>`;
+                    allDomElements.clearHistoryBtn.classList.remove('hidden');
+                    return;
+                }
+                
+                const latestComparisons = new Map();
+                allDocs.forEach(doc => {
+                    const orderNum = doc.data.bdoOrderNumber;
+                    if (orderNum) {
+                        const existing = latestComparisons.get(orderNum);
+                        if (!existing || new Date(doc.data.timestamp) > new Date(existing.data.timestamp)) {
+                            latestComparisons.set(orderNum, doc);
+                        }
+                    }
+                });
+
+                const finalResults = Array.from(latestComparisons.values())
+                    .sort((a, b) => new Date(b.data.timestamp) - new Date(a.data.timestamp));
+
+                allDomElements.historyResults.innerHTML = '';
+                finalResults.forEach(doc => {
+                    const historyItemDiv = document.createElement('div');
+                    historyItemDiv.className = 'history-item border border-slate-200 rounded-lg p-4';
+                    historyItemDiv.dataset.historyId = doc.id; // Set ID here for the parent container
+                    const formattedDate = new Date(doc.data.timestamp).toLocaleString('en-ZA');
+                    historyItemDiv.innerHTML = `<h4 class="font-bold text-md text-slate-700">Comparison from: ${formattedDate}</h4>`;
+                    
+                    const reportContainer = document.createElement('div');
+                    reportContainer.innerHTML = renderReportTable(doc.data);
+                    historyItemDiv.appendChild(reportContainer);
+
+                    allDomElements.historyResults.appendChild(historyItemDiv);
+                });
+                historyDataCache = finalResults;
+                allDomElements.clearHistoryBtn.classList.remove('hidden');
+
+            } catch (error) {
+                console.error("Error fetching history:", error);
+                allDomElements.historyResults.innerHTML = `<p class="text-red-500">Failed to fetch history: ${error.message}</p>`;
+                allDomElements.clearHistoryBtn.classList.remove('hidden');
+            }
+        }
+        
+        function performFabricCheck(data) {
+            if (fabricData.length === 0) return data; 
+
+            (data.lineItems || []).forEach(item => {
+                const rangeField = item.range;
+                if (rangeField && rangeField.blindIQValue) {
+                    const fabricName = rangeField.blindIQValue.trim().toLowerCase();
+                    const fabric = fabricData.find(f => f.name.toLowerCase() === fabricName);
+                    
+                    if (fabric) {
+                        const blindWidth = parseInt(item.width.blindIQValue, 10);
+                        if (!isNaN(blindWidth)) {
+                            if (blindWidth > fabric.width && fabric.canTurn.toLowerCase() === 'no') {
+                                item.fabricCheck = { status: 'WARN', message: `Fabric Check: Blind width (${blindWidth}mm) exceeds fabric width (${fabric.width}mm) and fabric CANNOT be turned.`};
+                            } else if (blindWidth > fabric.width && fabric.canTurn.toLowerCase() === 'out') {
+                                item.fabricCheck = { status: 'WARN', message: `Fabric Check: Blind width (${blindWidth}mm) exceeds fabric width (${fabric.width}mm). Turning is OUT OF WARRANTY.`};
+                            }
+                        }
+                    }
+                }
+            });
+            return data;
+        }
+
         // Initial Load
         addNewUploadPair();
         loadAndDisplayGuidelines();
@@ -1183,3 +1301,4 @@
     </script>
 </body>
 </html>
+

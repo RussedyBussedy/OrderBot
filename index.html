@@ -337,7 +337,6 @@
 
         let app, db, auth, userId, fabricData = [];
         
-        // Wrap the main logic in a DOMContentLoaded listener
         document.addEventListener('DOMContentLoaded', async () => {
             try {
                 app = initializeApp(firebaseConfig);
@@ -348,7 +347,6 @@
                 console.log("Firebase initialized and user signed in. UID:", userId);
             } catch (error) {
                 console.error("Firebase initialization failed. Please check your firebaseConfig object.", error);
-                // Non-blocking error
             }
 
             let comparisonPairs = [];
@@ -555,6 +553,7 @@
                     - CRITICAL: Look for a secondary line of text below the primary fields. This line contains detailed specifications separated by '|' and using '='. You MUST parse this line.
                     - For each key-value pair in the secondary line (e.g., "Val Returns=None"), treat it as a distinct specification.
                     - Compare all primary fields, all parsed specifications, and the special instructions between the two documents.
+                    - FINAL VERIFICATION STEP: Before finalizing your JSON response, you must count the number of distinct line items visible in the provided documents (e.g., items A, B, C, D make 4 items). Ensure that the 'lineItems' array in your JSON output contains exactly this number of objects. This step is mandatory for ensuring a complete and accurate report.
                     ## 4. JSON OUTPUT STRUCTURE: Respond ONLY with a single JSON object conforming to the schema.
                     ${guidelines}
                     ${feedbackExamples}

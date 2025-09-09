@@ -774,35 +774,20 @@
                 return `${orderNumberRow}${specialInstructionsRow}${lineItemsHtml}`;
             }
 
-            function setupReportInteraction() {
-                const reportContainer = document.getElementById('report-content');
-                if (!reportContainer) return;
+            function setupReportInteraction(container, reportData) {
+                const reportContainer = container;
+                const dataToUse = reportData;
 
                 reportContainer.addEventListener('click', (e) => {
                     const target = e.target.closest('.reportable-cell, .spec-text');
                     if (!target) return;
-                    if (!db) return;
+                    if (!db) { alert("Feedback system is not available."); return; }
                     
-                    const lineItemContainer = target.closest('.line-item-container');
-                    if(!lineItemContainer) return;
-                    
-                    const summaryDetails = target.closest('.summary-item-details');
-                    const historyItem = target.closest('.history-item');
+                    const lineItemElement = target.closest('.line-item-container');
+                    if (!lineItemElement) return;
 
-                    let sourceData;
-                    if (summaryDetails && summaryDetails.dataset.summaryIndex !== undefined) {
-                        sourceData = summaryResultsCache[summaryDetails.dataset.summaryIndex];
-                    } else if (historyItem && historyItem.dataset.historyId !== undefined) {
-                        sourceData = historyDataCache.find(h => h.id === historyItem.dataset.historyId)?.data;
-                    }
-                    
-                    const rowIndex = lineItemContainer.dataset.rowIndex;
-                    if (!sourceData || rowIndex === undefined) {
-                        console.log("Could not find source data for feedback.");
-                        return;
-                    }
-                    
-                    const lineItem = sourceData.lineItems[rowIndex];
+                    const rowIndex = lineItemElement.dataset.rowIndex;
+                    const lineItem = dataToUse.lineItems[rowIndex];
                     let fieldName, fieldData;
 
                     if (target.classList.contains('spec-text')) {
@@ -818,7 +803,6 @@
                     if (!fieldData) return;
 
                     itemToCorrect = {
-                        bdoOrderNumber: sourceData.bdoOrderNumber,
                         lineItemIdentifier: { item: lineItem.item.blindIQValue, location: lineItem.location.blindIQValue },
                         fieldName: fieldName,
                         fieldData: fieldData
@@ -836,10 +820,11 @@
                 itemToCorrect = null; pastedImageB64 = null;
                 allDomElements.feedbackImageContainer.classList.add('hidden');
                 allDomElements.feedbackImagePreview.src = '';
+                allDomElements.feedbackExplanation.style.paddingLeft = '0.5rem';
             });
 
             allDomElements.submitFeedbackBtn.addEventListener('click', async () => {
-                if (!itemToCorrect || !allDomElements.feedbackExplanation.value.trim()) { return; }
+                if (!itemToCorrect || !allDomElements.feedbackExplanation.value.trim()) { alert("Please provide an explanation."); return; }
                 allDomElements.submitFeedbackBtn.disabled = true;
                 allDomElements.submitFeedbackBtn.innerHTML = `<div class="loader !w-5 !h-5 !border-2 mx-auto"></div>`;
 
@@ -863,7 +848,7 @@
                         timestamp: new Date().toISOString(), 
                         incorrectItem: itemToCorrect, 
                         userExplanation: allDomElements.feedbackExplanation.value.trim(), 
-                        enhancedExplanation: enhancedExplanation 
+                        enhancedExplanation: enhancedExplanation,
                     };
                     if (pastedImageB64) { feedbackData.imageSnippet = pastedImageB64; }
 
@@ -871,7 +856,14 @@
                     allDomElements.cancelFeedbackBtn.click();
                 } catch (error) { 
                     console.error("Error submitting feedback: ", error); 
-                    const fallbackData = { userId: userId, timestamp: new Date().toISOString(), incorrectItem: itemToCorrect, userExplanation: allDomElements.feedbackExplanation.value.trim(), enhancedExplanation: `RAW: ${allDomElements.feedbackExplanation.value.trim()}` };
+                    alert("Failed to submit feedback. The original explanation will be saved.");
+                    const fallbackData = { 
+                        userId: userId, 
+                        timestamp: new Date().toISOString(), 
+                        incorrectItem: itemToCorrect, 
+                        userExplanation: allDomElements.feedbackExplanation.value.trim(), 
+                        enhancedExplanation: `RAW: ${allDomElements.feedbackExplanation.value.trim()}`,
+                    };
                     if (pastedImageB64) { fallbackData.imageSnippet = pastedImageB64; }
                     await addDoc(collection(db, `orderbot_feedback`), fallbackData);
                     allDomElements.cancelFeedbackBtn.click();
@@ -891,6 +883,7 @@
                             pastedImageB64 = e.target.result;
                             allDomElements.feedbackImagePreview.src = pastedImageB64;
                             allDomElements.feedbackImageContainer.classList.remove('hidden');
+                            allDomElements.feedbackExplanation.style.paddingLeft = '72px'; // Make space for the image
                         };
                         reader.readAsDataURL(blob);
                         event.preventDefault();
@@ -900,8 +893,9 @@
             
             allDomElements.feedbackImageDelete.addEventListener('click', () => {
                 pastedImageB64 = null;
-                allDomElements.feedbackImagePreview.src = '';
                 allDomElements.feedbackImageContainer.classList.add('hidden');
+                allDomElements.feedbackImagePreview.src = '';
+                allDomElements.feedbackExplanation.style.paddingLeft = '0.5rem';
             });
 
             allDomElements.uploadFabricsBtn.addEventListener('click', async () => {

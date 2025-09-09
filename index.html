@@ -336,890 +336,893 @@
 
 
         let app, db, auth, userId, fabricData = [];
-        try {
-            app = initializeApp(firebaseConfig);
-            db = getFirestore(app);
-            auth = getAuth(app);
-            await signInAnonymously(auth);
-            userId = auth.currentUser?.uid;
-            console.log("Firebase initialized and user signed in. UID:", userId);
-        } catch (error) {
-            console.error("Firebase initialization failed. Please check your firebaseConfig object.", error);
-            // Non-blocking error
-        }
-
-        let comparisonPairs = [];
-        let itemToCorrect = null, pastedImageB64 = null;
-        let summaryResultsCache = [];
-        let historyDataCache = [];
-
-        const allDomElements = {
-            uploadPairsContainer: document.getElementById('upload-pairs-container'),
-            addPairBtn: document.getElementById('add-pair-btn'),
-            uploadPairTemplate: document.getElementById('upload-pair-template'),
-            compareBtn: document.getElementById('compare-btn'), 
-            reportSection: document.getElementById('report-section'), 
-            reportContent: document.getElementById('report-content'),
-            feedbackModal: document.getElementById('feedback-modal'), 
-            feedbackModalTitle: document.getElementById('feedback-modal-title'), 
-            incorrectItemDetails: document.getElementById('incorrect-item-details'),
-            feedbackExplanation: document.getElementById('feedback-explanation'), 
-            cancelFeedbackBtn: document.getElementById('cancel-feedback-btn'), 
-            submitFeedbackBtn: document.getElementById('submit-feedback-btn'),
-            historySection: document.getElementById('history-section'), 
-            historySearchInput: document.getElementById('history-search-input'), 
-            historySearchBtn: document.getElementById('history-search-btn'),
-            historyResults: document.getElementById('history-results'), 
-            uploadSection: document.getElementById('upload-section'), 
-            newComparisonBtn: document.getElementById('new-comparison-btn'),
-            clearHistoryBtn: document.getElementById('clear-history-btn'),
-            feedbackTextareaContainer: document.getElementById('feedback-textarea-container'),
-            feedbackImageContainer: document.getElementById('feedback-image-container'),
-            feedbackImagePreview: document.getElementById('feedback-image-preview'),
-            feedbackImageDelete: document.getElementById('feedback-image-delete'),
-            guidelineModal: document.getElementById('guideline-modal'), 
-            addGuidelineBtn: document.getElementById('add-guideline-btn'), 
-            cancelGuidelineBtn: document.getElementById('cancel-guideline-btn'),
-            saveGuidelineBtn: document.getElementById('save-guideline-btn'), 
-            guidelineInput: document.getElementById('guideline-input'), 
-            guidelinesList: document.getElementById('guidelines-list'),
-            guidelinesSection: document.getElementById('guidelines-section'), 
-            toggleGuidelinesBtn: document.getElementById('toggle-guidelines-btn'),
-            dashboardSection: document.getElementById('dashboard-section'), 
-            toggleDashboardBtn: document.getElementById('toggle-dashboard-btn'), 
-            dashboardContent: document.getElementById('dashboard-content'),
-            fabricManagementSection: document.getElementById('fabric-management-section'),
-            toggleFabricsBtn: document.getElementById('toggle-fabrics-btn'),
-            fabricDataInput: document.getElementById('fabric-data-input'),
-            uploadFabricsBtn: document.getElementById('upload-fabrics-btn'),
-            fabricUploadStatus: document.getElementById('fabric-upload-status')
-        };
-
-        const fileToB64 = (file) => new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.readAsDataURL(file);
-            reader.onload = () => resolve({ name: file.name, type: file.type, data: reader.result.split(',')[1] });
-            reader.onerror = (error) => reject(new Error(`Failed to read file "${file.name}".`));
-        });
-
-        function setupDropZone(dropZone, fileInput, fileList, fileArray) {
-            dropZone.addEventListener('click', () => fileInput.click());
-            dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
-            dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
-            dropZone.addEventListener('drop', (e) => { e.preventDefault(); dropZone.classList.remove('drag-over'); handleFiles(e.dataTransfer.files, fileList, fileArray); });
-            fileInput.addEventListener('change', (e) => handleFiles(e.target.files, fileList, fileArray));
-        }
-
-        function handleFiles(files, fileListElem, fileArray) {
-            fileArray.length = 0;
-            [...files].forEach(file => { if (['application/pdf', 'image/jpeg', 'image/png'].includes(file.type)) { fileArray.push(file); } });
-            updateFileList(fileListElem, fileArray);
-            checkCompareButtonState();
-        }
-
-        function updateFileList(listElement, fileArray) {
-            listElement.innerHTML = '';
-            fileArray.forEach(file => {
-                const li = document.createElement('li');
-                li.className = 'file-item flex items-center justify-between bg-slate-100 p-2 rounded-md mt-2';
-                li.innerHTML = `<span class="text-sm text-slate-700 truncate">${file.name}</span> <span class="text-xs text-slate-500">${(file.size / 1024).toFixed(1)} KB</span>`;
-                listElement.appendChild(li);
-            });
-        }
         
-        function checkCompareButtonState() {
-            const allPairsValid = comparisonPairs.every(p => p.customerFiles.length > 0 && p.blindIQFiles.length > 0);
-            allDomElements.compareBtn.disabled = !(comparisonPairs.length > 0 && allPairsValid);
-        }
-
-        function addNewUploadPair() {
-            if (comparisonPairs.length >= 10) {
-                // Non-blocking info
-                console.log("Maximum of 10 comparison pairs reached.");
-                return;
+        // Wrap the main logic in a DOMContentLoaded listener
+        document.addEventListener('DOMContentLoaded', async () => {
+            try {
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                await signInAnonymously(auth);
+                userId = auth.currentUser?.uid;
+                console.log("Firebase initialized and user signed in. UID:", userId);
+            } catch (error) {
+                console.error("Firebase initialization failed. Please check your firebaseConfig object.", error);
+                // Non-blocking error
             }
-            const template = allDomElements.uploadPairTemplate.content.cloneNode(true);
-            const pairElement = template.querySelector('.upload-pair');
-            allDomElements.uploadPairsContainer.appendChild(pairElement);
 
-            const newPair = {
-                id: Date.now(),
-                element: pairElement,
-                customerFiles: [],
-                blindIQFiles: []
+            let comparisonPairs = [];
+            let itemToCorrect = null, pastedImageB64 = null;
+            let summaryResultsCache = [];
+            let historyDataCache = [];
+
+            const allDomElements = {
+                uploadPairsContainer: document.getElementById('upload-pairs-container'),
+                addPairBtn: document.getElementById('add-pair-btn'),
+                uploadPairTemplate: document.getElementById('upload-pair-template'),
+                compareBtn: document.getElementById('compare-btn'), 
+                reportSection: document.getElementById('report-section'), 
+                reportContent: document.getElementById('report-content'),
+                feedbackModal: document.getElementById('feedback-modal'), 
+                feedbackModalTitle: document.getElementById('feedback-modal-title'), 
+                incorrectItemDetails: document.getElementById('incorrect-item-details'),
+                feedbackExplanation: document.getElementById('feedback-explanation'), 
+                cancelFeedbackBtn: document.getElementById('cancel-feedback-btn'), 
+                submitFeedbackBtn: document.getElementById('submit-feedback-btn'),
+                historySection: document.getElementById('history-section'), 
+                historySearchInput: document.getElementById('history-search-input'), 
+                historySearchBtn: document.getElementById('history-search-btn'),
+                historyResults: document.getElementById('history-results'), 
+                uploadSection: document.getElementById('upload-section'), 
+                newComparisonBtn: document.getElementById('new-comparison-btn'),
+                clearHistoryBtn: document.getElementById('clear-history-btn'),
+                feedbackTextareaContainer: document.getElementById('feedback-textarea-container'),
+                feedbackImageContainer: document.getElementById('feedback-image-container'),
+                feedbackImagePreview: document.getElementById('feedback-image-preview'),
+                feedbackImageDelete: document.getElementById('feedback-image-delete'),
+                guidelineModal: document.getElementById('guideline-modal'), 
+                addGuidelineBtn: document.getElementById('add-guideline-btn'), 
+                cancelGuidelineBtn: document.getElementById('cancel-guideline-btn'),
+                saveGuidelineBtn: document.getElementById('save-guideline-btn'), 
+                guidelineInput: document.getElementById('guideline-input'), 
+                guidelinesList: document.getElementById('guidelines-list'),
+                guidelinesSection: document.getElementById('guidelines-section'), 
+                toggleGuidelinesBtn: document.getElementById('toggle-guidelines-btn'),
+                dashboardSection: document.getElementById('dashboard-section'), 
+                toggleDashboardBtn: document.getElementById('toggle-dashboard-btn'), 
+                dashboardContent: document.getElementById('dashboard-content'),
+                fabricManagementSection: document.getElementById('fabric-management-section'),
+                toggleFabricsBtn: document.getElementById('toggle-fabrics-btn'),
+                fabricDataInput: document.getElementById('fabric-data-input'),
+                uploadFabricsBtn: document.getElementById('upload-fabrics-btn'),
+                fabricUploadStatus: document.getElementById('fabric-upload-status')
             };
-            comparisonPairs.push(newPair);
 
-            const customerDropZone = pairElement.querySelector('.drop-zone:first-child');
-            const customerFileInput = pairElement.querySelector('.customer-file-input');
-            const customerFileList = pairElement.querySelector('.customer-file-list');
-            setupDropZone(customerDropZone, customerFileInput, customerFileList, newPair.customerFiles);
-
-            const blindIQDropZone = pairElement.querySelector('.drop-zone:last-child');
-            const blindIQFileInput = pairElement.querySelector('.blindiq-file-input');
-            const blindIQFileList = pairElement.querySelector('.blindiq-file-list');
-            setupDropZone(blindIQDropZone, blindIQFileInput, blindIQFileList, newPair.blindIQFiles);
-
-            const removeBtn = pairElement.querySelector('.remove-pair-btn');
-            removeBtn.addEventListener('click', () => {
-                comparisonPairs = comparisonPairs.filter(p => p.id !== newPair.id);
-                pairElement.remove();
-                checkCompareButtonState();
-                updateRemoveButtons();
+            const fileToB64 = (file) => new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onload = () => resolve({ name: file.name, type: file.type, data: reader.result.split(',')[1] });
+                reader.onerror = (error) => reject(new Error(`Failed to read file "${file.name}".`));
             });
-             updateRemoveButtons();
-        }
 
-        function updateRemoveButtons() {
-            const allRemoveBtns = document.querySelectorAll('.remove-pair-btn');
-            if (comparisonPairs.length <= 1) {
-                allRemoveBtns.forEach(btn => btn.classList.add('hidden'));
-            } else {
-                allRemoveBtns.forEach(btn => btn.classList.remove('hidden'));
+            function setupDropZone(dropZone, fileInput, fileList, fileArray) {
+                dropZone.addEventListener('click', () => fileInput.click());
+                dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+                dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+                dropZone.addEventListener('drop', (e) => { e.preventDefault(); dropZone.classList.remove('drag-over'); handleFiles(e.dataTransfer.files, fileList, fileArray); });
+                fileInput.addEventListener('change', (e) => handleFiles(e.target.files, fileList, fileArray));
             }
-        }
 
-        allDomElements.addPairBtn.addEventListener('click', addNewUploadPair);
-        allDomElements.compareBtn.addEventListener('click', runAllComparisons);
-        allDomElements.newComparisonBtn.addEventListener('click', resetUI);
+            function handleFiles(files, fileListElem, fileArray) {
+                fileArray.length = 0;
+                [...files].forEach(file => { if (['application/pdf', 'image/jpeg', 'image/png'].includes(file.type)) { fileArray.push(file); } });
+                updateFileList(fileListElem, fileArray);
+                checkCompareButtonState();
+            }
 
-        function resetUI() {
-            allDomElements.uploadSection.classList.remove('hidden');
-            allDomElements.reportSection.classList.add('hidden');
-            allDomElements.newComparisonBtn.classList.add('hidden');
-            allDomElements.clearHistoryBtn.classList.add('hidden');
-            allDomElements.historyResults.innerHTML = '';
-            allDomElements.historySearchInput.value = '';
-            allDomElements.uploadPairsContainer.innerHTML = '';
-            comparisonPairs = [];
-            addNewUploadPair(); // Start with one fresh pair
-            checkCompareButtonState();
-        }
-
-        async function runAllComparisons() {
-            allDomElements.uploadSection.classList.add('hidden');
-            allDomElements.reportSection.classList.remove('hidden');
-            allDomElements.newComparisonBtn.classList.add('hidden');
-            allDomElements.reportContent.innerHTML = `<div class="flex flex-col items-center justify-center p-8"><div class="loader"></div><p class="mt-4 text-slate-600 font-semibold">Preparing to run ${comparisonPairs.length} comparisons...</p></div>`;
+            function updateFileList(listElement, fileArray) {
+                listElement.innerHTML = '';
+                fileArray.forEach(file => {
+                    const li = document.createElement('li');
+                    li.className = 'file-item flex items-center justify-between bg-slate-100 p-2 rounded-md mt-2';
+                    li.innerHTML = `<span class="text-sm text-slate-700 truncate">${file.name}</span> <span class="text-xs text-slate-500">${(file.size / 1024).toFixed(1)} KB</span>`;
+                    listElement.appendChild(li);
+                });
+            }
             
-            summaryResultsCache = [];
-            let failedComparisons = [];
+            function checkCompareButtonState() {
+                const allPairsValid = comparisonPairs.every(p => p.customerFiles.length > 0 && p.blindIQFiles.length > 0);
+                allDomElements.compareBtn.disabled = !(comparisonPairs.length > 0 && allPairsValid);
+            }
 
-            for (let i = 0; i < comparisonPairs.length; i++) {
-                const pair = comparisonPairs[i];
-                try {
-                    allDomElements.reportContent.querySelector('p').textContent = `Running comparison ${i + 1} of ${comparisonPairs.length}...`;
-                    const result = await runSingleComparison(pair.customerFiles, pair.blindIQFiles);
-                    summaryResultsCache.push(result);
-                } catch (error) {
-                    console.error(`Comparison ${i + 1} failed initially:`, error);
-                    failedComparisons.push({ index: i, pair }); // Save for retry
+            function addNewUploadPair() {
+                if (comparisonPairs.length >= 10) {
+                    // Non-blocking info
+                    console.log("Maximum of 10 comparison pairs reached.");
+                    return;
+                }
+                const template = allDomElements.uploadPairTemplate.content.cloneNode(true);
+                const pairElement = template.querySelector('.upload-pair');
+                allDomElements.uploadPairsContainer.appendChild(pairElement);
+
+                const newPair = {
+                    id: Date.now(),
+                    element: pairElement,
+                    customerFiles: [],
+                    blindIQFiles: []
+                };
+                comparisonPairs.push(newPair);
+
+                const customerDropZone = pairElement.querySelector('.drop-zone:first-child');
+                const customerFileInput = pairElement.querySelector('.customer-file-input');
+                const customerFileList = pairElement.querySelector('.customer-file-list');
+                setupDropZone(customerDropZone, customerFileInput, customerFileList, newPair.customerFiles);
+
+                const blindIQDropZone = pairElement.querySelector('.drop-zone:last-child');
+                const blindIQFileInput = pairElement.querySelector('.blindiq-file-input');
+                const blindIQFileList = pairElement.querySelector('.blindiq-file-list');
+                setupDropZone(blindIQDropZone, blindIQFileInput, blindIQFileList, newPair.blindIQFiles);
+
+                const removeBtn = pairElement.querySelector('.remove-pair-btn');
+                removeBtn.addEventListener('click', () => {
+                    comparisonPairs = comparisonPairs.filter(p => p.id !== newPair.id);
+                    pairElement.remove();
+                    checkCompareButtonState();
+                    updateRemoveButtons();
+                });
+                updateRemoveButtons();
+            }
+
+            function updateRemoveButtons() {
+                const allRemoveBtns = document.querySelectorAll('.remove-pair-btn');
+                if (comparisonPairs.length <= 1) {
+                    allRemoveBtns.forEach(btn => btn.classList.add('hidden'));
+                } else {
+                    allRemoveBtns.forEach(btn => btn.classList.remove('hidden'));
                 }
             }
-            
-            // Retry failed comparisons once
-            if (failedComparisons.length > 0) {
-                 for (const failed of failedComparisons) {
+
+            allDomElements.addPairBtn.addEventListener('click', addNewUploadPair);
+            allDomElements.compareBtn.addEventListener('click', runAllComparisons);
+            allDomElements.newComparisonBtn.addEventListener('click', resetUI);
+
+            function resetUI() {
+                allDomElements.uploadSection.classList.remove('hidden');
+                allDomElements.reportSection.classList.add('hidden');
+                allDomElements.newComparisonBtn.classList.add('hidden');
+                allDomElements.clearHistoryBtn.classList.add('hidden');
+                allDomElements.historyResults.innerHTML = '';
+                allDomElements.historySearchInput.value = '';
+                allDomElements.uploadPairsContainer.innerHTML = '';
+                comparisonPairs = [];
+                addNewUploadPair(); // Start with one fresh pair
+                checkCompareButtonState();
+            }
+
+            async function runAllComparisons() {
+                allDomElements.uploadSection.classList.add('hidden');
+                allDomElements.reportSection.classList.remove('hidden');
+                allDomElements.newComparisonBtn.classList.add('hidden');
+                allDomElements.reportContent.innerHTML = `<div class="flex flex-col items-center justify-center p-8"><div class="loader"></div><p class="mt-4 text-slate-600 font-semibold">Preparing to run ${comparisonPairs.length} comparisons...</p></div>`;
+                
+                summaryResultsCache = [];
+                let failedComparisons = [];
+
+                for (let i = 0; i < comparisonPairs.length; i++) {
+                    const pair = comparisonPairs[i];
                     try {
-                        allDomElements.reportContent.querySelector('p').textContent = `Retrying failed comparison for order ${failed.index + 1}...`;
-                        const result = await runSingleComparison(failed.pair.customerFiles, failed.pair.blindIQFiles);
-                        // Insert result at its original position
-                        summaryResultsCache.splice(failed.index, 0, result);
+                        allDomElements.reportContent.querySelector('p').textContent = `Running comparison ${i + 1} of ${comparisonPairs.length}...`;
+                        const result = await runSingleComparison(pair.customerFiles, pair.blindIQFiles);
+                        summaryResultsCache.push(result);
                     } catch (error) {
-                        console.error(`Comparison ${failed.index + 1} failed on retry:`, error);
-                        const errorResult = { bdoOrderNumber: `Order ${failed.index + 1} Failed`, error: error.message };
-                        summaryResultsCache.splice(failed.index, 0, errorResult);
+                        console.error(`Comparison ${i + 1} failed initially:`, error);
+                        failedComparisons.push({ index: i, pair }); // Save for retry
                     }
                 }
+                
+                // Retry failed comparisons once
+                if (failedComparisons.length > 0) {
+                    for (const failed of failedComparisons) {
+                        try {
+                            allDomElements.reportContent.querySelector('p').textContent = `Retrying failed comparison for order ${failed.index + 1}...`;
+                            const result = await runSingleComparison(failed.pair.customerFiles, failed.pair.blindIQFiles);
+                            // Insert result at its original position
+                            summaryResultsCache.splice(failed.index, 0, result);
+                        } catch (error) {
+                            console.error(`Comparison ${failed.index + 1} failed on retry:`, error);
+                            const errorResult = { bdoOrderNumber: `Order ${failed.index + 1} Failed`, error: error.message };
+                            summaryResultsCache.splice(failed.index, 0, errorResult);
+                        }
+                    }
+                }
+
+                renderSummaryReport(summaryResultsCache);
+                allDomElements.newComparisonBtn.classList.remove('hidden');
             }
 
-            renderSummaryReport(summaryResultsCache);
-            allDomElements.newComparisonBtn.classList.remove('hidden');
-        }
+            async function runSingleComparison(customerFiles, blindIQFiles) {
+                const guidelines = await getGuidelines();
+                const feedbackExamples = await getFeedbackExamples();
 
-        async function runSingleComparison(customerFiles, blindIQFiles) {
-            const guidelines = await getGuidelines();
-            const feedbackExamples = await getFeedbackExamples();
+                const systemPrompt = `
+                    # OrderBot - System Prompt
+                    ## 1. IDENTITY & PERSONA: You are OrderBot, an AI assistant.
+                    ## 2. CORE DIRECTIVE: Analyze 'customer' vs 'blindiq' files, extract parameters, compare them, and return a structured JSON report.
+                    ## 3. DATA EXTRACTION & ANALYSIS LOGIC:
+                    - CRITICAL: You may receive one customer document and MULTIPLE Blind IQ documents. Treat all Blind IQ documents as a single, consolidated order and compare all of their combined line items against the single customer document.
+                    - CRITICAL & EXHAUSTIVE: You MUST process every single line item present in the documents. Do not stop until all items have been extracted and compared.
+                    - For each line item, extract the primary fields: Item, Location, QTY, Width, Drop, Colour, Control, Blind Type, Range, and Fix. The 'Item' should correspond to the alphabetical identifier (A, B, C...).
+                    - CRITICAL: Look for a secondary line of text below the primary fields. This line contains detailed specifications separated by '|' and using '='. You MUST parse this line.
+                    - For each key-value pair in the secondary line (e.g., "Val Returns=None"), treat it as a distinct specification.
+                    - Compare all primary fields, all parsed specifications, and the special instructions between the two documents.
+                    ## 4. JSON OUTPUT STRUCTURE: Respond ONLY with a single JSON object conforming to the schema.
+                    ${guidelines}
+                    ${feedbackExamples}
+                `;
+                
+                const parts = [{ text: systemPrompt }];
+                const customerFilePromises = customerFiles.map(fileToB64);
+                const blindIQFilePromises = blindIQFiles.map(fileToB64);
+                const [customerB64FileObjects, blindIQB64FileObjects] = await Promise.all([ Promise.all(customerFilePromises), Promise.all(blindIQFilePromises) ]);
+                for (const fileObj of customerB64FileObjects) { parts.push({ text: `\n--- START CUSTOMER FILE: ${fileObj.name} ---` }); parts.push({ inlineData: { mimeType: fileObj.type, data: fileObj.data } }); }
+                for (const fileObj of blindIQB64FileObjects) { parts.push({ text: `\n--- START BLIND IQ FILE: ${fileObj.name} ---` }); parts.push({ inlineData: { mimeType: fileObj.type, data: fileObj.data } }); }
 
-            const systemPrompt = `
-                # OrderBot - System Prompt
-                ## 1. IDENTITY & PERSONA: You are OrderBot, an AI assistant.
-                ## 2. CORE DIRECTIVE: Analyze 'customer' vs 'blindiq' files, extract parameters, compare them, and return a structured JSON report.
-                ## 3. DATA EXTRACTION & ANALYSIS LOGIC:
-                - CRITICAL: You may receive one customer document and MULTIPLE Blind IQ documents. Treat all Blind IQ documents as a single, consolidated order and compare all of their combined line items against the single customer document.
-                - CRITICAL & EXHAUSTIVE: You MUST process every single line item present in the documents. Do not stop until all items have been extracted and compared.
-                - For each line item, extract the primary fields: Item, Location, QTY, Width, Drop, Colour, Control, Blind Type, Range, and Fix. The 'Item' should correspond to the alphabetical identifier (A, B, C...).
-                - CRITICAL: Look for a secondary line of text below the primary fields. This line contains detailed specifications separated by '|' and using '='. You MUST parse this line.
-                - For each key-value pair in the secondary line (e.g., "Val Returns=None"), treat it as a distinct specification.
-                - Compare all primary fields, all parsed specifications, and the special instructions between the two documents.
-                ## 4. JSON OUTPUT STRUCTURE: Respond ONLY with a single JSON object conforming to the schema.
-                ${guidelines}
-                ${feedbackExamples}
-            `;
-            
-            const parts = [{ text: systemPrompt }];
-            const customerFilePromises = customerFiles.map(fileToB64);
-            const blindIQFilePromises = blindIQFiles.map(fileToB64);
-            const [customerB64FileObjects, blindIQB64FileObjects] = await Promise.all([ Promise.all(customerFilePromises), Promise.all(blindIQFilePromises) ]);
-            for (const fileObj of customerB64FileObjects) { parts.push({ text: `\n--- START CUSTOMER FILE: ${fileObj.name} ---` }); parts.push({ inlineData: { mimeType: fileObj.type, data: fileObj.data } }); }
-            for (const fileObj of blindIQB64FileObjects) { parts.push({ text: `\n--- START BLIND IQ FILE: ${fileObj.name} ---` }); parts.push({ inlineData: { mimeType: fileObj.type, data: fileObj.data } }); }
+                const comparisonFieldSchema = { type: "OBJECT", properties: { "customerValue": { "type": "STRING" }, "blindIQValue": { "type": "STRING" }, "result": { "type": "STRING", "enum": ["MATCH", "MISMATCH", "OMISSION", "NOTE"] }, "confidence": { "type": "NUMBER" } }, required: ["customerValue", "blindIQValue", "result", "confidence"] };
+                const schema = { type: "OBJECT", properties: { "bdoOrderNumber": { "type": "STRING" }, "customerOrderNumber": comparisonFieldSchema, "specialInstructions": comparisonFieldSchema, "lineItems": { type: "ARRAY", items: { type: "OBJECT", properties: { "item": comparisonFieldSchema, "location": comparisonFieldSchema, "qty": comparisonFieldSchema, "width": comparisonFieldSchema, "drop": comparisonFieldSchema, "colour": comparisonFieldSchema, "control": comparisonFieldSchema, "blindType": comparisonFieldSchema, "range": comparisonFieldSchema, "fix": comparisonFieldSchema, "specifications": { type: "ARRAY", items: { type: "OBJECT", properties: { "specName": { "type": "STRING" }, "specComparison": comparisonFieldSchema }, required: ["specName", "specComparison"] } } }, required: ["item", "location", "qty", "width", "drop", "colour", "control", "blindType", "range", "fix"] } } }, required: ["bdoOrderNumber", "customerOrderNumber"] };
+                
+                const geminiPayload = { contents: [{ role: "user", parts: parts }], generationConfig: { responseMimeType: "application/json", responseSchema: schema } };
+                const proxyPayload = { model: 'gemini-1.5-pro-latest', payload: geminiPayload };
 
-            const comparisonFieldSchema = { type: "OBJECT", properties: { "customerValue": { "type": "STRING" }, "blindIQValue": { "type": "STRING" }, "result": { "type": "STRING", "enum": ["MATCH", "MISMATCH", "OMISSION", "NOTE"] }, "confidence": { "type": "NUMBER" } }, required: ["customerValue", "blindIQValue", "result", "confidence"] };
-            const schema = { type: "OBJECT", properties: { "bdoOrderNumber": { "type": "STRING" }, "customerOrderNumber": comparisonFieldSchema, "specialInstructions": comparisonFieldSchema, "lineItems": { type: "ARRAY", items: { type: "OBJECT", properties: { "item": comparisonFieldSchema, "location": comparisonFieldSchema, "qty": comparisonFieldSchema, "width": comparisonFieldSchema, "drop": comparisonFieldSchema, "colour": comparisonFieldSchema, "control": comparisonFieldSchema, "blindType": comparisonFieldSchema, "range": comparisonFieldSchema, "fix": comparisonFieldSchema, "specifications": { type: "ARRAY", items: { type: "OBJECT", properties: { "specName": { "type": "STRING" }, "specComparison": comparisonFieldSchema }, required: ["specName", "specComparison"] } } }, required: ["item", "location", "qty", "width", "drop", "colour", "control", "blindType", "range", "fix"] } } }, required: ["bdoOrderNumber", "customerOrderNumber"] };
-             
-            const geminiPayload = { contents: [{ role: "user", parts: parts }], generationConfig: { responseMimeType: "application/json", responseSchema: schema } };
-            const proxyPayload = { model: 'gemini-1.5-pro-latest', payload: geminiPayload };
+                const response = await fetch(PROXY_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proxyPayload) });
+                const resultText = await response.text();
+                if (!response.ok) { throw new Error(`API Error: ${response.status} ${response.statusText} - ${resultText}`); }
+                
+                const result = JSON.parse(resultText);
+                if (!result.candidates || result.candidates.length === 0 || !result.candidates[0].content) {
+                    let errorMessage = "No valid content received from the API.";
+                    if (result.promptFeedback?.blockReason) { errorMessage += ` Reason: ${result.promptFeedback.blockReason}.`; }
+                    throw new Error(errorMessage);
+                }
 
-            const response = await fetch(PROXY_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proxyPayload) });
-            const resultText = await response.text();
-            if (!response.ok) { throw new Error(`API Error: ${response.status} ${response.statusText} - ${resultText}`); }
-            
-            const result = JSON.parse(resultText);
-            if (!result.candidates || result.candidates.length === 0 || !result.candidates[0].content) {
-                let errorMessage = "No valid content received from the API.";
-                if (result.promptFeedback?.blockReason) { errorMessage += ` Reason: ${result.promptFeedback.blockReason}.`; }
-                throw new Error(errorMessage);
+                const data = JSON.parse(result.candidates[0].content.parts[0].text);
+                const finalData = performFabricCheck(data);
+
+                if (db && finalData.bdoOrderNumber) {
+                    await addDoc(collection(db, `orderbot_comparisons`), { ...finalData, timestamp: new Date().toISOString(), userId: userId });
+                }
+                return finalData;
             }
 
-            const data = JSON.parse(result.candidates[0].content.parts[0].text);
-            const finalData = performFabricCheck(data);
+            function renderSummaryReport(results) {
+                allDomElements.reportContent.innerHTML = results.map((data, index) => {
+                    if (data.error) {
+                        return `<div class="summary-item border border-red-300 rounded-lg mb-4">
+                            <div class="summary-item-header p-4 bg-red-100 text-red-800 font-bold cursor-pointer flex justify-between items-center">
+                                <span>BDO: ${data.bdoOrderNumber}</span>
+                                <span>FAILED</span>
+                            </div>
+                            <div class="summary-item-details p-4 border-t border-red-300">
+                                <p><strong>Error:</strong> ${data.error}</p>
+                            </div>
+                        </div>`;
+                    }
 
-            if (db && finalData.bdoOrderNumber) {
-                await addDoc(collection(db, `orderbot_comparisons`), { ...finalData, timestamp: new Date().toISOString(), userId: userId });
-            }
-            return finalData;
-        }
+                    const lineItems = data.lineItems || [];
+                    const hasMismatch = lineItems.some(item => 
+                        Object.values(item).some(field => field && typeof field === 'object' && (field.result === 'MISMATCH' || field.result === 'OMISSION')) || 
+                        (item.specifications || []).some(s => s.specComparison.result === 'MISMATCH' || s.specComparison.result === 'OMISSION') ||
+                        (item.fabricCheck && item.fabricCheck.status === 'WARN')
+                    );
+                    const hasLowConfidence = lineItems.some(item => 
+                        Object.values(item).some(field => field && typeof field === 'object' && field.confidence < 0.9) || 
+                        (item.specifications || []).some(s => s.specComparison.confidence < 0.9)
+                    );
 
-        function renderSummaryReport(results) {
-            allDomElements.reportContent.innerHTML = results.map((data, index) => {
-                if (data.error) {
-                    return `<div class="summary-item border border-red-300 rounded-lg mb-4">
-                        <div class="summary-item-header p-4 bg-red-100 text-red-800 font-bold cursor-pointer flex justify-between items-center">
-                            <span>BDO: ${data.bdoOrderNumber}</span>
-                            <span>FAILED</span>
+                    let status = 'MATCH';
+                    let headerBg = 'bg-green-100';
+                    let headerText = 'text-green-800';
+                    let border = 'border-green-300';
+
+                    if (hasMismatch) {
+                        status = 'MISMATCH';
+                        headerBg = 'bg-red-100';
+                        headerText = 'text-red-800';
+                        border = 'border-red-300';
+                    } else if (hasLowConfidence) {
+                        status = 'LOW CONFIDENCE';
+                        headerBg = 'bg-orange-100';
+                        headerText = 'text-orange-800';
+                        border = 'border-orange-300';
+                    }
+
+                    return `<div class="summary-item border ${border} rounded-lg mb-4">
+                        <div class="summary-item-header p-4 ${headerBg} ${headerText} font-bold cursor-pointer flex justify-between items-center">
+                            <span>BDO: ${data.bdoOrderNumber || 'N/A'}</span>
+                            <span>${status}</span>
                         </div>
-                        <div class="summary-item-details p-4 border-t border-red-300">
-                            <p><strong>Error:</strong> ${data.error}</p>
+                        <div class="summary-item-details p-4 border-t ${border}" data-summary-index="${index}">
+                            ${renderReportTable(data)}
                         </div>
                     </div>`;
-                }
-
-                const lineItems = data.lineItems || [];
-                const hasMismatch = lineItems.some(item => 
-                    Object.values(item).some(field => field && typeof field === 'object' && (field.result === 'MISMATCH' || field.result === 'OMISSION')) || 
-                    (item.specifications || []).some(s => s.specComparison.result === 'MISMATCH' || s.specComparison.result === 'OMISSION') ||
-                    (item.fabricCheck && item.fabricCheck.status === 'WARN')
-                );
-                const hasLowConfidence = lineItems.some(item => 
-                    Object.values(item).some(field => field && typeof field === 'object' && field.confidence < 0.9) || 
-                    (item.specifications || []).some(s => s.specComparison.confidence < 0.9)
-                );
-
-                let status = 'MATCH';
-                let headerBg = 'bg-green-100';
-                let headerText = 'text-green-800';
-                let border = 'border-green-300';
-
-                if (hasMismatch) {
-                    status = 'MISMATCH';
-                    headerBg = 'bg-red-100';
-                    headerText = 'text-red-800';
-                    border = 'border-red-300';
-                } else if (hasLowConfidence) {
-                    status = 'LOW CONFIDENCE';
-                    headerBg = 'bg-orange-100';
-                    headerText = 'text-orange-800';
-                    border = 'border-orange-300';
-                }
-
-                return `<div class="summary-item border ${border} rounded-lg mb-4">
-                    <div class="summary-item-header p-4 ${headerBg} ${headerText} font-bold cursor-pointer flex justify-between items-center">
-                        <span>BDO: ${data.bdoOrderNumber || 'N/A'}</span>
-                        <span>${status}</span>
-                    </div>
-                    <div class="summary-item-details p-4 border-t ${border}" data-summary-index="${index}">
-                        ${renderReportTable(data)}
-                    </div>
-                </div>`;
-            }).join('');
-            
-            document.querySelectorAll('.summary-item-header').forEach(header => {
-                header.addEventListener('click', () => {
-                    const details = header.nextElementSibling;
-                    if (details.style.maxHeight) {
-                        details.style.maxHeight = null;
-                    } else {
-                        details.style.maxHeight = details.scrollHeight + "px";
-                    }
+                }).join('');
+                
+                document.querySelectorAll('.summary-item-header').forEach(header => {
+                    header.addEventListener('click', () => {
+                        const details = header.nextElementSibling;
+                        if (details.style.maxHeight) {
+                            details.style.maxHeight = null;
+                        } else {
+                            details.style.maxHeight = details.scrollHeight + "px";
+                        }
+                    });
                 });
-            });
-            setupReportInteraction();
-        }
-
-        function renderReportTable(data) {
-            const renderCell = (field, fieldName, label) => {
-                const isMismatch = field && field.result === 'MISMATCH';
-                const isLowConfidence = field && field.confidence < 0.9;
-                const value = field ? (field.blindIQValue || 'N/A') : 'N/A';
-                const customerVal = field ? (field.customerValue || 'N/A') : 'N/A';
-                const confidence = field && field.confidence ? (field.confidence * 100).toFixed(0) + '%' : 'N/A';
-                
-                let content = value;
-                if (isMismatch) { content = `${value} <span class="text-xs font-normal">(vs ${customerVal})</span>`; }
-
-                let cellClasses = 'reportable-cell';
-                let textClasses = 'text-sm text-slate-800';
-
-                if (isMismatch) {
-                    cellClasses += ' bg-red-50';
-                    textClasses += ' font-bold text-red-700';
-                } else if (isLowConfidence) {
-                    cellClasses += ' bg-orange-50 has-tooltip';
-                    textClasses += ' text-orange-700';
-                } else {
-                    cellClasses += ' has-tooltip';
-                }
-                
-                const tooltip = `<div class="tooltip">Confidence: ${confidence}</div>`;
-
-                return `
-                    <div class="${cellClasses}" data-field-name="${fieldName}">
-                        <div class="text-xs font-semibold text-slate-500">${label}</div>
-                        <div class="${textClasses}">${content}</div>
-                        ${tooltip}
-                    </div>
-                `;
-            };
-
-            const getIndicator = (result) => ({ 'MISMATCH': '🔴', 'OMISSION': '🟡', 'MATCH': '🟢', 'NOTE': '🔵' }[result] || '');
-
-            const orderNumberRow = `
-                <div class="mb-4 p-4 rounded-lg ${data.customerOrderNumber.result === 'MATCH' ? 'bg-green-100' : 'bg-red-100'}">
-                    <h3 class="font-bold text-lg ${data.customerOrderNumber.result === 'MATCH' ? 'text-green-800' : 'text-red-800'}">Order Number Comparison</h3>
-                    <p class="text-sm ${data.customerOrderNumber.result === 'MATCH' ? 'text-green-700' : 'text-red-700'}">
-                        Customer O/N: <strong>${data.customerOrderNumber.customerValue || 'N/A'}</strong> | Blind IQ O/N: <strong>${data.customerOrderNumber.blindIQValue || 'N/A'}</strong>
-                        <span class="font-bold ml-2">${getIndicator(data.customerOrderNumber.result)} ${data.customerOrderNumber.result}</span>
-                    </p>
-                </div>
-            `;
-            
-            let specialInstructionsRow = '';
-            if (data.specialInstructions && (data.specialInstructions.customerValue || data.specialInstructions.blindIQValue)) {
-                 const hasMismatch = data.specialInstructions.result === 'MISMATCH' || data.specialInstructions.result === 'OMISSION';
-                 specialInstructionsRow = `<div class="mb-4 p-4 rounded-lg ${hasMismatch ? 'bg-red-100' : 'bg-amber-100'}">
-                    <h3 class="font-bold text-lg ${hasMismatch ? 'text-red-800' : 'text-amber-800'}">Special Instructions ${hasMismatch ? getIndicator(data.specialInstructions.result) : ''}</h3>
-                    <p class="text-sm ${hasMismatch ? 'text-red-700' : 'text-amber-700'}">Customer Doc: <strong>${data.specialInstructions.customerValue || 'None'}</strong></p>
-                    <p class="text-sm ${hasMismatch ? 'text-red-700' : 'text-amber-700'}">Blind IQ Doc: <strong>${data.specialInstructions.blindIQValue || 'None'}</strong></p>
-                </div>`;
+                setupReportInteraction();
             }
 
-            const lineItemsHtml = (data.lineItems || []).map((lineItem, index) => {
-                const specHtml = (lineItem.specifications || []).map((spec, specIndex) => {
-                    const isMismatch = spec.specComparison.result === 'MISMATCH';
-                    const isOmission = spec.specComparison.result === 'OMISSION';
-                    const isLowConfidence = spec.specComparison.confidence < 0.9;
-                    const confidence = (spec.specComparison.confidence * 100).toFixed(0) + '%';
+            function renderReportTable(data) {
+                const renderCell = (field, fieldName, label) => {
+                    const isMismatch = field && field.result === 'MISMATCH';
+                    const isLowConfidence = field && field.confidence < 0.9;
+                    const value = field ? (field.blindIQValue || 'N/A') : 'N/A';
+                    const customerVal = field ? (field.customerValue || 'N/A') : 'N/A';
+                    const confidence = field && field.confidence ? (field.confidence * 100).toFixed(0) + '%' : 'N/A';
+                    
+                    let content = value;
+                    if (isMismatch) { content = `${value} <span class="text-xs font-normal">(vs ${customerVal})</span>`; }
 
-                    let resultClass = 'spec-match';
-                    if (isMismatch) resultClass = 'spec-mismatch';
-                    else if (isLowConfidence) resultClass = 'spec-low-confidence has-tooltip';
-                    else resultClass += ' has-tooltip';
+                    let cellClasses = 'reportable-cell';
+                    let textClasses = 'text-sm text-slate-800';
 
-                    let text = `${spec.specName}=${spec.specComparison.blindIQValue}`;
-                    if (isMismatch) { text += ` (vs ${spec.specComparison.customerValue})`; }
-                    if (isOmission) { text += ` (Omission)`; }
+                    if (isMismatch) {
+                        cellClasses += ' bg-red-50';
+                        textClasses += ' font-bold text-red-700';
+                    } else if (isLowConfidence) {
+                        cellClasses += ' bg-orange-50 has-tooltip';
+                        textClasses += ' text-orange-700';
+                    } else {
+                        cellClasses += ' has-tooltip';
+                    }
                     
                     const tooltip = `<div class="tooltip">Confidence: ${confidence}</div>`;
 
-                    return `<span class="spec-text ${resultClass}" data-spec-index="${specIndex}">${text}${tooltip}</span>`;
-                }).join(' | ');
-                
-                let fabricCheckHtml = '';
-                if(lineItem.fabricCheck) {
-                    const isWarning = lineItem.fabricCheck.status === 'WARN';
-                    fabricCheckHtml = `<div class="p-2 mt-2 text-xs rounded ${isWarning ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}">${lineItem.fabricCheck.message}</div>`;
-                }
+                    return `
+                        <div class="${cellClasses}" data-field-name="${fieldName}">
+                            <div class="text-xs font-semibold text-slate-500">${label}</div>
+                            <div class="${textClasses}">${content}</div>
+                            ${tooltip}
+                        </div>
+                    `;
+                };
 
-                return `
-                    <div class="line-item-container border border-slate-200 rounded-lg mb-4" data-row-index="${index}">
-                        <div class="report-grid">
-                           ${renderCell(lineItem.item, 'item', 'Item')}
-                            ${renderCell(lineItem.qty, 'qty', 'QTY')}
-                            ${renderCell(lineItem.location, 'location', 'Location')}
-                            ${renderCell(lineItem.blindType, 'blindType', 'Blind Type')}
-                            ${renderCell(lineItem.range, 'range', 'Range')}
-                            ${renderCell(lineItem.colour, 'colour', 'Colour')}
-                            ${renderCell(lineItem.width, 'width', 'Width')}
-                            ${renderCell(lineItem.drop, 'drop', 'Drop')}
-                            ${renderCell(lineItem.control, 'control', 'Control')}
-                            ${renderCell(lineItem.fix, 'fix', 'Fix')}
-                        </div>
-                        <div class="p-3 bg-white text-xs text-slate-600">
-                            ${specHtml}
-                            ${fabricCheckHtml}
-                        </div>
+                const getIndicator = (result) => ({ 'MISMATCH': '🔴', 'OMISSION': '🟡', 'MATCH': '🟢', 'NOTE': '🔵' }[result] || '');
+
+                const orderNumberRow = `
+                    <div class="mb-4 p-4 rounded-lg ${data.customerOrderNumber.result === 'MATCH' ? 'bg-green-100' : 'bg-red-100'}">
+                        <h3 class="font-bold text-lg ${data.customerOrderNumber.result === 'MATCH' ? 'text-green-800' : 'text-red-800'}">Order Number Comparison</h3>
+                        <p class="text-sm ${data.customerOrderNumber.result === 'MATCH' ? 'text-green-700' : 'text-red-700'}">
+                            Customer O/N: <strong>${data.customerOrderNumber.customerValue || 'N/A'}</strong> | Blind IQ O/N: <strong>${data.customerOrderNumber.blindIQValue || 'N/A'}</strong>
+                            <span class="font-bold ml-2">${getIndicator(data.customerOrderNumber.result)} ${data.customerOrderNumber.result}</span>
+                        </p>
                     </div>
                 `;
-            }).join('');
-
-            return `${orderNumberRow}${specialInstructionsRow}${lineItemsHtml}`;
-        }
-
-        function setupReportInteraction() {
-            const reportContainer = document.getElementById('report-content');
-            if (!reportContainer) return;
-
-            reportContainer.addEventListener('click', (e) => {
-                const target = e.target.closest('.reportable-cell, .spec-text');
-                if (!target) return;
-                if (!db) return;
                 
-                const lineItemContainer = target.closest('.line-item-container');
-                if(!lineItemContainer) return;
-                
-                const summaryDetails = target.closest('.summary-item-details');
-                const historyItem = target.closest('.history-item');
-
-                let sourceData;
-                if (summaryDetails && summaryDetails.dataset.summaryIndex !== undefined) {
-                    sourceData = summaryResultsCache[summaryDetails.dataset.summaryIndex];
-                } else if (historyItem && historyItem.dataset.historyId !== undefined) {
-                    sourceData = historyDataCache.find(h => h.id === historyItem.dataset.historyId)?.data;
-                }
-                
-                const rowIndex = lineItemContainer.dataset.rowIndex;
-                if (!sourceData || rowIndex === undefined) {
-                    console.log("Could not find source data for feedback.");
-                    return;
-                }
-                
-                const lineItem = sourceData.lineItems[rowIndex];
-                let fieldName, fieldData;
-
-                if (target.classList.contains('spec-text')) {
-                    const specIndex = target.dataset.specIndex;
-                    const spec = lineItem.specifications[specIndex];
-                    fieldName = spec.specName;
-                    fieldData = spec.specComparison;
-                } else {
-                    fieldName = target.dataset.fieldName;
-                    fieldData = lineItem[fieldName];
+                let specialInstructionsRow = '';
+                if (data.specialInstructions && (data.specialInstructions.customerValue || data.specialInstructions.blindIQValue)) {
+                    const hasMismatch = data.specialInstructions.result === 'MISMATCH' || data.specialInstructions.result === 'OMISSION';
+                    specialInstructionsRow = `<div class="mb-4 p-4 rounded-lg ${hasMismatch ? 'bg-red-100' : 'bg-amber-100'}">
+                        <h3 class="font-bold text-lg ${hasMismatch ? 'text-red-800' : 'text-amber-800'}">Special Instructions ${hasMismatch ? getIndicator(data.specialInstructions.result) : ''}</h3>
+                        <p class="text-sm ${hasMismatch ? 'text-red-700' : 'text-amber-700'}">Customer Doc: <strong>${data.specialInstructions.customerValue || 'None'}</strong></p>
+                        <p class="text-sm ${hasMismatch ? 'text-red-700' : 'text-amber-700'}">Blind IQ Doc: <strong>${data.specialInstructions.blindIQValue || 'None'}</strong></p>
+                    </div>`;
                 }
 
-                if (!fieldData) return;
+                const lineItemsHtml = (data.lineItems || []).map((lineItem, index) => {
+                    const specHtml = (lineItem.specifications || []).map((spec, specIndex) => {
+                        const isMismatch = spec.specComparison.result === 'MISMATCH';
+                        const isOmission = spec.specComparison.result === 'OMISSION';
+                        const isLowConfidence = spec.specComparison.confidence < 0.9;
+                        const confidence = (spec.specComparison.confidence * 100).toFixed(0) + '%';
 
-                itemToCorrect = {
-                    bdoOrderNumber: sourceData.bdoOrderNumber,
-                    lineItemIdentifier: { item: lineItem.item.blindIQValue, location: lineItem.location.blindIQValue },
-                    fieldName: fieldName,
-                    fieldData: fieldData
-                };
-                
-                allDomElements.feedbackModalTitle.textContent = `Correcting error for: ${fieldName}`;
-                allDomElements.incorrectItemDetails.textContent = JSON.stringify(fieldData, null, 2);
-                allDomElements.feedbackModal.style.display = 'flex';
-            });
-        }
-        
-        allDomElements.cancelFeedbackBtn.addEventListener('click', () => {
-             allDomElements.feedbackModal.style.display = 'none';
-             allDomElements.feedbackExplanation.value = '';
-             itemToCorrect = null; pastedImageB64 = null;
-             allDomElements.feedbackImageContainer.classList.add('hidden');
-             allDomElements.feedbackImagePreview.src = '';
-        });
+                        let resultClass = 'spec-match';
+                        if (isMismatch) resultClass = 'spec-mismatch';
+                        else if (isLowConfidence) resultClass = 'spec-low-confidence has-tooltip';
+                        else resultClass += ' has-tooltip';
 
-        allDomElements.submitFeedbackBtn.addEventListener('click', async () => {
-            if (!itemToCorrect || !allDomElements.feedbackExplanation.value.trim()) { return; }
-            allDomElements.submitFeedbackBtn.disabled = true;
-            allDomElements.submitFeedbackBtn.innerHTML = `<div class="loader !w-5 !h-5 !border-2 mx-auto"></div>`;
+                        let text = `${spec.specName}=${spec.specComparison.blindIQValue}`;
+                        if (isMismatch) { text += ` (vs ${spec.specComparison.customerValue})`; }
+                        if (isOmission) { text += ` (Omission)`; }
+                        
+                        const tooltip = `<div class="tooltip">Confidence: ${confidence}</div>`;
 
-            try {
-                const enhancementPrompt = `You are an expert prompt engineer. A user has provided a guideline for an AI document comparison tool. Rewrite their text into a clear, precise, and unambiguous rule that the AI can easily follow. User's text: "${allDomElements.feedbackExplanation.value.trim()}"`;
-                const enhancementParts = [{ text: enhancementPrompt }];
-                if (pastedImageB64) { enhancementParts.push({ inlineData: { mimeType: 'image/png', data: pastedImageB64.split(',')[1] } }); }
-
-                const geminiPayload = { contents: [{ role: "user", parts: enhancementParts }] };
-                const proxyPayload = { model: 'gemini-2.5-flash-image-preview', payload: geminiPayload };
-                
-                const response = await fetch(PROXY_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proxyPayload) });
-                if (!response.ok) throw new Error('Failed to enhance explanation.');
-                
-                const resultText = await response.text();
-                const result = JSON.parse(resultText);
-                const enhancedExplanation = result.candidates[0].content.parts[0].text;
-
-                const feedbackData = { 
-                    userId: userId, 
-                    timestamp: new Date().toISOString(), 
-                    incorrectItem: itemToCorrect, 
-                    userExplanation: allDomElements.feedbackExplanation.value.trim(), 
-                    enhancedExplanation: enhancedExplanation 
-                };
-                if (pastedImageB64) { feedbackData.imageSnippet = pastedImageB64; }
-
-                await addDoc(collection(db, `orderbot_feedback`), feedbackData);
-                allDomElements.cancelFeedbackBtn.click();
-            } catch (error) { 
-                console.error("Error submitting feedback: ", error); 
-                const fallbackData = { userId: userId, timestamp: new Date().toISOString(), incorrectItem: itemToCorrect, userExplanation: allDomElements.feedbackExplanation.value.trim(), enhancedExplanation: `RAW: ${allDomElements.feedbackExplanation.value.trim()}` };
-                if (pastedImageB64) { fallbackData.imageSnippet = pastedImageB64; }
-                await addDoc(collection(db, `orderbot_feedback`), fallbackData);
-                allDomElements.cancelFeedbackBtn.click();
-            } finally { 
-                allDomElements.submitFeedbackBtn.disabled = false; 
-                allDomElements.submitFeedbackBtn.textContent = 'Submit Feedback'; 
-            }
-        });
-
-        allDomElements.feedbackTextareaContainer.addEventListener('paste', (event) => {
-            const items = (event.clipboardData || event.originalEvent.clipboardData).items;
-            for (const item of items) {
-                if (item.kind === 'file') {
-                    const blob = item.getAsFile();
-                    const reader = new FileReader();
-                    reader.onload = (e) => {
-                        pastedImageB64 = e.target.result;
-                        allDomElements.feedbackImagePreview.src = pastedImageB64;
-                        allDomElements.feedbackImageContainer.classList.remove('hidden');
-                    };
-                    reader.readAsDataURL(blob);
-                    event.preventDefault();
-                }
-            }
-        });
-        
-        allDomElements.feedbackImageDelete.addEventListener('click', () => {
-            pastedImageB64 = null;
-            allDomElements.feedbackImagePreview.src = '';
-            allDomElements.feedbackImageContainer.classList.add('hidden');
-        });
-
-        // Fabric Management Logic
-        allDomElements.uploadFabricsBtn.addEventListener('click', async () => {
-            const statusDiv = allDomElements.fabricUploadStatus;
-            
-            statusDiv.innerHTML = `<div class="flex items-center gap-2"><div class="loader !w-4 !h-4 !border-2"></div>Deleting old data...</div>`;
-            
-            try {
-                // Delete all existing documents
-                const collectionRef = collection(db, "fabric_properties");
-                const existingDocs = await getDocs(collectionRef);
-                const deleteBatch = writeBatch(db);
-                existingDocs.forEach(docRef => deleteBatch.delete(docRef.ref));
-                await deleteBatch.commit();
-                
-                statusDiv.innerHTML = `<div class="flex items-center gap-2"><div class="loader !w-4 !h-4 !border-2"></div>Uploading new data...</div>`;
-
-                const lines = allDomElements.fabricDataInput.value.trim().split('\n');
-                const fabrics = lines.map(line => {
-                    const parts = line.split(',');
-                    if (parts.length !== 4) return null;
-                    const name = parts[0].trim().replace(/"/g, '');
-                    const weight = parseFloat(parts[1].trim());
-                    const width = parseInt(parts[2].trim(), 10);
-                    const canTurn = parts[3].trim().replace(/"/g, '');
-                    if (name && !isNaN(weight) && !isNaN(width) && canTurn) {
-                        return { name, weight, width, canTurn };
+                        return `<span class="spec-text ${resultClass}" data-spec-index="${specIndex}">${text}${tooltip}</span>`;
+                    }).join(' | ');
+                    
+                    let fabricCheckHtml = '';
+                    if(lineItem.fabricCheck) {
+                        const isWarning = lineItem.fabricCheck.status === 'WARN';
+                        fabricCheckHtml = `<div class="p-2 mt-2 text-xs rounded ${isWarning ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}">${lineItem.fabricCheck.message}</div>`;
                     }
-                    return null;
-                }).filter(Boolean);
 
-                if (fabrics.length === 0) {
-                    statusDiv.innerHTML = '<p class="text-red-500">No valid fabric data found. Please check the format.</p>';
+                    return `
+                        <div class="line-item-container border border-slate-200 rounded-lg mb-4" data-row-index="${index}">
+                            <div class="report-grid">
+                            ${renderCell(lineItem.item, 'item', 'Item')}
+                                ${renderCell(lineItem.qty, 'qty', 'QTY')}
+                                ${renderCell(lineItem.location, 'location', 'Location')}
+                                ${renderCell(lineItem.blindType, 'blindType', 'Blind Type')}
+                                ${renderCell(lineItem.range, 'range', 'Range')}
+                                ${renderCell(lineItem.colour, 'colour', 'Colour')}
+                                ${renderCell(lineItem.width, 'width', 'Width')}
+                                ${renderCell(lineItem.drop, 'drop', 'Drop')}
+                                ${renderCell(lineItem.control, 'control', 'Control')}
+                                ${renderCell(lineItem.fix, 'fix', 'Fix')}
+                            </div>
+                            <div class="p-3 bg-white text-xs text-slate-600">
+                                ${specHtml}
+                                ${fabricCheckHtml}
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+
+                return `${orderNumberRow}${specialInstructionsRow}${lineItemsHtml}`;
+            }
+
+            function setupReportInteraction() {
+                const reportContainer = document.getElementById('report-content');
+                if (!reportContainer) return;
+
+                reportContainer.addEventListener('click', (e) => {
+                    const target = e.target.closest('.reportable-cell, .spec-text');
+                    if (!target) return;
+                    if (!db) return;
+                    
+                    const lineItemContainer = target.closest('.line-item-container');
+                    if(!lineItemContainer) return;
+                    
+                    const summaryDetails = target.closest('.summary-item-details');
+                    const historyItem = target.closest('.history-item');
+
+                    let sourceData;
+                    if (summaryDetails && summaryDetails.dataset.summaryIndex !== undefined) {
+                        sourceData = summaryResultsCache[summaryDetails.dataset.summaryIndex];
+                    } else if (historyItem && historyItem.dataset.historyId !== undefined) {
+                        sourceData = historyDataCache.find(h => h.id === historyItem.dataset.historyId)?.data;
+                    }
+                    
+                    const rowIndex = lineItemContainer.dataset.rowIndex;
+                    if (!sourceData || rowIndex === undefined) {
+                        console.log("Could not find source data for feedback.");
+                        return;
+                    }
+                    
+                    const lineItem = sourceData.lineItems[rowIndex];
+                    let fieldName, fieldData;
+
+                    if (target.classList.contains('spec-text')) {
+                        const specIndex = target.dataset.specIndex;
+                        const spec = lineItem.specifications[specIndex];
+                        fieldName = spec.specName;
+                        fieldData = spec.specComparison;
+                    } else {
+                        fieldName = target.dataset.fieldName;
+                        fieldData = lineItem[fieldName];
+                    }
+
+                    if (!fieldData) return;
+
+                    itemToCorrect = {
+                        bdoOrderNumber: sourceData.bdoOrderNumber,
+                        lineItemIdentifier: { item: lineItem.item.blindIQValue, location: lineItem.location.blindIQValue },
+                        fieldName: fieldName,
+                        fieldData: fieldData
+                    };
+                    
+                    allDomElements.feedbackModalTitle.textContent = `Correcting error for: ${fieldName}`;
+                    allDomElements.incorrectItemDetails.textContent = JSON.stringify(fieldData, null, 2);
+                    allDomElements.feedbackModal.style.display = 'flex';
+                });
+            }
+            
+            allDomElements.cancelFeedbackBtn.addEventListener('click', () => {
+                allDomElements.feedbackModal.style.display = 'none';
+                allDomElements.feedbackExplanation.value = '';
+                itemToCorrect = null; pastedImageB64 = null;
+                allDomElements.feedbackImageContainer.classList.add('hidden');
+                allDomElements.feedbackImagePreview.src = '';
+            });
+
+            allDomElements.submitFeedbackBtn.addEventListener('click', async () => {
+                if (!itemToCorrect || !allDomElements.feedbackExplanation.value.trim()) { return; }
+                allDomElements.submitFeedbackBtn.disabled = true;
+                allDomElements.submitFeedbackBtn.innerHTML = `<div class="loader !w-5 !h-5 !border-2 mx-auto"></div>`;
+
+                try {
+                    const enhancementPrompt = `You are an expert prompt engineer. A user has provided a guideline for an AI document comparison tool. Rewrite their text into a clear, precise, and unambiguous rule that the AI can easily follow. User's text: "${allDomElements.feedbackExplanation.value.trim()}"`;
+                    const enhancementParts = [{ text: enhancementPrompt }];
+                    if (pastedImageB64) { enhancementParts.push({ inlineData: { mimeType: 'image/png', data: pastedImageB64.split(',')[1] } }); }
+
+                    const geminiPayload = { contents: [{ role: "user", parts: enhancementParts }] };
+                    const proxyPayload = { model: 'gemini-2.5-flash-image-preview', payload: geminiPayload };
+                    
+                    const response = await fetch(PROXY_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proxyPayload) });
+                    if (!response.ok) throw new Error('Failed to enhance explanation.');
+                    
+                    const resultText = await response.text();
+                    const result = JSON.parse(resultText);
+                    const enhancedExplanation = result.candidates[0].content.parts[0].text;
+
+                    const feedbackData = { 
+                        userId: userId, 
+                        timestamp: new Date().toISOString(), 
+                        incorrectItem: itemToCorrect, 
+                        userExplanation: allDomElements.feedbackExplanation.value.trim(), 
+                        enhancedExplanation: enhancedExplanation 
+                    };
+                    if (pastedImageB64) { feedbackData.imageSnippet = pastedImageB64; }
+
+                    await addDoc(collection(db, `orderbot_feedback`), feedbackData);
+                    allDomElements.cancelFeedbackBtn.click();
+                } catch (error) { 
+                    console.error("Error submitting feedback: ", error); 
+                    const fallbackData = { userId: userId, timestamp: new Date().toISOString(), incorrectItem: itemToCorrect, userExplanation: allDomElements.feedbackExplanation.value.trim(), enhancedExplanation: `RAW: ${allDomElements.feedbackExplanation.value.trim()}` };
+                    if (pastedImageB64) { fallbackData.imageSnippet = pastedImageB64; }
+                    await addDoc(collection(db, `orderbot_feedback`), fallbackData);
+                    allDomElements.cancelFeedbackBtn.click();
+                } finally { 
+                    allDomElements.submitFeedbackBtn.disabled = false; 
+                    allDomElements.submitFeedbackBtn.textContent = 'Submit Feedback'; 
+                }
+            });
+
+            allDomElements.feedbackTextareaContainer.addEventListener('paste', (event) => {
+                const items = (event.clipboardData || event.originalEvent.clipboardData).items;
+                for (const item of items) {
+                    if (item.kind === 'file') {
+                        const blob = item.getAsFile();
+                        const reader = new FileReader();
+                        reader.onload = (e) => {
+                            pastedImageB64 = e.target.result;
+                            allDomElements.feedbackImagePreview.src = pastedImageB64;
+                            allDomElements.feedbackImageContainer.classList.remove('hidden');
+                        };
+                        reader.readAsDataURL(blob);
+                        event.preventDefault();
+                    }
+                }
+            });
+            
+            allDomElements.feedbackImageDelete.addEventListener('click', () => {
+                pastedImageB64 = null;
+                allDomElements.feedbackImagePreview.src = '';
+                allDomElements.feedbackImageContainer.classList.add('hidden');
+            });
+
+            // Fabric Management Logic
+            allDomElements.uploadFabricsBtn.addEventListener('click', async () => {
+                const statusDiv = allDomElements.fabricUploadStatus;
+                
+                statusDiv.innerHTML = `<div class="flex items-center gap-2"><div class="loader !w-4 !h-4 !border-2"></div>Deleting old data...</div>`;
+                
+                try {
+                    // Delete all existing documents
+                    const collectionRef = collection(db, "fabric_properties");
+                    const existingDocs = await getDocs(collectionRef);
+                    const deleteBatch = writeBatch(db);
+                    existingDocs.forEach(docRef => deleteBatch.delete(docRef.ref));
+                    await deleteBatch.commit();
+                    
+                    statusDiv.innerHTML = `<div class="flex items-center gap-2"><div class="loader !w-4 !h-4 !border-2"></div>Uploading new data...</div>`;
+
+                    const lines = allDomElements.fabricDataInput.value.trim().split('\n');
+                    const fabrics = lines.map(line => {
+                        const parts = line.split(',');
+                        if (parts.length !== 4) return null;
+                        const name = parts[0].trim().replace(/"/g, '');
+                        const weight = parseFloat(parts[1].trim());
+                        const width = parseInt(parts[2].trim(), 10);
+                        const canTurn = parts[3].trim().replace(/"/g, '');
+                        if (name && !isNaN(weight) && !isNaN(width) && canTurn) {
+                            return { name, weight, width, canTurn };
+                        }
+                        return null;
+                    }).filter(Boolean);
+
+                    if (fabrics.length === 0) {
+                        statusDiv.innerHTML = '<p class="text-red-500">No valid fabric data found. Please check the format.</p>';
+                        return;
+                    }
+
+                    const uploadBatch = writeBatch(db);
+                    fabrics.forEach(fabric => {
+                        const docRef = doc(collectionRef); // Automatically generate a new document ID
+                        uploadBatch.set(docRef, fabric);
+                    });
+                    await uploadBatch.commit();
+                    statusDiv.innerHTML = `<p class="text-green-600 font-bold">Successfully replaced ${fabrics.length} fabric records!</p>`;
+                    await loadFabricData(); // Reload data into the app
+                } catch (error) {
+                    console.error("Error uploading to Firestore:", error);
+                    statusDiv.innerHTML = `<p class="text-red-500">Error: ${error.message}</p>`;
+                }
+            });
+
+            async function loadAndDisplayFabrics() {
+                if(!db) return;
+                const statusDiv = allDomElements.fabricUploadStatus;
+                statusDiv.innerHTML = `<div class="flex items-center gap-2"><div class="loader !w-4 !h-4 !border-2"></div>Loading fabric data from database...</div>`;
+                try {
+                    const querySnapshot = await getDocs(collection(db, "fabric_properties"));
+                    const fabrics = [];
+                    querySnapshot.forEach((doc) => {
+                        const data = doc.data();
+                        fabrics.push(`"${data.name}",${data.weight},${data.width},"${data.canTurn}"`);
+                    });
+
+                    if (fabrics.length > 0) {
+                        // Sort alphabetically by name before displaying
+                        fabrics.sort((a, b) => a.localeCompare(b));
+                        allDomElements.fabricDataInput.value = fabrics.join('\n');
+                        statusDiv.innerHTML = `<p class="text-slate-500">Loaded ${fabrics.length} records from the database.</p>`;
+                    } else {
+                        statusDiv.innerHTML = `<p class="text-amber-600">No fabric data found in the database. You can paste your list here and upload it.</p>`;
+                    }
+                } catch (error) {
+                    console.error("Error loading fabric list for management:", error);
+                    statusDiv.innerHTML = `<p class="text-red-500">Error loading fabric data: ${error.message}</p>`;
+                }
+            }
+            
+            // Event listeners for toggling sections
+            allDomElements.toggleFabricsBtn.addEventListener('click', () => {
+                const isHidden = allDomElements.fabricManagementSection.classList.toggle('hidden');
+                if (!isHidden) {
+                    loadAndDisplayFabrics();
+                }
+            });
+            allDomElements.toggleGuidelinesBtn.addEventListener('click', () => allDomElements.guidelinesSection.classList.toggle('hidden'));
+            allDomElements.toggleDashboardBtn.addEventListener('click', () => {
+                const isHidden = allDomElements.dashboardSection.classList.toggle('hidden');
+                if (!isHidden) loadDashboardData();
+            });
+            
+            // Other event listeners (history, guidelines, etc.)
+            allDomElements.historySearchBtn.addEventListener('click', findHistory);
+            allDomElements.clearHistoryBtn.addEventListener('click', () => {
+                allDomElements.historyResults.innerHTML = '';
+                allDomElements.historySearchInput.value = '';
+                allDomElements.clearHistoryBtn.classList.add('hidden');
+            });
+            allDomElements.addGuidelineBtn.addEventListener('click', () => allDomElements.guidelineModal.style.display = 'flex');
+            allDomElements.cancelGuidelineBtn.addEventListener('click', () => {
+                allDomElements.guidelineModal.style.display = 'none';
+                allDomElements.guidelineInput.value = '';
+            });
+            allDomElements.guidelinesList.addEventListener('click', async (e) => {
+                if (e.target.classList.contains('delete-guideline-btn')) {
+                    const docId = e.target.dataset.id;
+                    await deleteDoc(doc(db, 'orderbot_guidelines', docId));
+                    loadAndDisplayGuidelines();
+                }
+            });
+            allDomElements.saveGuidelineBtn.addEventListener('click', saveGuidelines);
+
+            async function getGuidelines() {
+                if (!db) return "";
+                const guidelineQuery = query(collection(db, `orderbot_guidelines`));
+                const querySnapshot = await getDocs(guidelineQuery);
+                const guidelineDocs = [];
+                querySnapshot.forEach(doc => guidelineDocs.push(doc.data().enhancedGuideline));
+                if (guidelineDocs.length === 0) return "";
+                return "\n## 6. USER-DEFINED GUIDELINES (CRITICAL)\nYou must follow these rules without exception:\n- " + guidelineDocs.join("\n- ") + "\n";
+            }
+
+            async function getFeedbackExamples() {
+                if (!db) return "";
+                const feedbackQuery = query(collection(db, `orderbot_feedback`));
+                const feedbackSnapshot = await getDocs(feedbackQuery);
+                const feedbackDocs = [];
+                feedbackSnapshot.forEach(doc => feedbackDocs.push(doc.data()));
+                if (feedbackDocs.length === 0) return "";
+                
+                feedbackDocs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+                return "\n## 5. CORRECTION EXAMPLES (LEARNING)\n" + feedbackDocs.slice(0, 10).map((fb, i) => `Example ${i + 1}:\n- Incorrect Item: ${JSON.stringify(fb.incorrectItem)}\n- Enhanced Explanation: "${fb.enhancedExplanation}"\n`).join("\n");
+            }
+
+            async function saveGuidelines() {
+                const guidelineText = allDomElements.guidelineInput.value.trim();
+                if (!guidelineText) return;
+                
+                allDomElements.saveGuidelineBtn.disabled = true;
+                allDomElements.saveGuidelineBtn.innerHTML = `<div class="loader !w-5 !h-5 !border-2 mx-auto"></div>`;
+
+                try {
+                    const enhancementPrompt = `You are an expert prompt engineer. A user has provided a block of text that may contain one or more guidelines for an AI tool. Your tasks are:
+                    1. Identify each distinct rule or guideline in the user's text.
+                    2. For each rule, rewrite it into a clear, precise, and unambiguous instruction that an AI can easily follow.
+                    3. Return these enhanced guidelines as a JSON array of strings.
+                    User's text: "${guidelineText}"`;
+                    
+                    const enhancementSchema = { type: "OBJECT", properties: { "guidelines": { type: "ARRAY", items: { "type": "STRING" } } }, required: ["guidelines"] };
+                    const geminiPayload = { contents: [{ role: "user", parts: [{ text: enhancementPrompt }] }], generationConfig: { responseMimeType: "application/json", responseSchema: enhancementSchema } };
+                    const proxyPayload = { model: 'gemini-1.5-flash', payload: geminiPayload };
+                    
+                    const response = await fetch(PROXY_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proxyPayload) });
+                    if (!response.ok) throw new Error('Failed to enhance guideline.');
+
+                    const resultText = await response.text();
+                    const result = JSON.parse(resultText);
+
+                    if (!result.candidates?.[0]?.content?.parts?.[0]?.text) {
+                        throw new Error('Failed to enhance guideline. API returned empty or invalid JSON.');
+                    }
+                    const data = JSON.parse(result.candidates[0].content.parts[0].text);
+                    const enhancedGuidelines = data.guidelines;
+
+                    const savePromises = enhancedGuidelines.map(guideline => {
+                        return addDoc(collection(db, `orderbot_guidelines`), {
+                            userId: userId,
+                            timestamp: new Date().toISOString(),
+                            originalGuideline: guidelineText,
+                            enhancedGuideline: guideline
+                        });
+                    });
+
+                    await Promise.all(savePromises);
+                    
+                    allDomElements.cancelGuidelineBtn.click();
+                    loadAndDisplayGuidelines();
+
+                } catch(error) {
+                    console.error("Error saving guideline:", error);
+                } finally {
+                    allDomElements.saveGuidelineBtn.disabled = false;
+                    allDomElements.saveGuidelineBtn.textContent = 'Save Guideline/s';
+                }
+            }
+
+            async function loadAndDisplayGuidelines() {
+                if (!db) return;
+                const guidelineQuery = query(collection(db, `orderbot_guidelines`));
+                const querySnapshot = await getDocs(guidelineQuery);
+                allDomElements.guidelinesList.innerHTML = '';
+                if (querySnapshot.empty) {
+                    allDomElements.guidelinesList.innerHTML = '<p class="text-slate-400 italic">No custom guidelines have been added yet.</p>';
                     return;
                 }
-
-                const uploadBatch = writeBatch(db);
-                fabrics.forEach(fabric => {
-                    const docRef = doc(collectionRef); // Automatically generate a new document ID
-                    uploadBatch.set(docRef, fabric);
+                querySnapshot.forEach(doc => {
+                    const guidelineData = doc.data();
+                    const div = document.createElement('div');
+                    div.className = 'flex items-center justify-between bg-indigo-50 p-2 rounded';
+                    div.innerHTML = `<span>- ${guidelineData.enhancedGuideline}</span><button data-id="${doc.id}" class="delete-guideline-btn text-red-400 hover:text-red-600 font-bold text-lg px-2">&times;</button>`;
+                    allDomElements.guidelinesList.appendChild(div);
                 });
-                await uploadBatch.commit();
-                statusDiv.innerHTML = `<p class="text-green-600 font-bold">Successfully replaced ${fabrics.length} fabric records!</p>`;
-                await loadFabricData(); // Reload data into the app
-            } catch (error) {
-                console.error("Error uploading to Firestore:", error);
-                statusDiv.innerHTML = `<p class="text-red-500">Error: ${error.message}</p>`;
             }
-        });
-
-        async function loadAndDisplayFabrics() {
-            if(!db) return;
-            const statusDiv = allDomElements.fabricUploadStatus;
-            statusDiv.innerHTML = `<div class="flex items-center gap-2"><div class="loader !w-4 !h-4 !border-2"></div>Loading fabric data from database...</div>`;
-            try {
-                const querySnapshot = await getDocs(collection(db, "fabric_properties"));
-                const fabrics = [];
-                querySnapshot.forEach((doc) => {
-                    const data = doc.data();
-                    fabrics.push(`"${data.name}",${data.weight},${data.width},"${data.canTurn}"`);
-                });
-
-                if (fabrics.length > 0) {
-                    // Sort alphabetically by name before displaying
-                    fabrics.sort((a, b) => a.localeCompare(b));
-                    allDomElements.fabricDataInput.value = fabrics.join('\n');
-                    statusDiv.innerHTML = `<p class="text-slate-500">Loaded ${fabrics.length} records from the database.</p>`;
-                } else {
-                     statusDiv.innerHTML = `<p class="text-amber-600">No fabric data found in the database. You can paste your list here and upload it.</p>`;
-                }
-            } catch (error) {
-                 console.error("Error loading fabric list for management:", error);
-                 statusDiv.innerHTML = `<p class="text-red-500">Error loading fabric data: ${error.message}</p>`;
-            }
-        }
-        
-        // Event listeners for toggling sections
-        allDomElements.toggleFabricsBtn.addEventListener('click', () => {
-            const isHidden = allDomElements.fabricManagementSection.classList.toggle('hidden');
-            if (!isHidden) {
-                loadAndDisplayFabrics();
-            }
-        });
-        allDomElements.toggleGuidelinesBtn.addEventListener('click', () => allDomElements.guidelinesSection.classList.toggle('hidden'));
-        allDomElements.toggleDashboardBtn.addEventListener('click', () => {
-            const isHidden = allDomElements.dashboardSection.classList.toggle('hidden');
-            if (!isHidden) loadDashboardData();
-        });
-        
-        // Other event listeners (history, guidelines, etc.)
-        allDomElements.historySearchBtn.addEventListener('click', findHistory);
-        allDomElements.clearHistoryBtn.addEventListener('click', () => {
-            allDomElements.historyResults.innerHTML = '';
-            allDomElements.historySearchInput.value = '';
-            allDomElements.clearHistoryBtn.classList.add('hidden');
-        });
-        allDomElements.addGuidelineBtn.addEventListener('click', () => allDomElements.guidelineModal.style.display = 'flex');
-        allDomElements.cancelGuidelineBtn.addEventListener('click', () => {
-            allDomElements.guidelineModal.style.display = 'none';
-            allDomElements.guidelineInput.value = '';
-        });
-        allDomElements.guidelinesList.addEventListener('click', async (e) => {
-            if (e.target.classList.contains('delete-guideline-btn')) {
-                const docId = e.target.dataset.id;
-                await deleteDoc(doc(db, 'orderbot_guidelines', docId));
-                loadAndDisplayGuidelines();
-            }
-        });
-        allDomElements.saveGuidelineBtn.addEventListener('click', saveGuidelines);
-
-        async function getGuidelines() {
-            if (!db) return "";
-            const guidelineQuery = query(collection(db, `orderbot_guidelines`));
-            const querySnapshot = await getDocs(guidelineQuery);
-            const guidelineDocs = [];
-            querySnapshot.forEach(doc => guidelineDocs.push(doc.data().enhancedGuideline));
-            if (guidelineDocs.length === 0) return "";
-            return "\n## 6. USER-DEFINED GUIDELINES (CRITICAL)\nYou must follow these rules without exception:\n- " + guidelineDocs.join("\n- ") + "\n";
-        }
-
-        async function getFeedbackExamples() {
-            if (!db) return "";
-            const feedbackQuery = query(collection(db, `orderbot_feedback`));
-            const feedbackSnapshot = await getDocs(feedbackQuery);
-            const feedbackDocs = [];
-            feedbackSnapshot.forEach(doc => feedbackDocs.push(doc.data()));
-            if (feedbackDocs.length === 0) return "";
             
-            feedbackDocs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-            return "\n## 5. CORRECTION EXAMPLES (LEARNING)\n" + feedbackDocs.slice(0, 10).map((fb, i) => `Example ${i + 1}:\n- Incorrect Item: ${JSON.stringify(fb.incorrectItem)}\n- Enhanced Explanation: "${fb.enhancedExplanation}"\n`).join("\n");
-        }
+            async function loadDashboardData() {
+                // ... (implementation is complex, assuming it's correct for now)
+            }
 
-        async function saveGuidelines() {
-            const guidelineText = allDomElements.guidelineInput.value.trim();
-            if (!guidelineText) return;
-            
-            allDomElements.saveGuidelineBtn.disabled = true;
-            allDomElements.saveGuidelineBtn.innerHTML = `<div class="loader !w-5 !h-5 !border-2 mx-auto"></div>`;
-
-            try {
-                const enhancementPrompt = `You are an expert prompt engineer. A user has provided a block of text that may contain one or more guidelines for an AI tool. Your tasks are:
-                1. Identify each distinct rule or guideline in the user's text.
-                2. For each rule, rewrite it into a clear, precise, and unambiguous instruction that an AI can easily follow.
-                3. Return these enhanced guidelines as a JSON array of strings.
-                User's text: "${guidelineText}"`;
-                
-                const enhancementSchema = { type: "OBJECT", properties: { "guidelines": { type: "ARRAY", items: { "type": "STRING" } } }, required: ["guidelines"] };
-                const geminiPayload = { contents: [{ role: "user", parts: [{ text: enhancementPrompt }] }], generationConfig: { responseMimeType: "application/json", responseSchema: enhancementSchema } };
-                const proxyPayload = { model: 'gemini-1.5-flash', payload: geminiPayload };
-                
-                const response = await fetch(PROXY_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proxyPayload) });
-                if (!response.ok) throw new Error('Failed to enhance guideline.');
-
-                const resultText = await response.text();
-                const result = JSON.parse(resultText);
-
-                if (!result.candidates?.[0]?.content?.parts?.[0]?.text) {
-                    throw new Error('Failed to enhance guideline. API returned empty or invalid JSON.');
-                }
-                const data = JSON.parse(result.candidates[0].content.parts[0].text);
-                const enhancedGuidelines = data.guidelines;
-
-                const savePromises = enhancedGuidelines.map(guideline => {
-                    return addDoc(collection(db, `orderbot_guidelines`), {
-                        userId: userId,
-                        timestamp: new Date().toISOString(),
-                        originalGuideline: guidelineText,
-                        enhancedGuideline: guideline
+            async function loadFabricData() {
+                if (!db) return;
+                try {
+                    const querySnapshot = await getDocs(collection(db, "fabric_properties"));
+                    fabricData = [];
+                    querySnapshot.forEach((doc) => {
+                        fabricData.push(doc.data());
                     });
-                });
-
-                await Promise.all(savePromises);
-                
-                allDomElements.cancelGuidelineBtn.click();
-                loadAndDisplayGuidelines();
-
-            } catch(error) {
-                console.error("Error saving guideline:", error);
-            } finally {
-                allDomElements.saveGuidelineBtn.disabled = false;
-                allDomElements.saveGuidelineBtn.textContent = 'Save Guideline/s';
+                    console.log(`Loaded ${fabricData.length} fabric records.`);
+                } catch (error) {
+                    console.error("Error loading fabric data:", error);
+                }
             }
-        }
 
-        async function loadAndDisplayGuidelines() {
-            if (!db) return;
-            const guidelineQuery = query(collection(db, `orderbot_guidelines`));
-            const querySnapshot = await getDocs(guidelineQuery);
-            allDomElements.guidelinesList.innerHTML = '';
-            if (querySnapshot.empty) {
-                allDomElements.guidelinesList.innerHTML = '<p class="text-slate-400 italic">No custom guidelines have been added yet.</p>';
-                return;
-            }
-            querySnapshot.forEach(doc => {
-                const guidelineData = doc.data();
-                const div = document.createElement('div');
-                div.className = 'flex items-center justify-between bg-indigo-50 p-2 rounded';
-                div.innerHTML = `<span>- ${guidelineData.enhancedGuideline}</span><button data-id="${doc.id}" class="delete-guideline-btn text-red-400 hover:text-red-600 font-bold text-lg px-2">&times;</button>`;
-                allDomElements.guidelinesList.appendChild(div);
-            });
-        }
-        
-        async function loadDashboardData() {
-            // ... (implementation is complex, assuming it's correct for now)
-        }
+            async function findHistory() {
+                const searchTerm = allDomElements.historySearchInput.value.trim();
+                if (!searchTerm) return;
+                if (!db) { return; }
 
-        async function loadFabricData() {
-            if (!db) return;
-            try {
-                const querySnapshot = await getDocs(collection(db, "fabric_properties"));
-                fabricData = [];
-                querySnapshot.forEach((doc) => {
-                    fabricData.push(doc.data());
-                });
-                console.log(`Loaded ${fabricData.length} fabric records.`);
-            } catch (error) {
-                console.error("Error loading fabric data:", error);
-            }
-        }
-
-        async function findHistory() {
-             const searchTerm = allDomElements.historySearchInput.value.trim();
-            if (!searchTerm) return;
-            if (!db) { return; }
-
-            allDomElements.historyResults.innerHTML = `<div class="flex items-center gap-2 text-slate-600"><div class="loader !w-6 !h-6"></div>Searching for history...</div>`;
-            
-            try {
-                const historyQuery = query(
-                    collection(db, `orderbot_comparisons`),
-                    where("bdoOrderNumber", "==", searchTerm.toUpperCase())
-                );
+                allDomElements.historyResults.innerHTML = `<div class="flex items-center gap-2 text-slate-600"><div class="loader !w-6 !h-6"></div>Searching for history...</div>`;
                 
-                const querySnapshot = await getDocs(historyQuery);
-                
-                let allDocs = [];
-                 querySnapshot.forEach(doc => {
-                    allDocs.push({id: doc.id, data: doc.data()});
-                });
-
-                // Fallback for lowercase search if first query fails
-                if(allDocs.length === 0) {
-                     const lowerCaseQuery = query(
+                try {
+                    const historyQuery = query(
                         collection(db, `orderbot_comparisons`),
-                        where("bdoOrderNumber", "==", searchTerm.toLowerCase())
+                        where("bdoOrderNumber", "==", searchTerm.toUpperCase())
                     );
-                    const lowerCaseSnapshot = await getDocs(lowerCaseQuery);
-                    lowerCaseSnapshot.forEach(doc => {
+                    
+                    const querySnapshot = await getDocs(historyQuery);
+                    
+                    let allDocs = [];
+                    querySnapshot.forEach(doc => {
                         allDocs.push({id: doc.id, data: doc.data()});
                     });
-                }
 
-
-                if (allDocs.length === 0) {
-                    allDomElements.historyResults.innerHTML = `<p class="text-slate-500">No history found for order number: <strong>${searchTerm}</strong></p>`;
-                    allDomElements.clearHistoryBtn.classList.remove('hidden');
-                    return;
-                }
-                
-                const latestComparisons = new Map();
-                allDocs.forEach(doc => {
-                    const orderNum = doc.data.bdoOrderNumber;
-                    if (orderNum) {
-                        const existing = latestComparisons.get(orderNum);
-                        if (!existing || new Date(doc.data.timestamp) > new Date(existing.data.timestamp)) {
-                            latestComparisons.set(orderNum, doc);
-                        }
+                    // Fallback for lowercase search if first query fails
+                    if(allDocs.length === 0) {
+                        const lowerCaseQuery = query(
+                            collection(db, `orderbot_comparisons`),
+                            where("bdoOrderNumber", "==", searchTerm.toLowerCase())
+                        );
+                        const lowerCaseSnapshot = await getDocs(lowerCaseQuery);
+                        lowerCaseSnapshot.forEach(doc => {
+                            allDocs.push({id: doc.id, data: doc.data()});
+                        });
                     }
-                });
 
-                const finalResults = Array.from(latestComparisons.values())
-                    .sort((a, b) => new Date(b.data.timestamp) - new Date(a.data.timestamp));
 
-                allDomElements.historyResults.innerHTML = '';
-                finalResults.forEach(doc => {
-                    const historyItemDiv = document.createElement('div');
-                    historyItemDiv.className = 'history-item border border-slate-200 rounded-lg p-4';
-                    historyItemDiv.dataset.historyId = doc.id; // Set ID here for the parent container
-                    const formattedDate = new Date(doc.data.timestamp).toLocaleString('en-ZA');
-                    historyItemDiv.innerHTML = `<h4 class="font-bold text-md text-slate-700">Comparison from: ${formattedDate}</h4>`;
+                    if (allDocs.length === 0) {
+                        allDomElements.historyResults.innerHTML = `<p class="text-slate-500">No history found for order number: <strong>${searchTerm}</strong></p>`;
+                        allDomElements.clearHistoryBtn.classList.remove('hidden');
+                        return;
+                    }
                     
-                    const reportContainer = document.createElement('div');
-                    reportContainer.innerHTML = renderReportTable(doc.data);
-                    historyItemDiv.appendChild(reportContainer);
+                    const latestComparisons = new Map();
+                    allDocs.forEach(doc => {
+                        const orderNum = doc.data.bdoOrderNumber;
+                        if (orderNum) {
+                            const existing = latestComparisons.get(orderNum);
+                            if (!existing || new Date(doc.data.timestamp) > new Date(existing.data.timestamp)) {
+                                latestComparisons.set(orderNum, doc);
+                            }
+                        }
+                    });
 
-                    allDomElements.historyResults.appendChild(historyItemDiv);
-                });
-                historyDataCache = finalResults;
-                allDomElements.clearHistoryBtn.classList.remove('hidden');
+                    const finalResults = Array.from(latestComparisons.values())
+                        .sort((a, b) => new Date(b.data.timestamp) - new Date(a.data.timestamp));
 
-            } catch (error) {
-                console.error("Error fetching history:", error);
-                allDomElements.historyResults.innerHTML = `<p class="text-red-500">Failed to fetch history: ${error.message}</p>`;
-                allDomElements.clearHistoryBtn.classList.remove('hidden');
+                    allDomElements.historyResults.innerHTML = '';
+                    finalResults.forEach(doc => {
+                        const historyItemDiv = document.createElement('div');
+                        historyItemDiv.className = 'history-item border border-slate-200 rounded-lg p-4';
+                        historyItemDiv.dataset.historyId = doc.id; // Set ID here for the parent container
+                        const formattedDate = new Date(doc.data.timestamp).toLocaleString('en-ZA');
+                        historyItemDiv.innerHTML = `<h4 class="font-bold text-md text-slate-700">Comparison from: ${formattedDate}</h4>`;
+                        
+                        const reportContainer = document.createElement('div');
+                        reportContainer.innerHTML = renderReportTable(doc.data);
+                        historyItemDiv.appendChild(reportContainer);
+
+                        allDomElements.historyResults.appendChild(historyItemDiv);
+                    });
+                    historyDataCache = finalResults;
+                    allDomElements.clearHistoryBtn.classList.remove('hidden');
+
+                } catch (error) {
+                    console.error("Error fetching history:", error);
+                    allDomElements.historyResults.innerHTML = `<p class="text-red-500">Failed to fetch history: ${error.message}</p>`;
+                    allDomElements.clearHistoryBtn.classList.remove('hidden');
+                }
             }
-        }
-        
-        function performFabricCheck(data) {
-            if (fabricData.length === 0) return data; 
+            
+            function performFabricCheck(data) {
+                if (fabricData.length === 0) return data; 
 
-            (data.lineItems || []).forEach(item => {
-                const rangeField = item.range;
-                if (rangeField && rangeField.blindIQValue) {
-                    const fabricName = rangeField.blindIQValue.trim().toLowerCase();
-                    const fabric = fabricData.find(f => f.name.toLowerCase() === fabricName);
-                    
-                    if (fabric) {
-                        const blindWidth = parseInt(item.width.blindIQValue, 10);
-                        if (!isNaN(blindWidth)) {
-                            if (blindWidth > fabric.width && fabric.canTurn.toLowerCase() === 'no') {
-                                item.fabricCheck = { status: 'WARN', message: `Fabric Check: Blind width (${blindWidth}mm) exceeds fabric width (${fabric.width}mm) and fabric CANNOT be turned.`};
-                            } else if (blindWidth > fabric.width && fabric.canTurn.toLowerCase() === 'out') {
-                                item.fabricCheck = { status: 'WARN', message: `Fabric Check: Blind width (${blindWidth}mm) exceeds fabric width (${fabric.width}mm). Turning is OUT OF WARRANTY.`};
+                (data.lineItems || []).forEach(item => {
+                    const rangeField = item.range;
+                    if (rangeField && rangeField.blindIQValue) {
+                        const fabricName = rangeField.blindIQValue.trim().toLowerCase();
+                        const fabric = fabricData.find(f => f.name.toLowerCase() === fabricName);
+                        
+                        if (fabric) {
+                            const blindWidth = parseInt(item.width.blindIQValue, 10);
+                            if (!isNaN(blindWidth)) {
+                                if (blindWidth > fabric.width && fabric.canTurn.toLowerCase() === 'no') {
+                                    item.fabricCheck = { status: 'WARN', message: `Fabric Check: Blind width (${blindWidth}mm) exceeds fabric width (${fabric.width}mm) and fabric CANNOT be turned.`};
+                                } else if (blindWidth > fabric.width && fabric.canTurn.toLowerCase() === 'out') {
+                                    item.fabricCheck = { status: 'WARN', message: `Fabric Check: Blind width (${blindWidth}mm) exceeds fabric width (${fabric.width}mm). Turning is OUT OF WARRANTY.`};
+                                }
                             }
                         }
                     }
-                }
-            });
-            return data;
-        }
+                });
+                return data;
+            }
 
-        // Initial Load
-        addNewUploadPair();
-        loadAndDisplayGuidelines();
-        loadFabricData();
-
+            // Initial Load
+            addNewUploadPair();
+            loadAndDisplayGuidelines();
+            loadFabricData();
+        });
     </script>
 </body>
 </html>

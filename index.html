@@ -584,12 +584,11 @@
                 }
 
                 const data = JSON.parse(result.candidates[0].content.parts[0].text);
-                const finalData = performFabricCheck(data);
-
-                if (db && finalData.bdoOrderNumber) {
-                    await addDoc(collection(db, `orderbot_comparisons`), { ...finalData, timestamp: new Date().toISOString(), userId: userId });
+                
+                if (db && data.bdoOrderNumber) {
+                    await addDoc(collection(db, `orderbot_comparisons`), { ...data, timestamp: new Date().toISOString(), userId: userId });
                 }
-                return finalData;
+                return data;
             }
 
             function renderSummaryReport(results) {
@@ -609,8 +608,7 @@
                     const lineItems = data.lineItems || [];
                     const hasMismatch = lineItems.some(item => 
                         Object.values(item).some(field => field && typeof field === 'object' && (field.result === 'MISMATCH' || field.result === 'OMISSION')) || 
-                        (item.specifications || []).some(s => s.specComparison.result === 'MISMATCH' || s.specComparison.result === 'OMISSION') ||
-                        (item.fabricCheck && item.fabricCheck.status === 'WARN')
+                        (item.specifications || []).some(s => s.specComparison.result === 'MISMATCH' || s.specComparison.result === 'OMISSION')
                     );
                     const hasLowConfidence = lineItems.some(item => 
                         Object.values(item).some(field => field && typeof field === 'object' && field.confidence < 0.9) || 
@@ -641,6 +639,9 @@
                         </div>
                         <div class="summary-item-details p-4 border-t ${border}" data-summary-index="${index}">
                             ${renderReportTable(data)}
+                            <div class="mt-4 text-center">
+                                <button class="check-fabrics-btn bg-indigo-100 text-indigo-700 font-semibold py-2 px-4 rounded-lg hover:bg-indigo-200 transition-colors" data-summary-index="${index}">Check Fabric Widths</button>
+                            </div>
                         </div>
                     </div>`;
                 }).join('');
@@ -653,6 +654,15 @@
                         } else {
                             details.style.maxHeight = details.scrollHeight + "px";
                         }
+                    });
+                });
+                
+                document.querySelectorAll('.check-fabrics-btn').forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        const index = e.target.dataset.summaryIndex;
+                        checkFabricsForReport(index);
+                        e.target.disabled = true;
+                        e.target.textContent = 'Checks Complete';
                     });
                 });
                 setupReportInteraction();
@@ -736,11 +746,8 @@
                         return `<span class="spec-text ${resultClass}" data-spec-index="${specIndex}">${text}${tooltip}</span>`;
                     }).join(' | ');
                     
-                    let fabricCheckHtml = '';
-                    if(lineItem.fabricCheck) {
-                        const isWarning = lineItem.fabricCheck.status === 'WARN';
-                        fabricCheckHtml = `<div class="p-2 mt-2 text-xs rounded ${isWarning ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}">${lineItem.fabricCheck.message}</div>`;
-                    }
+                    // The fabric check container will be empty initially, filled by the check function
+                    const fabricCheckHtml = `<div class="fabric-check-container mt-2"></div>`;
 
                     return `
                         <div class="line-item-container border border-slate-200 rounded-lg mb-4" data-row-index="${index}">
@@ -897,14 +904,11 @@
                 allDomElements.feedbackImageContainer.classList.add('hidden');
             });
 
-            // Fabric Management Logic
             allDomElements.uploadFabricsBtn.addEventListener('click', async () => {
                 const statusDiv = allDomElements.fabricUploadStatus;
-                
                 statusDiv.innerHTML = `<div class="flex items-center gap-2"><div class="loader !w-4 !h-4 !border-2"></div>Deleting old data...</div>`;
                 
                 try {
-                    // Delete all existing documents
                     const collectionRef = collection(db, "fabric_properties");
                     const existingDocs = await getDocs(collectionRef);
                     const deleteBatch = writeBatch(db);
@@ -934,12 +938,12 @@
 
                     const uploadBatch = writeBatch(db);
                     fabrics.forEach(fabric => {
-                        const docRef = doc(collectionRef); // Automatically generate a new document ID
+                        const docRef = doc(collectionRef);
                         uploadBatch.set(docRef, fabric);
                     });
                     await uploadBatch.commit();
                     statusDiv.innerHTML = `<p class="text-green-600 font-bold">Successfully replaced ${fabrics.length} fabric records!</p>`;
-                    await loadFabricData(); // Reload data into the app
+                    await loadFabricData();
                 } catch (error) {
                     console.error("Error uploading to Firestore:", error);
                     statusDiv.innerHTML = `<p class="text-red-500">Error: ${error.message}</p>`;
@@ -949,7 +953,7 @@
             async function loadAndDisplayFabrics() {
                 if(!db) return;
                 const statusDiv = allDomElements.fabricUploadStatus;
-                statusDiv.innerHTML = `<div class="flex items-center gap-2"><div class="loader !w-4 !h-4 !border-2"></div>Loading fabric data from database...</div>`;
+                statusDiv.innerHTML = `<div class="flex items-center gap-2"><div class="loader !w-4 !h-4 !border-2"></div>Loading fabric data...</div>`;
                 try {
                     const querySnapshot = await getDocs(collection(db, "fabric_properties"));
                     const fabrics = [];
@@ -959,7 +963,6 @@
                     });
 
                     if (fabrics.length > 0) {
-                        // Sort alphabetically by name before displaying
                         fabrics.sort((a, b) => a.localeCompare(b));
                         allDomElements.fabricDataInput.value = fabrics.join('\n');
                         statusDiv.innerHTML = `<p class="text-slate-500">Loaded ${fabrics.length} records from the database.</p>`;
@@ -968,11 +971,10 @@
                     }
                 } catch (error) {
                     console.error("Error loading fabric list for management:", error);
-                    statusDiv.innerHTML = `<p class="text-red-500">Error loading fabric data: ${error.message}</p>`;
+                    statusDiv.innerHTML = `<p class="text-red-500">Error: ${error.message}</p>`;
                 }
             }
             
-            // Event listeners for toggling sections
             allDomElements.toggleFabricsBtn.addEventListener('click', () => {
                 const isHidden = allDomElements.fabricManagementSection.classList.toggle('hidden');
                 if (!isHidden) {
@@ -985,7 +987,6 @@
                 if (!isHidden) loadDashboardData();
             });
             
-            // Other event listeners (history, guidelines, etc.)
             allDomElements.historySearchBtn.addEventListener('click', findHistory);
             allDomElements.clearHistoryBtn.addEventListener('click', () => {
                 allDomElements.historyResults.innerHTML = '';

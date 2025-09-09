@@ -1199,12 +1199,14 @@
                 if (!reportData) return;
 
                 const checkedData = performFabricCheck(JSON.parse(JSON.stringify(reportData))); // Use a copy
+                summaryResultsCache[index] = checkedData; // Update the cache
                 
-                // Re-render only the specific report that was checked
-                const reportContainer = document.querySelector(`.summary-item-details[data-summary-index="${index}"]`);
-                if(reportContainer) {
-                    reportContainer.innerHTML = renderReportTable(checkedData);
-                    // The button will be gone, so this is fine. Or add a new button if needed.
+                // Re-render the entire summary report to reflect the new status colors
+                renderSummaryReport(summaryResultsCache);
+                // Re-open the details for the user
+                const details = document.querySelector(`.summary-item-details[data-summary-index="${index}"]`);
+                if(details) {
+                    details.style.maxHeight = details.scrollHeight + "px";
                 }
             }
 

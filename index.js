@@ -24,14 +24,22 @@ async function getApiKey() {
 const allowedOrigins = [
     'https://russedybussedy.github.io',    // Your live GitHub Pages site
     'https://app.lab-pa.googleapis.com', // The Canvas preview environment
-    'https://blinddesignscoza.sharepoint.com' // ADDED: Your SharePoint site
+    'https://blinddesignscoza.sharepoint.com' // Your SharePoint site
 ];
 
 const handleCors = (req, res, next) => {
     const origin = req.headers.origin;
+    
+    // ADDED: Log the origin of every request for debugging
+    console.log(`Request received from origin: ${origin}`);
+
     if (allowedOrigins.includes(origin)) {
         res.setHeader('Access-Control-Allow-Origin', origin);
+    } else {
+        // ADDED: Log if the origin is not allowed
+        console.warn(`Origin ${origin} not in allowed list.`);
     }
+
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
     next();
@@ -92,3 +100,4 @@ const port = process.env.PORT || 8080;
 app.listen(port, () => {
   console.log(`Server listening on port ${port}`);
 });
+

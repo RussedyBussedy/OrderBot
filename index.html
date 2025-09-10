@@ -1249,7 +1249,11 @@
 
             comparisonData.lineItems.forEach(item => {
                 const fabricName = item.range?.blindIQValue?.toLowerCase().trim();
-                const blindWidth = parseInt(item.width?.blindIQValue, 10);
+                
+                // Robustly parse the blind width to handle cases like "2215mm" or "Width: 2215"
+                const widthString = item.width?.blindIQValue || '';
+                const widthMatch = widthString.match(/\d+/);
+                const blindWidth = widthMatch ? parseInt(widthMatch[0], 10) : NaN;
 
                 if (!fabricName || isNaN(blindWidth)) return;
 
@@ -1280,5 +1284,6 @@
     </script>
 </body>
 </html>
+
 
 

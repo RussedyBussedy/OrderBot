@@ -1258,7 +1258,10 @@
                 if (!fabricName || isNaN(blindWidth)) return;
 
                 const properties = fabricProperties.get(fabricName);
-                if (!properties) return;
+                if (!properties) {
+                     console.log(`Fabric "${fabricName}" not found in properties map.`); // DEBUG LOG
+                    return;
+                }
 
                 const fabricWidth = properties.fabricWidth;
                 const canTurn = properties.canTurn.toLowerCase();
@@ -1284,6 +1287,4 @@
     </script>
 </body>
 </html>
-
-
 

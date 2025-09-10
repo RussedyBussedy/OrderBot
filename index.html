@@ -139,10 +139,7 @@
         .open .chevron-icon {
             transform: rotate(180deg);
         }
-        #fabric-properties-section.drag-over {
-            border-color: #4f46e5;
-            background-color: #f0f3ff;
-        }
+       
     </style>
 </head>
 <body class="bg-slate-50 text-slate-800">
@@ -190,20 +187,24 @@
                 </div>
 
                 <!-- Fabric Properties Section -->
-                <div id="fabric-properties-section" class="bg-white rounded-lg shadow-sm overflow-hidden border-2 border-dashed border-transparent transition-colors">
+                <div id="fabric-properties-section" class="bg-white rounded-lg shadow-sm overflow-hidden">
                     <div id="fabric-properties-header" class="flex justify-between items-center p-4 cursor-pointer">
                         <h3 class="font-bold text-lg text-slate-800">Fabric Properties</h3>
                         <svg class="chevron-icon w-6 h-6 text-slate-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg>
                     </div>
                      <div id="fabric-properties-content" class="collapsible-content">
                         <div class="p-4 border-t border-slate-200">
-                             <label class="w-full block text-center bg-green-100 text-green-700 font-bold py-2 px-4 rounded-lg hover:bg-green-200 transition-colors text-sm cursor-pointer mb-3">
-                                Upload New CSV
+                             <label id="fabric-csv-drop-zone" class="drop-zone !min-h-0 p-4 mb-3 rounded-lg flex flex-col items-center justify-center cursor-pointer bg-white shadow-sm text-center">
+                                <h3 class="text-base font-semibold text-slate-700">Upload CSV to Replace All</h3>
+                                <p class="text-xs text-slate-500">Drag & drop new CSV here, or click to upload</p>
                                 <input type="file" id="fabric-csv-upload" class="hidden" accept=".csv">
                             </label>
-                            <div id="fabric-properties-status" class="text-sm text-slate-600 text-center">
-                                <!-- Status will be loaded here -->
+                            <div id="fabric-properties-list" class="space-y-2">
+                                <!-- Fabric properties will be loaded here -->
                             </div>
+                             <button id="add-fabric-btn" class="w-full mt-4 bg-green-100 text-green-700 font-bold py-2 px-4 rounded-lg hover:bg-green-200 transition-colors text-sm">
+                                Add New Fabric
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -271,6 +272,19 @@
         </div>
     </div>
 
+    <div id="confirm-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden items-center justify-center p-4 modal-backdrop">
+        <div class="modal-content bg-white rounded-lg shadow-xl w-full max-w-sm">
+            <div class="p-6 text-center">
+                <h3 id="confirm-modal-title" class="text-lg font-semibold text-slate-800">Are you sure?</h3>
+                <p id="confirm-modal-body" class="text-sm text-slate-500 mt-2">This action cannot be undone.</p>
+            </div>
+            <div class="px-6 py-4 bg-slate-50 rounded-b-lg flex justify-center gap-3">
+                <button id="confirm-modal-cancel" class="bg-white text-slate-700 font-semibold py-2 px-4 rounded-md border border-slate-300 hover:bg-slate-100">Cancel</button>
+                <button id="confirm-modal-confirm" class="bg-red-600 text-white font-bold py-2 px-4 rounded-md hover:bg-red-700">Confirm</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Template for upload pairs -->
     <template id="upload-pair-template">
         <div class="upload-pair border-t-2 pt-6">
@@ -298,7 +312,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, addDoc, getDocs, query, where, deleteDoc, doc, writeBatch, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, collection, addDoc, getDocs, query, where, deleteDoc, doc, writeBatch, getDoc, setDoc, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // =================================================================================
         // === STEP 1: FIREBASE CONFIGURATION (Publicly Visible) ===
@@ -374,8 +388,15 @@
             fabricPropertiesSection: document.getElementById('fabric-properties-section'),
             fabricPropertiesHeader: document.getElementById('fabric-properties-header'),
             fabricPropertiesContent: document.getElementById('fabric-properties-content'),
+            fabricPropertiesList: document.getElementById('fabric-properties-list'),
             fabricCsvUpload: document.getElementById('fabric-csv-upload'),
-            fabricPropertiesStatus: document.getElementById('fabric-properties-status')
+            fabricCsvDropZone: document.getElementById('fabric-csv-drop-zone'),
+            addFabricBtn: document.getElementById('add-fabric-btn'),
+            confirmModal: document.getElementById('confirm-modal'),
+            confirmModalTitle: document.getElementById('confirm-modal-title'),
+            confirmModalBody: document.getElementById('confirm-modal-body'),
+            confirmModalCancel: document.getElementById('confirm-modal-cancel'),
+            confirmModalConfirm: document.getElementById('confirm-modal-confirm'),
         };
 
         const fileToB64 = (file) => new Promise((resolve, reject) => {
@@ -1026,7 +1047,27 @@
             allDomElements.feedbackExplanation.style.paddingLeft = '0.5rem';
         });
 
-        // Guideline Logic
+        // --- CONFIRMATION MODAL ---
+        let confirmCallback = null;
+        function showConfirmModal(message, onConfirm) {
+            allDomElements.confirmModalBody.textContent = message;
+            confirmCallback = onConfirm;
+            allDomElements.confirmModal.style.display = 'flex';
+        }
+        allDomElements.confirmModalCancel.addEventListener('click', () => {
+            allDomElements.confirmModal.style.display = 'none';
+            confirmCallback = null;
+        });
+        allDomElements.confirmModalConfirm.addEventListener('click', () => {
+            if (confirmCallback) {
+                confirmCallback();
+            }
+            allDomElements.confirmModal.style.display = 'none';
+            confirmCallback = null;
+        });
+
+
+        // --- GUIDELINE LOGIC ---
         allDomElements.addGuidelineBtn.addEventListener('click', () => {
             allDomElements.guidelineModal.style.display = 'flex';
         });
@@ -1108,15 +1149,15 @@
         allDomElements.guidelinesList.addEventListener('click', async (e) => {
             if (e.target.classList.contains('delete-guideline-btn')) {
                 const docId = e.target.dataset.id;
-                if (confirm('Are you sure you want to delete this guideline?')) {
-                    try {
+                showConfirmModal("Are you sure you want to delete this guideline?", async () => {
+                     try {
                         await deleteDoc(doc(db, 'orderbot_guidelines', docId));
                         loadAndDisplayGuidelines();
                     } catch (error) {
                         console.error("Error deleting guideline:", error);
                         alert("Could not delete the guideline.");
                     }
-                }
+                });
             }
         });
         
@@ -1133,67 +1174,89 @@
             });
         }
         
+        function setupFabricDropZone() {
+            const dropZone = allDomElements.fabricCsvDropZone;
+            dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+            dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+            dropZone.addEventListener('drop', (e) => { 
+                e.preventDefault(); 
+                dropZone.classList.remove('drag-over');
+                const file = e.dataTransfer.files[0];
+                if (file && file.type === 'text/csv') {
+                    showConfirmModal("This will delete all existing fabric properties and replace them with this file's contents. Are you sure?", () => {
+                        processFabricFile(file);
+                    });
+                }
+            });
+        }
+
         function processFabricFile(file) {
-            if (!file || file.type !== 'text/csv') {
-                alert("Please drop or select a valid .csv file.");
-                return;
-            }
-            const statusEl = allDomElements.fabricPropertiesStatus;
-            statusEl.innerHTML = `<div class="flex items-center justify-center gap-2 text-slate-600"><div class="loader !w-5 !h-5 !border-2"></div>Processing...</div>`;
+            const listEl = allDomElements.fabricPropertiesList;
+            listEl.innerHTML = `<div class="flex items-center justify-center gap-2 text-slate-600"><div class="loader !w-5 !h-5 !border-2"></div>Processing CSV...</div>`;
 
             try {
                 const reader = new FileReader();
                 reader.onload = async (e) => {
                     const text = e.target.result;
-                    const parsedData = parseCsv(text);
-                    if (parsedData.length === 0) throw new Error("CSV is empty or invalid.");
+                    const parsedData = parseCsvAndExtractFabricData(text);
+                    if (parsedData.length === 0) throw new Error("CSV is empty or could not be parsed correctly.");
                     
                     await uploadFabricProperties(parsedData);
-                    await loadAndDisplayFabricStatus();
+                    await loadAndDisplayFabricProperties();
                 };
                 reader.readAsText(file);
             } catch (error) {
                 console.error("Error processing fabric CSV:", error);
-                statusEl.textContent = `Error: ${error.message}`;
+                listEl.innerHTML = `<p class="text-red-500 text-center">Error: ${error.message}</p>`;
             }
         }
-
+        
         allDomElements.fabricCsvUpload.addEventListener('change', (event) => {
-             processFabricFile(event.target.files[0]);
+             const file = event.target.files[0];
+             if (file) {
+                 showConfirmModal("This will delete all existing fabric properties and replace them with this file's contents. Are you sure?", () => {
+                     processFabricFile(file);
+                 });
+             }
              event.target.value = ''; // Reset file input
         });
 
-        const fabricSection = allDomElements.fabricPropertiesSection;
-        fabricSection.addEventListener('dragover', (e) => { e.preventDefault(); fabricSection.classList.add('drag-over'); });
-        fabricSection.addEventListener('dragleave', () => fabricSection.classList.remove('drag-over'));
-        fabricSection.addEventListener('drop', (e) => {
-            e.preventDefault();
-            fabricSection.classList.remove('drag-over');
-            processFabricFile(e.dataTransfer.files[0]);
-        });
+        function parseCsvAndExtractFabricData(text) {
+            const rows = text.replace(/\r\n/g, '\n').split('\n').filter(row => row.trim() !== '');
+            if (rows.length < 2) return [];
 
-
-        function parseCsv(text) {
-            const rows = text.split('\n').slice(1); // Skip header row
+            const header = rows[0];
+            const delimiter = header.includes(';') ? ';' : ',';
+            
             const data = [];
-            for (const row of rows) {
-                const columns = row.split(',');
-                if (columns.length >= 4) {
-                    const name = columns[0].trim().replace(/"/g, '');
-                    const width = parseInt(columns[2].trim(), 10);
-                    const canTurn = columns[3].trim().replace(/"/g, '');
+            for (let i = 1; i < rows.length; i++) {
+                const rowText = rows[i];
+                if (!rowText.trim()) continue;
 
-                    if (name && !isNaN(width) && canTurn) {
+                const columns = rowText.split(delimiter).map(cell => cell.trim().replace(/^"|"$/g, ''));
+
+                if (columns.length >= 4) {
+                    const name = columns[0];
+                    const weightString = columns[1].replace(',', '.');
+                    const weight = parseFloat(weightString);
+                    const width = parseInt(columns[2], 10);
+                    const canTurn = columns[3];
+
+                    if (name && !isNaN(weight) && !isNaN(width) && canTurn) {
                         data.push({
                             fabricName: name,
+                            fabricWeight: weight,
                             fabricWidth: width,
                             canTurn: canTurn
                         });
+                    } else {
+                        console.warn('Skipping malformed CSV row:', rowText, 'Parsed as:', columns);
                     }
                 }
             }
             return data;
         }
+
 
         async function uploadFabricProperties(fabricData) {
             if (!db) throw new Error("Database not connected.");
@@ -1210,28 +1273,114 @@
                 addBatch.set(newDocRef, fabric);
             });
             await addBatch.commit();
+        }
+        
+        async function loadAndDisplayFabricProperties() {
+            if (!db) return;
+            const listEl = allDomElements.fabricPropertiesList;
+            listEl.innerHTML = `<div class="flex items-center justify-center gap-2 text-slate-600"><div class="loader !w-5 !h-5 !border-2"></div>Loading fabrics...</div>`;
 
-            const metaRef = doc(db, 'orderbot_metadata', 'fabric_properties');
-            await setDoc(metaRef, {
-                count: fabricData.length,
-                lastUpdated: new Date().toISOString()
+            const propertiesRef = collection(db, 'orderbot_fabric_properties');
+            const snapshot = await getDocs(propertiesRef);
+            
+            listEl.innerHTML = '';
+            if (snapshot.empty) {
+                 listEl.innerHTML = '<p class="text-slate-400 italic text-center">No fabric properties loaded.</p>';
+                 return;
+            }
+
+            snapshot.docs.sort((a,b) => a.data().fabricName.localeCompare(b.data().fabricName)).forEach(doc => {
+                renderFabricRow(doc.id, doc.data());
             });
         }
 
-        async function loadAndDisplayFabricStatus() {
-            if (!db) return;
-            const metaRef = doc(db, 'orderbot_metadata', 'fabric_properties');
-            const docSnap = await getDoc(metaRef);
+        function renderFabricRow(id, data, isNew = false) {
+            const listEl = allDomElements.fabricPropertiesList;
+            const fabricRow = document.createElement('div');
+            fabricRow.className = 'fabric-row p-2 bg-slate-50 rounded-lg grid grid-cols-[1fr,auto,auto,auto,auto] items-center gap-2';
+            fabricRow.dataset.id = id;
 
-            if (docSnap.exists()) {
-                const data = docSnap.data();
-                const formattedDate = new Date(data.lastUpdated).toLocaleString('en-ZA');
-                allDomElements.fabricPropertiesStatus.innerHTML = `<p><strong>${data.count}</strong> fabrics loaded.</p><p class="text-xs">Last updated: ${formattedDate}</p>`;
+            fabricRow.innerHTML = `
+                <input type="text" value="${data.fabricName || ''}" placeholder="Fabric Name" class="fabric-name-input w-full p-1 border rounded text-sm font-semibold text-slate-800">
+                <div class="flex items-center gap-1">
+                    <label class="text-xs text-slate-500">Weight:</label>
+                    <input type="number" step="0.001" value="${data.fabricWeight || ''}" class="fabric-weight-input w-20 p-1 border rounded text-sm">
+                </div>
+                <div class="flex items-center gap-1">
+                    <label class="text-xs text-slate-500">Width:</label>
+                    <input type="number" value="${data.fabricWidth || ''}" class="fabric-width-input w-20 p-1 border rounded text-sm">
+                </div>
+                 <div class="flex items-center gap-1">
+                    <label class="text-xs text-slate-500">Turn:</label>
+                    <input type="text" value="${data.canTurn || ''}" placeholder="Yes/No/Out" class="fabric-turn-input w-20 p-1 border rounded text-sm">
+                </div>
+                <div class="flex gap-2">
+                    <button class="save-fabric-btn bg-blue-500 text-white text-xs font-bold py-1 px-3 rounded hover:bg-blue-600">${isNew ? 'Add' : 'Save'}</button>
+                    ${isNew ? `<button class="cancel-new-fabric-btn bg-gray-200 text-gray-700 text-xs font-bold py-1 px-3 rounded hover:bg-gray-300">Cancel</button>` : `<button class="delete-fabric-btn text-red-400 hover:text-red-600 font-bold text-lg">&times;</button>`}
+                </div>
+            `;
+            listEl.appendChild(fabricRow);
+
+            // Attach event listeners
+            fabricRow.querySelector('.save-fabric-btn').addEventListener('click', async () => {
+                const nameInput = fabricRow.querySelector('.fabric-name-input');
+                const weightInput = fabricRow.querySelector('.fabric-weight-input');
+                const widthInput = fabricRow.querySelector('.fabric-width-input');
+                const turnInput = fabricRow.querySelector('.fabric-turn-input');
+                
+                const newName = nameInput.value.trim();
+                const newWeight = parseFloat(weightInput.value);
+                const newWidth = parseInt(widthInput.value, 10);
+                const newTurn = turnInput.value.trim();
+
+                if (!newName || isNaN(newWeight) || isNaN(newWidth) || !newTurn) {
+                    alert("Please provide valid Name, Weight, Width, and Turn values.");
+                    return;
+                }
+                const dataToSave = {
+                    fabricName: newName,
+                    fabricWeight: newWeight,
+                    fabricWidth: newWidth,
+                    canTurn: newTurn
+                };
+
+                try {
+                    if (isNew) {
+                        await addDoc(collection(db, 'orderbot_fabric_properties'), dataToSave);
+                    } else {
+                        const docRef = doc(db, 'orderbot_fabric_properties', id);
+                        await updateDoc(docRef, dataToSave);
+                    }
+                    loadAndDisplayFabricProperties(); // Refresh list on success
+                } catch(error) {
+                    console.error("Error saving fabric:", error);
+                    alert("Could not save fabric properties.");
+                }
+            });
+
+            if (isNew) {
+                fabricRow.querySelector('.cancel-new-fabric-btn').addEventListener('click', () => {
+                    fabricRow.remove();
+                });
             } else {
-                 allDomElements.fabricPropertiesStatus.innerHTML = '<p class="text-slate-400 italic">No fabric properties uploaded yet. <br> Drag & drop a CSV file here.</p>';
+                fabricRow.querySelector('.delete-fabric-btn').addEventListener('click', () => {
+                    showConfirmModal(`Are you sure you want to delete "${data.fabricName}"?`, async () => {
+                         try {
+                            await deleteDoc(doc(db, 'orderbot_fabric_properties', id));
+                            loadAndDisplayFabricProperties(); // Refresh list
+                        } catch (error) {
+                            console.error("Error deleting fabric:", error);
+                            alert("Could not delete fabric.");
+                        }
+                    });
+                });
             }
         }
-        
+
+        allDomElements.addFabricBtn.addEventListener('click', () => {
+            renderFabricRow(null, {}, true);
+        });
+
         async function getFabricProperties() {
             if (!db) return new Map();
             const propertiesRef = collection(db, 'orderbot_fabric_properties');
@@ -1280,12 +1429,12 @@
         // Initial Load
         addNewPair();
         loadAndDisplayGuidelines();
-        loadAndDisplayFabricStatus();
+        loadAndDisplayFabricProperties();
         setupCollapsible(allDomElements.guidelinesHeader, allDomElements.guidelinesContent);
         setupCollapsible(allDomElements.fabricPropertiesHeader, allDomElements.fabricPropertiesContent);
+        setupFabricDropZone();
 
     </script>
 </body>
 </html>
-
 

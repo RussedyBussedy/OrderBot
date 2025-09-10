@@ -396,6 +396,8 @@
                 fabricUploadStatus: document.getElementById('fabric-upload-status')
             };
 
+            const delay = ms => new Promise(res => setTimeout(res, ms));
+
             const fileToB64 = (file) => new Promise((resolve, reject) => {
                 const reader = new FileReader();
                 reader.readAsDataURL(file);
@@ -435,7 +437,6 @@
 
             function addNewUploadPair() {
                 if (comparisonPairs.length >= 10) {
-                    // Non-blocking info
                     console.log("Maximum of 10 comparison pairs reached.");
                     return;
                 }
@@ -504,33 +505,20 @@
                 allDomElements.reportContent.innerHTML = `<div class="flex flex-col items-center justify-center p-8"><div class="loader"></div><p class="mt-4 text-slate-600 font-semibold">Preparing to run ${comparisonPairs.length} comparisons...</p></div>`;
                 
                 summaryResultsCache = [];
-                let failedComparisons = [];
+                const REQUEST_DELAY_MS = 12500; // 12.5 seconds for a ~5 RPM limit
 
                 for (let i = 0; i < comparisonPairs.length; i++) {
+                    allDomElements.reportContent.querySelector('p').textContent = `Running comparison ${i + 1} of ${comparisonPairs.length}...`;
                     const pair = comparisonPairs[i];
                     try {
-                        allDomElements.reportContent.querySelector('p').textContent = `Running comparison ${i + 1} of ${comparisonPairs.length}...`;
                         const result = await runSingleComparison(pair.customerFiles, pair.blindIQFiles);
                         summaryResultsCache.push(result);
                     } catch (error) {
-                        console.error(`Comparison ${i + 1} failed initially:`, error);
-                        failedComparisons.push({ index: i, pair }); // Save for retry
+                        console.error(`Comparison ${i + 1} failed:`, error);
+                        summaryResultsCache.push({ bdoOrderNumber: `Order ${i + 1}`, error: error.message });
                     }
-                }
-                
-                // Retry failed comparisons once
-                if (failedComparisons.length > 0) {
-                    for (const failed of failedComparisons) {
-                        try {
-                            allDomElements.reportContent.querySelector('p').textContent = `Retrying failed comparison for order ${failed.index + 1}...`;
-                            const result = await runSingleComparison(failed.pair.customerFiles, failed.pair.blindIQFiles);
-                            // Insert result at its original position
-                            summaryResultsCache.splice(failed.index, 0, result);
-                        } catch (error) {
-                            console.error(`Comparison ${failed.index + 1} failed on retry:`, error);
-                            const errorResult = { bdoOrderNumber: `Order ${failed.index + 1} Failed`, error: error.message };
-                            summaryResultsCache.splice(failed.index, 0, errorResult);
-                        }
+                    if (i < comparisonPairs.length - 1) {
+                        await delay(REQUEST_DELAY_MS);
                     }
                 }
 
@@ -1205,7 +1193,10 @@
             }
 
             function performFabricCheck(data) {
-                if (fabricData.length === 0) return data; 
+                if (fabricData.length === 0) {
+                    console.log("Fabric data not loaded, skipping check.");
+                    return data; 
+                }
 
                 (data.lineItems || []).forEach(item => {
                     const rangeField = item.range;

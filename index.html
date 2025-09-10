@@ -126,6 +126,23 @@
             overflow: hidden;
             transition: max-height 0.5s ease-in-out;
         }
+
+        /* Collapsible Section Styles */
+        .collapsible-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease-out;
+        }
+        .chevron-icon {
+            transition: transform 0.3s ease-out;
+        }
+        .open .chevron-icon {
+            transform: rotate(180deg);
+        }
+        #fabric-properties-section.drag-over {
+            border-color: #4f46e5;
+            background-color: #f0f3ff;
+        }
     </style>
 </head>
 <body class="bg-slate-50 text-slate-800">
@@ -135,16 +152,16 @@
             <div class="flex items-center gap-4">
                 <!-- SVG Logo -->
                 <svg class="w-12 h-12 text-slate-800" viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg">
-                     <circle cx="30" cy="30" r="28" stroke="currentColor" stroke-width="2.5"/>
-                     <path d="M18 20 H42" stroke="currentColor" stroke-width="2.5"/>
-                     <path d="M18 25 H42" stroke="currentColor" stroke-width="2.5"/>
-                     <path d="M18 30 H42" stroke="currentColor" stroke-width="2.5"/>
-                     <path d="M18 35 H42" stroke="currentColor" stroke-width="2.5"/>
-                     <path d="M18 40 H42" stroke="currentColor" stroke-width="2.5"/>
+                      <circle cx="30" cy="30" r="28" stroke="currentColor" stroke-width="2.5"/>
+                      <path d="M18 20 H42" stroke="currentColor" stroke-width="2.5"/>
+                      <path d="M18 25 H42" stroke="currentColor" stroke-width="2.5"/>
+                      <path d="M18 30 H42" stroke="currentColor" stroke-width="2.5"/>
+                      <path d="M18 35 H42" stroke="currentColor" stroke-width="2.5"/>
+                      <path d="M18 40 H42" stroke="currentColor" stroke-width="2.5"/>
                 </svg>
                 <div>
-                     <h1 class="text-2xl font-bold text-slate-800 tracking-wider">BLIND DESIGNS</h1>
-                     <p class="text-xs text-slate-500 tracking-[0.25em]">REFLECT YOUR STYLE</p>
+                      <h1 class="text-2xl font-bold text-slate-800 tracking-wider">BLIND DESIGNS</h1>
+                      <p class="text-xs text-slate-500 tracking-[0.25em]">REFLECT YOUR STYLE</p>
                 </div>
             </div>
             <div class="text-right">
@@ -154,33 +171,42 @@
         </header>
 
         <main>
-             <!-- Toggles for Advanced Features -->
-            <div class="mb-4 flex justify-end gap-2">
-                <button id="toggle-guidelines-btn" class="bg-white text-slate-700 font-semibold py-2 px-4 rounded-lg border border-slate-300 hover:bg-slate-100 shadow-sm transition-colors">
-                    Manage AI Guidelines
-                </button>
-                <button id="toggle-dashboard-btn" class="bg-white text-slate-700 font-semibold py-2 px-4 rounded-lg border border-slate-300 hover:bg-slate-100 shadow-sm transition-colors">
-                    View Analytics
-                </button>
-            </div>
-
-            <!-- Guidelines Section (hidden by default) -->
-            <div id="guidelines-section" class="hidden mb-8 bg-white p-6 rounded-lg shadow-sm">
-                <div class="flex justify-between items-center mb-3">
-                    <h3 class="font-bold text-lg text-slate-800">Active AI Guidelines</h3>
-                    <button id="add-guideline-btn" class="bg-indigo-100 text-indigo-700 font-bold py-2 px-4 rounded-lg hover:bg-indigo-200 transition-colors text-sm">Add Guideline/s</button>
+             <!-- Management Sections -->
+            <div class="space-y-4 mb-8">
+                <!-- Guidelines Section -->
+                <div class="bg-white rounded-lg shadow-sm overflow-hidden">
+                    <div id="guidelines-header" class="flex justify-between items-center p-4 cursor-pointer">
+                        <h3 class="font-bold text-lg text-slate-800">AI Guidelines</h3>
+                        <svg class="chevron-icon w-6 h-6 text-slate-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg>
+                    </div>
+                    <div id="guidelines-content" class="collapsible-content">
+                        <div class="p-4 border-t border-slate-200">
+                             <button id="add-guideline-btn" class="w-full bg-indigo-100 text-indigo-700 font-bold py-2 px-4 rounded-lg hover:bg-indigo-200 transition-colors text-sm mb-3">Add Guideline/s</button>
+                            <div id="guidelines-list" class="text-sm text-slate-600 space-y-2">
+                                <!-- Guidelines will be loaded here -->
+                            </div>
+                        </div>
+                    </div>
                 </div>
-                <div id="guidelines-list" class="text-sm text-slate-600 space-y-2">
-                    <!-- Guidelines will be loaded here -->
-                </div>
-            </div>
 
-            <!-- Dashboard Section (hidden by default) -->
-            <div id="dashboard-section" class="hidden mb-8 bg-white p-6 rounded-lg shadow-sm">
-                 <h3 class="font-bold text-lg text-slate-800 mb-3">Common Error Dashboard</h3>
-                 <div id="dashboard-content" class="text-sm text-slate-600">
-                    <!-- Dashboard content will be loaded here -->
-                 </div>
+                <!-- Fabric Properties Section -->
+                <div id="fabric-properties-section" class="bg-white rounded-lg shadow-sm overflow-hidden border-2 border-dashed border-transparent transition-colors">
+                    <div id="fabric-properties-header" class="flex justify-between items-center p-4 cursor-pointer">
+                        <h3 class="font-bold text-lg text-slate-800">Fabric Properties</h3>
+                        <svg class="chevron-icon w-6 h-6 text-slate-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg>
+                    </div>
+                     <div id="fabric-properties-content" class="collapsible-content">
+                        <div class="p-4 border-t border-slate-200">
+                             <label class="w-full block text-center bg-green-100 text-green-700 font-bold py-2 px-4 rounded-lg hover:bg-green-200 transition-colors text-sm cursor-pointer mb-3">
+                                Upload New CSV
+                                <input type="file" id="fabric-csv-upload" class="hidden" accept=".csv">
+                            </label>
+                            <div id="fabric-properties-status" class="text-sm text-slate-600 text-center">
+                                <!-- Status will be loaded here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <!-- History Section -->
@@ -210,8 +236,8 @@
             <!-- Comparison Report Section -->
             <div id="report-section" class="bg-white rounded-lg shadow-md p-6 md:p-8 hidden">
                 <div id="report-actions" class="flex justify-between items-center mb-6 border-b pb-4">
-                     <h2 class="text-2xl font-bold text-slate-900">Comparison Summary</h2>
-                     <button id="new-comparison-btn" class="bg-slate-200 text-slate-800 font-bold py-2 px-4 rounded-lg hover:bg-slate-300 transition-colors hidden">Start New Comparison</button>
+                      <h2 class="text-2xl font-bold text-slate-900">Comparison Summary</h2>
+                      <button id="new-comparison-btn" class="bg-slate-200 text-slate-800 font-bold py-2 px-4 rounded-lg hover:bg-slate-300 transition-colors hidden">Start New Comparison</button>
                 </div>
                 <div id="report-content"></div>
             </div>
@@ -221,9 +247,9 @@
     <!-- Modals -->
     <div id="guideline-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden items-center justify-center p-4 modal-backdrop">
         <div class="modal-content bg-white rounded-lg shadow-xl w-full max-w-lg">
-             <div class="p-6 border-b"><h3 class="text-xl font-semibold text-slate-800">Add New Guideline/s</h3><p class="text-sm text-slate-500">Add one or more rules for OrderBot to follow. You can use a list.</p></div>
-             <div class="p-6"><label for="guideline-input" class="block text-sm font-medium text-slate-700 mb-2">Describe the new rule(s):</label><textarea id="guideline-input" rows="4" class="w-full p-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" placeholder="e.g., 1. If the location is 'Kitchen', the material must be water-resistant. 2. All shutter orders must specify a 'Rebate' type."></textarea></div>
-             <div class="px-6 py-4 bg-slate-50 rounded-b-lg flex justify-end gap-3"><button id="cancel-guideline-btn" class="bg-white text-slate-700 font-semibold py-2 px-4 rounded-md border border-slate-300 hover:bg-slate-100">Cancel</button><button id="save-guideline-btn" class="bg-indigo-600 text-white font-bold py-2 px-4 rounded-md hover:bg-indigo-700">Save Guideline/s</button></div>
+              <div class="p-6 border-b"><h3 class="text-xl font-semibold text-slate-800">Add New Guideline/s</h3><p class="text-sm text-slate-500">Add one or more rules for OrderBot to follow. You can use a list.</p></div>
+              <div class="p-6"><label for="guideline-input" class="block text-sm font-medium text-slate-700 mb-2">Describe the new rule(s):</label><textarea id="guideline-input" rows="4" class="w-full p-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" placeholder="e.g., 1. If the location is 'Kitchen', the material must be water-resistant. 2. All shutter orders must specify a 'Rebate' type."></textarea></div>
+              <div class="px-6 py-4 bg-slate-50 rounded-b-lg flex justify-end gap-3"><button id="cancel-guideline-btn" class="bg-white text-slate-700 font-semibold py-2 px-4 rounded-md border border-slate-300 hover:bg-slate-100">Cancel</button><button id="save-guideline-btn" class="bg-indigo-600 text-white font-bold py-2 px-4 rounded-md hover:bg-indigo-700">Save Guideline/s</button></div>
         </div>
     </div>
 
@@ -272,7 +298,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, addDoc, getDocs, query, where, deleteDoc, doc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, collection, addDoc, getDocs, query, where, deleteDoc, doc, writeBatch, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // =================================================================================
         // === STEP 1: FIREBASE CONFIGURATION (Publicly Visible) ===
@@ -343,11 +369,13 @@
             saveGuidelineBtn: document.getElementById('save-guideline-btn'), 
             guidelineInput: document.getElementById('guideline-input'), 
             guidelinesList: document.getElementById('guidelines-list'),
-            guidelinesSection: document.getElementById('guidelines-section'), 
-            toggleGuidelinesBtn: document.getElementById('toggle-guidelines-btn'),
-            dashboardSection: document.getElementById('dashboard-section'), 
-            toggleDashboardBtn: document.getElementById('toggle-dashboard-btn'), 
-            dashboardContent: document.getElementById('dashboard-content')
+            guidelinesHeader: document.getElementById('guidelines-header'),
+            guidelinesContent: document.getElementById('guidelines-content'),
+            fabricPropertiesSection: document.getElementById('fabric-properties-section'),
+            fabricPropertiesHeader: document.getElementById('fabric-properties-header'),
+            fabricPropertiesContent: document.getElementById('fabric-properties-content'),
+            fabricCsvUpload: document.getElementById('fabric-csv-upload'),
+            fabricPropertiesStatus: document.getElementById('fabric-properties-status')
         };
 
         const fileToB64 = (file) => new Promise((resolve, reject) => {
@@ -432,16 +460,7 @@
             allDomElements.historySearchInput.value = '';
             allDomElements.clearHistoryBtn.classList.add('hidden');
         });
-        allDomElements.toggleGuidelinesBtn.addEventListener('click', () => {
-            allDomElements.guidelinesSection.classList.toggle('hidden');
-        });
-        allDomElements.toggleDashboardBtn.addEventListener('click', () => {
-            const isHidden = allDomElements.dashboardSection.classList.toggle('hidden');
-            if (!isHidden) {
-                loadDashboardData();
-            }
-        });
-
+       
         function resetUI() {
             allDomElements.uploadSection.classList.remove('hidden');
             allDomElements.reportSection.classList.add('hidden');
@@ -531,10 +550,15 @@
             summaryResultsCache = [];
             let failedPairs = [];
 
+            // Fetch fabric properties once for the whole batch
+            batchStatus.textContent = 'Fetching fabric properties...';
+            const fabricProperties = await getFabricProperties();
+
             for (let i = 0; i < comparisonPairs.length; i++) {
                 batchStatus.textContent = `Processing order ${i + 1} of ${comparisonPairs.length}...`;
                 try {
-                    const result = await processSingleComparison(comparisonPairs[i]);
+                    let result = await processSingleComparison(comparisonPairs[i]);
+                    result = validateWithFabricProperties(result, fabricProperties); // NEW validation step
                     summaryResultsCache.push({ status: 'success', data: result });
                 } catch (error) {
                     console.error(`Failed comparison for pair ${i}:`, error);
@@ -546,12 +570,13 @@
             if (failedPairs.length > 0) {
                  batchStatus.textContent = `Retrying ${failedPairs.length} failed orders...`;
                  for (let i = 0; i < failedPairs.length; i++) {
-                     try {
-                         const result = await processSingleComparison(failedPairs[i].pair);
-                         summaryResultsCache[failedPairs[i].originalIndex] = { status: 'success', data: result };
-                     } catch (error) {
-                         console.error(`Retry failed for pair ${failedPairs[i].originalIndex}:`, error);
-                     }
+                      try {
+                          let result = await processSingleComparison(failedPairs[i].pair);
+                          result = validateWithFabricProperties(result, fabricProperties); // NEW validation step on retry
+                          summaryResultsCache[failedPairs[i].originalIndex] = { status: 'success', data: result };
+                      } catch (error) {
+                          console.error(`Retry failed for pair ${failedPairs[i].originalIndex}:`, error);
+                      }
                  }
             }
 
@@ -592,6 +617,7 @@
                 ## 3. DATA EXTRACTION & ANALYSIS LOGIC:
                 - You may receive one customer document and multiple Blind IQ documents. Your task is to treat all Blind IQ documents as a single, consolidated order and compare all of their combined line items against the single customer document.
                 - For each line item, extract the primary fields: Item, Location, QTY, Width, Drop, Colour, Control, Blind Type, Range, and Fix. The 'Item' should correspond to the alphabetical identifier (A, B, C...).
+                - The 'Range' field corresponds to the fabric name.
                 - CRITICAL: Look for a secondary line of text below the primary fields. This line contains detailed specifications separated by '|' and using '='. You MUST parse this line.
                 - For each key-value pair in the secondary line (e.g., "Val Returns=None"), treat it as a distinct specification.
                 - Compare all primary fields, all parsed specifications, and the special instructions between the two documents.
@@ -691,9 +717,11 @@
                     let status = 'match';
                     let hasMismatch = false;
                     let hasLowConfidence = false;
+                    let hasFabricWarning = false;
 
-                    // Check for mismatches or omissions in line items only
+                    // Check for mismatches, omissions, or fabric warnings
                     (data.lineItems || []).forEach(item => {
+                        if (item.fabricValidation) hasFabricWarning = true;
                         Object.values(item).forEach(field => {
                             if (field && (field.result === 'MISMATCH' || field.result === 'OMISSION')) hasMismatch = true;
                         });
@@ -702,8 +730,7 @@
                         });
                     });
 
-                    // If no mismatches, check for low confidence in line items only
-                    if (!hasMismatch) {
+                    if (!hasMismatch && !hasFabricWarning) {
                         (data.lineItems || []).forEach(item => {
                             Object.values(item).forEach(field => {
                                 if (field && (field.confidence * 100) < 90) hasLowConfidence = true;
@@ -714,7 +741,7 @@
                         });
                     }
 
-                    if (hasMismatch) status = 'mismatch';
+                    if (hasMismatch || hasFabricWarning) status = 'mismatch';
                     else if (hasLowConfidence) status = 'low-confidence';
 
                     const statusClasses = {
@@ -727,7 +754,7 @@
                         <div class="summary-item border rounded-lg overflow-hidden">
                             <div class="summary-item-header p-4 cursor-pointer flex justify-between items-center ${statusClasses}" data-summary-index="${index}">
                                 <span class="font-bold">${data.bdoOrderNumber || 'Unknown Order'}</span>
-                                <span class="text-sm font-semibold">${status.replace('-', ' ').toUpperCase()}</span>
+                                <span class="text-sm font-semibold">${status.replace('-', ' ').toUpperCase()}${hasFabricWarning ? ' (FABRIC ALERT)' : ''}</span>
                             </div>
                             <div class="summary-item-details p-4 border-t border-slate-200">
                                 <!-- Detailed report will be injected here -->
@@ -860,6 +887,12 @@
             }
             
             const lineItemsHtml = (data.lineItems || []).map((lineItem, index) => {
+                 let fabricValidationHtml = '';
+                if(lineItem.fabricValidation) {
+                    const alertClass = lineItem.fabricValidation.type === 'error' ? 'bg-red-100 text-red-800' : 'bg-yellow-100 text-yellow-800';
+                    fabricValidationHtml = `<div class="p-2 text-sm font-semibold ${alertClass} flex items-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.21 3.03-1.742 3.03H4.42c-1.532 0-2.492-1.696-1.742-3.03l5.58-9.92zM10 13a1 1 0 110-2 1 1 0 010 2zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" /></svg> ${lineItem.fabricValidation.message}</div>`;
+                }
+
                 const specHtml = (lineItem.specifications || []).map((spec, specIndex) => {
                     const isMismatch = spec.specComparison.result === 'MISMATCH';
                     const isOmission = spec.specComparison.result === 'OMISSION';
@@ -887,6 +920,7 @@
 
                 return `
                     <div class="line-item-container border border-slate-200 rounded-lg mb-4" data-row-index="${index}">
+                        ${fabricValidationHtml}
                         <div class="grid grid-cols-10 bg-slate-50 font-semibold text-sm text-slate-700 border-b border-slate-200 divide-x divide-slate-200">
                             ${renderCell(lineItem.item, 'item', 'Item')}
                             ${renderCell(lineItem.qty, 'qty', 'QTY')}
@@ -929,7 +963,7 @@
                 if (pastedImageB64) { enhancementParts.push({ inlineData: { mimeType: 'image/png', data: pastedImageB64.split(',')[1] } }); }
 
                 const geminiPayload = { contents: [{ role: "user", parts: enhancementParts }] };
-                const proxyPayload = { model: 'gemini-2.0-flash', payload: geminiPayload };
+                const proxyPayload = { model: 'gemini-1.5-flash', payload: geminiPayload };
                 
                 const response = await fetch(PROXY_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proxyPayload) });
                 if (!response.ok) throw new Error('Failed to enhance explanation.');
@@ -1018,7 +1052,7 @@
                 
                 const enhancementSchema = { type: "OBJECT", properties: { "guidelines": { type: "ARRAY", items: { "type": "STRING" } } }, required: ["guidelines"] };
                 const geminiPayload = { contents: [{ role: "user", parts: [{ text: enhancementPrompt }] }], generationConfig: { responseMimeType: "application/json", responseSchema: enhancementSchema } };
-                const proxyPayload = { model: 'gemini-2.0-flash', payload: geminiPayload };
+                const proxyPayload = { model: 'gemini-1.5-flash', payload: geminiPayload };
                 
                 const response = await fetch(PROXY_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proxyPayload) });
                 if (!response.ok) throw new Error('Failed to enhance guideline.');
@@ -1066,7 +1100,7 @@
                 const guidelineData = doc.data();
                 const div = document.createElement('div');
                 div.className = 'flex items-center justify-between bg-indigo-50 p-2 rounded';
-                div.innerHTML = `<span>- ${guidelineData.enhancedGuideline}</span><button data-id="${doc.id}" class="delete-guideline-btn text-red-400 hover:text-red-600">&times;</button>`;
+                div.innerHTML = `<span>- ${guidelineData.enhancedGuideline}</span><button data-id="${doc.id}" class="delete-guideline-btn text-red-400 hover:text-red-600 font-bold text-lg">&times;</button>`;
                 allDomElements.guidelinesList.appendChild(div);
             });
         }
@@ -1075,83 +1109,176 @@
             if (e.target.classList.contains('delete-guideline-btn')) {
                 const docId = e.target.dataset.id;
                 if (confirm('Are you sure you want to delete this guideline?')) {
-                    await deleteDoc(doc(db, 'orderbot_guidelines', docId));
-                    loadAndDisplayGuidelines();
+                    try {
+                        await deleteDoc(doc(db, 'orderbot_guidelines', docId));
+                        loadAndDisplayGuidelines();
+                    } catch (error) {
+                        console.error("Error deleting guideline:", error);
+                        alert("Could not delete the guideline.");
+                    }
                 }
             }
         });
         
-        async function loadDashboardData() {
-            if (!db) {
-                allDomElements.dashboardContent.innerHTML = '<p class="text-red-500">Dashboard is unavailable. Database not connected.</p>';
+        // --- FABRIC PROPERTIES & COLLAPSIBLE LOGIC ---
+
+        function setupCollapsible(header, content) {
+            header.addEventListener('click', () => {
+                header.classList.toggle('open');
+                if (content.style.maxHeight) {
+                    content.style.maxHeight = null;
+                } else {
+                    content.style.maxHeight = content.scrollHeight + "px";
+                }
+            });
+        }
+        
+        function processFabricFile(file) {
+            if (!file || file.type !== 'text/csv') {
+                alert("Please drop or select a valid .csv file.");
                 return;
             }
-            allDomElements.dashboardContent.innerHTML = `<div class="flex items-center gap-2"><div class="loader !w-6 !h-6"></div>Loading analytics...</div>`;
+            const statusEl = allDomElements.fabricPropertiesStatus;
+            statusEl.innerHTML = `<div class="flex items-center justify-center gap-2 text-slate-600"><div class="loader !w-5 !h-5 !border-2"></div>Processing...</div>`;
 
             try {
-                const comparisonsQuery = query(collection(db, 'orderbot_comparisons'));
-                const feedbackQuery = query(collection(db, 'orderbot_feedback'));
-
-                const [comparisonsSnapshot, feedbackSnapshot] = await Promise.all([getDocs(comparisonsQuery), getDocs(feedbackQuery)]);
-
-                let mismatches = {};
-                
-                // 1. Get all initial mismatches
-                comparisonsSnapshot.forEach(doc => {
-                    const data = doc.data();
-                    (data.lineItems || []).forEach(item => {
-                        Object.keys(item).forEach(key => {
-                            if (item[key] && item[key].result === 'MISMATCH') {
-                                const fieldName = key === 'specifications' ? item[key].specName : key;
-                                mismatches[fieldName] = (mismatches[fieldName] || 0) + 1;
-                            }
-                        });
-                        (item.specifications || []).forEach(spec => {
-                            if (spec.specComparison.result === 'MISMATCH') {
-                                mismatches[spec.specName] = (mismatches[spec.specName] || 0) + 1;
-                            }
-                        });
-                    });
-                });
-
-                // 2. Adjust counts based on feedback
-                feedbackSnapshot.forEach(doc => {
-                    const fb = doc.data();
-                    const fieldName = fb.incorrectItem.fieldName;
-                    const originalResult = fb.incorrectItem.fieldData.result;
-                    const userExplanation = fb.userExplanation.toLowerCase();
-
-                    if (originalResult === 'MISMATCH' && userExplanation.includes('match')) {
-                        mismatches[fieldName] = (mismatches[fieldName] || 1) - 1; // Decrement if a mismatch was actually a match
-                    } else if (originalResult === 'MATCH' && (userExplanation.includes('mismatch') || userExplanation.includes('incorrect'))) {
-                         mismatches[fieldName] = (mismatches[fieldName] || 0) + 1; // Increment if a match was actually a mismatch
-                    }
-                });
-
-                const sortedErrors = Object.entries(mismatches).filter(([, count]) => count > 0).sort((a, b) => b[1] - a[1]);
-
-                if (sortedErrors.length === 0) {
-                    allDomElements.dashboardContent.innerHTML = '<p>No common errors found based on current data.</p>';
-                    return;
-                }
-
-                let html = '<ul class="space-y-2">';
-                sortedErrors.slice(0, 10).forEach(([fieldName, count]) => {
-                    html += `<li class="flex justify-between items-center p-2 bg-slate-50 rounded"><span>${fieldName.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}</span><span class="font-bold text-indigo-600">${count} errors</span></li>`;
-                });
-                html += '</ul>';
-                allDomElements.dashboardContent.innerHTML = html;
-
+                const reader = new FileReader();
+                reader.onload = async (e) => {
+                    const text = e.target.result;
+                    const parsedData = parseCsv(text);
+                    if (parsedData.length === 0) throw new Error("CSV is empty or invalid.");
+                    
+                    await uploadFabricProperties(parsedData);
+                    await loadAndDisplayFabricStatus();
+                };
+                reader.readAsText(file);
             } catch (error) {
-                console.error("Error loading dashboard:", error);
-                allDomElements.dashboardContent.innerHTML = '<p class="text-red-500">Failed to load analytics data.</p>';
+                console.error("Error processing fabric CSV:", error);
+                statusEl.textContent = `Error: ${error.message}`;
             }
         }
 
+        allDomElements.fabricCsvUpload.addEventListener('change', (event) => {
+             processFabricFile(event.target.files[0]);
+             event.target.value = ''; // Reset file input
+        });
+
+        const fabricSection = allDomElements.fabricPropertiesSection;
+        fabricSection.addEventListener('dragover', (e) => { e.preventDefault(); fabricSection.classList.add('drag-over'); });
+        fabricSection.addEventListener('dragleave', () => fabricSection.classList.remove('drag-over'));
+        fabricSection.addEventListener('drop', (e) => {
+            e.preventDefault();
+            fabricSection.classList.remove('drag-over');
+            processFabricFile(e.dataTransfer.files[0]);
+        });
+
+
+        function parseCsv(text) {
+            const rows = text.split('\n').slice(1); // Skip header row
+            const data = [];
+            for (const row of rows) {
+                const columns = row.split(',');
+                if (columns.length >= 4) {
+                    const name = columns[0].trim().replace(/"/g, '');
+                    const width = parseInt(columns[2].trim(), 10);
+                    const canTurn = columns[3].trim().replace(/"/g, '');
+
+                    if (name && !isNaN(width) && canTurn) {
+                        data.push({
+                            fabricName: name,
+                            fabricWidth: width,
+                            canTurn: canTurn
+                        });
+                    }
+                }
+            }
+            return data;
+        }
+
+        async function uploadFabricProperties(fabricData) {
+            if (!db) throw new Error("Database not connected.");
+
+            const propertiesRef = collection(db, 'orderbot_fabric_properties');
+            const oldDocsSnapshot = await getDocs(propertiesRef);
+            const deleteBatch = writeBatch(db);
+            oldDocsSnapshot.forEach(doc => deleteBatch.delete(doc.ref));
+            await deleteBatch.commit();
+
+            const addBatch = writeBatch(db);
+            fabricData.forEach(fabric => {
+                const newDocRef = doc(propertiesRef);
+                addBatch.set(newDocRef, fabric);
+            });
+            await addBatch.commit();
+
+            const metaRef = doc(db, 'orderbot_metadata', 'fabric_properties');
+            await setDoc(metaRef, {
+                count: fabricData.length,
+                lastUpdated: new Date().toISOString()
+            });
+        }
+
+        async function loadAndDisplayFabricStatus() {
+            if (!db) return;
+            const metaRef = doc(db, 'orderbot_metadata', 'fabric_properties');
+            const docSnap = await getDoc(metaRef);
+
+            if (docSnap.exists()) {
+                const data = docSnap.data();
+                const formattedDate = new Date(data.lastUpdated).toLocaleString('en-ZA');
+                allDomElements.fabricPropertiesStatus.innerHTML = `<p><strong>${data.count}</strong> fabrics loaded.</p><p class="text-xs">Last updated: ${formattedDate}</p>`;
+            } else {
+                 allDomElements.fabricPropertiesStatus.innerHTML = '<p class="text-slate-400 italic">No fabric properties uploaded yet. <br> Drag & drop a CSV file here.</p>';
+            }
+        }
+        
+        async function getFabricProperties() {
+            if (!db) return new Map();
+            const propertiesRef = collection(db, 'orderbot_fabric_properties');
+            const snapshot = await getDocs(propertiesRef);
+            const fabricMap = new Map();
+            snapshot.forEach(doc => {
+                const data = doc.data();
+                fabricMap.set(data.fabricName.toLowerCase().trim(), data);
+            });
+            return fabricMap;
+        }
+
+        function validateWithFabricProperties(comparisonData, fabricProperties) {
+            if (!fabricProperties || fabricProperties.size === 0) return comparisonData;
+
+            comparisonData.lineItems.forEach(item => {
+                const fabricName = item.range?.blindIQValue?.toLowerCase().trim();
+                const blindWidth = parseInt(item.width?.blindIQValue, 10);
+
+                if (!fabricName || isNaN(blindWidth)) return;
+
+                const properties = fabricProperties.get(fabricName);
+                if (!properties) return;
+
+                const fabricWidth = properties.fabricWidth;
+                const canTurn = properties.canTurn.toLowerCase();
+                
+                if (blindWidth > fabricWidth) {
+                    if (canTurn === 'no') {
+                        item.fabricValidation = { type: 'error', message: `Fabric Alert: Width (${blindWidth}mm) exceeds max fabric width (${fabricWidth}mm). Fabric cannot be turned.` };
+                    } else if (canTurn === 'out') {
+                        item.fabricValidation = { type: 'warning', message: `Fabric Alert: Width (${blindWidth}mm) exceeds max fabric width (${fabricWidth}mm). Turning is Out of Warranty.` };
+                    }
+                }
+            });
+            return comparisonData;
+        }
+        
         // Initial Load
         addNewPair();
         loadAndDisplayGuidelines();
+        loadAndDisplayFabricStatus();
+        setupCollapsible(allDomElements.guidelinesHeader, allDomElements.guidelinesContent);
+        setupCollapsible(allDomElements.fabricPropertiesHeader, allDomElements.fabricPropertiesContent);
 
     </script>
 </body>
 </html>
+
+

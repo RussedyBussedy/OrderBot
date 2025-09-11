@@ -1237,7 +1237,7 @@
 
                 if (columns.length >= 4) {
                     const name = columns[0];
-                    const weightString = columns[1].replace(',', '.');
+                    const weightString = columns[1].replace(',', '.'); // Handle both . and , for decimals
                     const weight = parseFloat(weightString);
                     const width = parseInt(columns[2], 10);
                     const canTurn = columns[3];
@@ -1399,27 +1399,34 @@
             comparisonData.lineItems.forEach(item => {
                 const fabricName = item.range?.blindIQValue?.toLowerCase().trim();
                 
-                // Robustly parse the blind width to handle cases like "2215mm" or "Width: 2215"
                 const widthString = item.width?.blindIQValue || '';
                 const widthMatch = widthString.match(/\d+/);
                 const blindWidth = widthMatch ? parseInt(widthMatch[0], 10) : NaN;
 
-                if (!fabricName || isNaN(blindWidth)) return;
+                const dropString = item.drop?.blindIQValue || '';
+                const dropMatch = dropString.match(/\d+/);
+                const blindDrop = dropMatch ? parseInt(dropMatch[0], 10) : NaN;
+
+                if (!fabricName || isNaN(blindWidth) || isNaN(blindDrop)) return;
 
                 const properties = fabricProperties.get(fabricName);
-                if (!properties) {
-                     console.log(`Fabric "${fabricName}" not found in properties map.`); // DEBUG LOG
-                    return;
-                }
+                if (!properties) return;
 
                 const fabricWidth = properties.fabricWidth;
                 const canTurn = properties.canTurn.toLowerCase();
                 
                 if (blindWidth > fabricWidth) {
+                    // This is the new, more advanced logic block
                     if (canTurn === 'no') {
                         item.fabricValidation = { type: 'error', message: `Fabric Alert: Width (${blindWidth}mm) exceeds max fabric width (${fabricWidth}mm). Fabric cannot be turned.` };
-                    } else if (canTurn === 'out') {
-                        item.fabricValidation = { type: 'warning', message: `Fabric Alert: Width (${blindWidth}mm) exceeds max fabric width (${fabricWidth}mm). Turning is Out of Warranty.` };
+                    } else if (canTurn === 'yes' || canTurn === 'out') {
+                        // The fabric can be turned, so the fabric width becomes the max drop.
+                        if (blindDrop > fabricWidth) {
+                            item.fabricValidation = { type: 'error', message: `Fabric Alert: Drop (${blindDrop}mm) exceeds max turned width (${fabricWidth}mm). Blind cannot be made.` };
+                        } else if (canTurn === 'out') {
+                            // The drop is okay, but it's still an out-of-warranty turn.
+                            item.fabricValidation = { type: 'warning', message: `Fabric Alert: Width (${blindWidth}mm) exceeds fabric width (${fabricWidth}mm). Turning is Out of Warranty.` };
+                        }
                     }
                 }
             });

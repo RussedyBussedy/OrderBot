@@ -399,6 +399,13 @@
             confirmModalConfirm: document.getElementById('confirm-modal-confirm'),
         };
 
+        const BLIND_TYPE_EXCLUSIONS_FOR_COLOUR_CHECK = [
+            'element double roller',
+            'curtain glide curtain ripple',
+            'curtain somfy',
+            'curtain motion'
+        ];
+
         const fileToB64 = (file) => new Promise((resolve, reject) => {
             const reader = new FileReader();
             reader.readAsDataURL(file);
@@ -579,7 +586,7 @@
                 batchStatus.textContent = `Processing order ${i + 1} of ${comparisonPairs.length}...`;
                 try {
                     let result = await processSingleComparison(comparisonPairs[i]);
-                    result = validateWithFabricProperties(result, fabricProperties); // NEW validation step
+                    result = runPostAIValidations(result, fabricProperties); // Use new validation function
                     summaryResultsCache.push({ status: 'success', data: result });
                 } catch (error) {
                     console.error(`Failed comparison for pair ${i}:`, error);
@@ -593,7 +600,7 @@
                  for (let i = 0; i < failedPairs.length; i++) {
                       try {
                           let result = await processSingleComparison(failedPairs[i].pair);
-                          result = validateWithFabricProperties(result, fabricProperties); // NEW validation step on retry
+                          result = runPostAIValidations(result, fabricProperties); // Use new validation function on retry
                           summaryResultsCache[failedPairs[i].originalIndex] = { status: 'success', data: result };
                       } catch (error) {
                           console.error(`Retry failed for pair ${failedPairs[i].originalIndex}:`, error);
@@ -639,6 +646,7 @@
                 - You may receive one customer document and multiple Blind IQ documents. Your task is to treat all Blind IQ documents as a single, consolidated order and compare all of their combined line items against the single customer document.
                 - For each line item, extract the primary fields: Item, Location, QTY, Width, Drop, Colour, Control, Blind Type, Range, and Fix. The 'Item' should correspond to the alphabetical identifier (A, B, C...).
                 - The 'Range' field corresponds to the fabric name. You MUST extract this value from the Blind IQ document only, as the customer document may not have it or may use a different name.
+                - The 'Colour' field is often empty for certain Blind Types. You must accurately extract the colour if present, or an empty string "" if it is not.
                 - CRITICAL: Look for a secondary line of text below the primary fields. This line contains detailed specifications separated by '|' and using '='. You MUST parse this line.
                 - For each key-value pair in the secondary line (e.g., "Val Returns=None"), treat it as a distinct specification.
                 - Compare all primary fields, all parsed specifications, and the special instructions between the two documents.
@@ -738,11 +746,11 @@
                     let status = 'match';
                     let hasMismatch = false;
                     let hasLowConfidence = false;
-                    let hasFabricWarning = false;
+                    let hasAlert = false;
 
-                    // Check for mismatches, omissions, or fabric warnings
+                    // Check for mismatches, omissions, or any validation alerts
                     (data.lineItems || []).forEach(item => {
-                        if (item.fabricValidation) hasFabricWarning = true;
+                        if (item.fabricValidation || item.colourValidation) hasAlert = true;
                         Object.values(item).forEach(field => {
                             if (field && (field.result === 'MISMATCH' || field.result === 'OMISSION')) hasMismatch = true;
                         });
@@ -751,7 +759,7 @@
                         });
                     });
 
-                    if (!hasMismatch && !hasFabricWarning) {
+                    if (!hasMismatch && !hasAlert) {
                         (data.lineItems || []).forEach(item => {
                             Object.values(item).forEach(field => {
                                 if (field && (field.confidence * 100) < 90) hasLowConfidence = true;
@@ -762,7 +770,7 @@
                         });
                     }
 
-                    if (hasMismatch || hasFabricWarning) status = 'mismatch';
+                    if (hasMismatch || hasAlert) status = 'mismatch';
                     else if (hasLowConfidence) status = 'low-confidence';
 
                     const statusClasses = {
@@ -775,7 +783,7 @@
                         <div class="summary-item border rounded-lg overflow-hidden">
                             <div class="summary-item-header p-4 cursor-pointer flex justify-between items-center ${statusClasses}" data-summary-index="${index}">
                                 <span class="font-bold">${data.bdoOrderNumber || 'Unknown Order'}</span>
-                                <span class="text-sm font-semibold">${status.replace('-', ' ').toUpperCase()}${hasFabricWarning ? ' (FABRIC ALERT)' : ''}</span>
+                                <span class="text-sm font-semibold">${status.replace('-', ' ').toUpperCase()}${hasAlert ? ' (ACTION REQUIRED)' : ''}</span>
                             </div>
                             <div class="summary-item-details p-4 border-t border-slate-200">
                                 <!-- Detailed report will be injected here -->
@@ -908,11 +916,16 @@
             }
             
             const lineItemsHtml = (data.lineItems || []).map((lineItem, index) => {
-                 let fabricValidationHtml = '';
+                 let validationHtml = '';
                 if(lineItem.fabricValidation) {
                     const alertClass = lineItem.fabricValidation.type === 'error' ? 'bg-red-100 text-red-800' : 'bg-yellow-100 text-yellow-800';
-                    fabricValidationHtml = `<div class="p-2 text-sm font-semibold ${alertClass} flex items-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.21 3.03-1.742 3.03H4.42c-1.532 0-2.492-1.696-1.742-3.03l5.58-9.92zM10 13a1 1 0 110-2 1 1 0 010 2zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" /></svg> ${lineItem.fabricValidation.message}</div>`;
+                    validationHtml += `<div class="p-2 text-sm font-semibold ${alertClass} flex items-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.21 3.03-1.742 3.03H4.42c-1.532 0-2.492-1.696-1.742-3.03l5.58-9.92zM10 13a1 1 0 110-2 1 1 0 010 2zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" /></svg> ${lineItem.fabricValidation.message}</div>`;
                 }
+                if(lineItem.colourValidation) {
+                     const alertClass = 'bg-red-100 text-red-800'; // Always an error for colour
+                    validationHtml += `<div class="p-2 text-sm font-semibold ${alertClass} flex items-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.21 3.03-1.742 3.03H4.42c-1.532 0-2.492-1.696-1.742-3.03l5.58-9.92zM10 13a1 1 0 110-2 1 1 0 010 2zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" /></svg> ${lineItem.colourValidation.message}</div>`;
+                }
+
 
                 const specHtml = (lineItem.specifications || []).map((spec, specIndex) => {
                     const isMismatch = spec.specComparison.result === 'MISMATCH';
@@ -941,7 +954,7 @@
 
                 return `
                     <div class="line-item-container border border-slate-200 rounded-lg mb-4" data-row-index="${index}">
-                        ${fabricValidationHtml}
+                        ${validationHtml}
                         <div class="grid grid-cols-10 bg-slate-50 font-semibold text-sm text-slate-700 border-b border-slate-200 divide-x divide-slate-200">
                             ${renderCell(lineItem.item, 'item', 'Item')}
                             ${renderCell(lineItem.qty, 'qty', 'QTY')}
@@ -1182,7 +1195,7 @@
                 e.preventDefault(); 
                 dropZone.classList.remove('drag-over');
                 const file = e.dataTransfer.files[0];
-                if (file && file.type === 'text/csv') {
+                if (file && file.name.endsWith('.csv')) {
                     showConfirmModal("This will delete all existing fabric properties and replace them with this file's contents. Are you sure?", () => {
                         processFabricFile(file);
                     });
@@ -1393,40 +1406,47 @@
             return fabricMap;
         }
 
-        function validateWithFabricProperties(comparisonData, fabricProperties) {
-            if (!fabricProperties || fabricProperties.size === 0) return comparisonData;
-
+        function runPostAIValidations(comparisonData, fabricProperties) {
+            if (!comparisonData || !comparisonData.lineItems) return comparisonData;
+        
             comparisonData.lineItems.forEach(item => {
-                const fabricName = item.range?.blindIQValue?.toLowerCase().trim();
-                
-                const widthString = item.width?.blindIQValue || '';
-                const widthMatch = widthString.match(/\d+/);
-                const blindWidth = widthMatch ? parseInt(widthMatch[0], 10) : NaN;
+                // --- 1. Fabric Width & Drop Validation ---
+                if (fabricProperties && fabricProperties.size > 0) {
+                    const fabricName = item.range?.blindIQValue?.toLowerCase().trim();
+                    const widthString = item.width?.blindIQValue || '';
+                    const widthMatch = widthString.match(/\d+/);
+                    const blindWidth = widthMatch ? parseInt(widthMatch[0], 10) : NaN;
+                    const dropString = item.drop?.blindIQValue || '';
+                    const dropMatch = dropString.match(/\d+/);
+                    const blindDrop = dropMatch ? parseInt(dropMatch[0], 10) : NaN;
 
-                const dropString = item.drop?.blindIQValue || '';
-                const dropMatch = dropString.match(/\d+/);
-                const blindDrop = dropMatch ? parseInt(dropMatch[0], 10) : NaN;
-
-                if (!fabricName || isNaN(blindWidth) || isNaN(blindDrop)) return;
-
-                const properties = fabricProperties.get(fabricName);
-                if (!properties) return;
-
-                const fabricWidth = properties.fabricWidth;
-                const canTurn = properties.canTurn.toLowerCase();
-                
-                if (blindWidth > fabricWidth) {
-                    // This is the new, more advanced logic block
-                    if (canTurn === 'no') {
-                        item.fabricValidation = { type: 'error', message: `Fabric Alert: Width (${blindWidth}mm) exceeds max fabric width (${fabricWidth}mm). Fabric cannot be turned.` };
-                    } else if (canTurn === 'yes' || canTurn === 'out') {
-                        // The fabric can be turned, so the fabric width becomes the max drop.
-                        if (blindDrop > fabricWidth) {
-                            item.fabricValidation = { type: 'error', message: `Fabric Alert: Drop (${blindDrop}mm) exceeds max turned width (${fabricWidth}mm). Blind cannot be made.` };
-                        } else if (canTurn === 'out') {
-                            // The drop is okay, but it's still an out-of-warranty turn.
-                            item.fabricValidation = { type: 'warning', message: `Fabric Alert: Width (${blindWidth}mm) exceeds fabric width (${fabricWidth}mm). Turning is Out of Warranty.` };
+                    if (fabricName && !isNaN(blindWidth) && !isNaN(blindDrop)) {
+                        const properties = fabricProperties.get(fabricName);
+                        if (properties) {
+                            const fabricWidth = properties.fabricWidth;
+                            const canTurn = properties.canTurn.toLowerCase();
+                            if (blindWidth > fabricWidth) {
+                                if (canTurn === 'no') {
+                                    item.fabricValidation = { type: 'error', message: `Fabric Alert: Width (${blindWidth}mm) exceeds max fabric width (${fabricWidth}mm). Fabric cannot be turned.` };
+                                } else if (canTurn === 'yes' || canTurn === 'out') {
+                                    if (blindDrop > fabricWidth) {
+                                        item.fabricValidation = { type: 'error', message: `Fabric Alert: Drop (${blindDrop}mm) exceeds max turned width (${fabricWidth}mm). Blind cannot be made.` };
+                                    } else if (canTurn === 'out') {
+                                        item.fabricValidation = { type: 'warning', message: `Fabric Alert: Width (${blindWidth}mm) exceeds fabric width (${fabricWidth}mm). Turning is Out of Warranty.` };
+                                    }
+                                }
+                            }
                         }
+                    }
+                }
+
+                // --- 2. Colour Validation ---
+                const blindType = item.blindType?.blindIQValue?.toLowerCase().trim();
+                const colour = item.colour?.blindIQValue?.trim();
+
+                if (blindType && !BLIND_TYPE_EXCLUSIONS_FOR_COLOUR_CHECK.includes(blindType)) {
+                    if (!colour || colour === 'N/A' || colour === '-') {
+                         item.colourValidation = { type: 'error', message: `Colour Alert: No colour has been specified for this blind type.` };
                     }
                 }
             });

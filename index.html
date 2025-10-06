@@ -678,7 +678,7 @@
                 ## 3. DATA EXTRACTION & ANALYSIS LOGIC:
                 - You may receive one customer document and multiple Blind IQ documents. Your task is to treat all Blind IQ documents as a single, consolidated order and compare all of their combined line items against the single customer document.
                 - For each line item in the 'Blinds' table, extract the primary fields: Item, Location, QTY, Width, Drop, Colour, Control, Blind Type, Range, and Fix. The 'Item' should correspond to the alphabetical identifier (A, B, C...).
-                - NEW: You MUST also extract all items from the 'Sundries' table. Each sundry should have a description and quantity.
+                - You MUST also extract and compare all items from the 'Sundries' table against the customer document. Each sundry item has a description and a quantity. It is common for these items not to appear on the customer order; in this case, the result should be 'OMISSION'.
                 - The 'Range' field corresponds to the fabric name. You MUST extract this value from the Blind IQ document only.
                 - The 'Colour' field is often empty for certain Blind Types. You must accurately extract the colour if present, or an empty string "" if it is not.
                 - CRITICAL: Look for a secondary line of text below the primary fields in the 'Blinds' table. This line contains detailed specifications separated by '|' and using '='. You MUST parse this line.
@@ -746,12 +746,12 @@
                     "sundries": {
                         type: "ARRAY",
                         items: {
-                            type: "OBJECT",
+                           type: "OBJECT",
                             properties: {
-                                "description": { "type": "STRING" },
+                                "item": comparisonFieldSchema,
                                 "quantity": { "type": "NUMBER" }
                             },
-                             required: ["description", "quantity"]
+                            required: ["item", "quantity"]
                         }
                     }
                 },
@@ -1030,8 +1030,28 @@
                     </div>
                 `;
             }).join('');
+            
+            let sundriesHtml = '';
+            if (data.sundries && data.sundries.length > 0) {
+                sundriesHtml = '<h3 class="font-bold text-lg text-slate-800 mt-6 mb-2">Sundries Comparison</h3>';
+                sundriesHtml += '<div class="space-y-2 text-sm">';
+                data.sundries.forEach(sundry => {
+                    const result = sundry.item.result;
+                    let resultClass = 'text-slate-500';
+                    if (result === 'MATCH') resultClass = 'text-green-700';
+                    if (result === 'MISMATCH') resultClass = 'text-red-700 font-semibold';
+                    sundriesHtml += `
+                        <div class="flex justify-between items-center bg-slate-50 p-2 rounded-md">
+                            <span>${sundry.quantity} x ${sundry.item.blindIQValue}</span>
+                            <span class="font-medium ${resultClass}">${result}</span>
+                        </div>
+                    `;
+                });
+                sundriesHtml += '</div>';
+            }
 
-            return `${orderNumberRow}${specialInstructionsRow}${lineItemsHtml}`;
+
+            return `${orderNumberRow}${specialInstructionsRow}${lineItemsHtml}${sundriesHtml}`;
         }
         
         allDomElements.cancelFeedbackBtn.addEventListener('click', () => {

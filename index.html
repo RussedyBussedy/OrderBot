@@ -208,6 +208,29 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- Motor Properties Section -->
+                <div id="motor-properties-section" class="bg-white rounded-lg shadow-sm overflow-hidden">
+                    <div id="motor-properties-header" class="flex justify-between items-center p-4 cursor-pointer">
+                        <h3 class="font-bold text-lg text-slate-800">Motor Properties</h3>
+                        <svg class="chevron-icon w-6 h-6 text-slate-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg>
+                    </div>
+                     <div id="motor-properties-content" class="collapsible-content">
+                        <div class="p-4 border-t border-slate-200">
+                             <label id="motor-csv-drop-zone" class="drop-zone !min-h-0 p-4 mb-3 rounded-lg flex flex-col items-center justify-center cursor-pointer bg-white shadow-sm text-center">
+                                <h3 class="text-base font-semibold text-slate-700">Upload CSV to Replace All</h3>
+                                <p class="text-xs text-slate-500">Drag & drop new CSV here, or click to upload</p>
+                                <input type="file" id="motor-csv-upload" class="hidden" accept=".csv">
+                            </label>
+                            <div id="motor-properties-list" class="space-y-2">
+                                <!-- Motor properties will be loaded here -->
+                            </div>
+                             <button id="add-motor-btn" class="w-full mt-4 bg-green-100 text-green-700 font-bold py-2 px-4 rounded-lg hover:bg-green-200 transition-colors text-sm">
+                                Add New Motor
+                            </button>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <!-- History Section -->
@@ -392,6 +415,13 @@
             fabricCsvUpload: document.getElementById('fabric-csv-upload'),
             fabricCsvDropZone: document.getElementById('fabric-csv-drop-zone'),
             addFabricBtn: document.getElementById('add-fabric-btn'),
+            motorPropertiesSection: document.getElementById('motor-properties-section'),
+            motorPropertiesHeader: document.getElementById('motor-properties-header'),
+            motorPropertiesContent: document.getElementById('motor-properties-content'),
+            motorPropertiesList: document.getElementById('motor-properties-list'),
+            motorCsvUpload: document.getElementById('motor-csv-upload'),
+            motorCsvDropZone: document.getElementById('motor-csv-drop-zone'),
+            addMotorBtn: document.getElementById('add-motor-btn'),
             confirmModal: document.getElementById('confirm-modal'),
             confirmModalTitle: document.getElementById('confirm-modal-title'),
             confirmModalBody: document.getElementById('confirm-modal-body'),
@@ -579,14 +609,17 @@
             let failedPairs = [];
 
             // Fetch fabric properties once for the whole batch
-            batchStatus.textContent = 'Fetching fabric properties...';
-            const fabricProperties = await getFabricProperties();
+            batchStatus.textContent = 'Fetching properties...';
+            const [fabricProperties, motorProperties] = await Promise.all([
+                getFabricProperties(),
+                getMotorProperties()
+            ]);
 
             for (let i = 0; i < comparisonPairs.length; i++) {
                 batchStatus.textContent = `Processing order ${i + 1} of ${comparisonPairs.length}...`;
                 try {
                     let result = await processSingleComparison(comparisonPairs[i]);
-                    result = runPostAIValidations(result, fabricProperties); // Use new validation function
+                    result = runPostAIValidations(result, fabricProperties, motorProperties);
                     summaryResultsCache.push({ status: 'success', data: result });
                 } catch (error) {
                     console.error(`Failed comparison for pair ${i}:`, error);
@@ -600,7 +633,7 @@
                  for (let i = 0; i < failedPairs.length; i++) {
                       try {
                           let result = await processSingleComparison(failedPairs[i].pair);
-                          result = runPostAIValidations(result, fabricProperties); // Use new validation function on retry
+                          result = runPostAIValidations(result, fabricProperties, motorProperties);
                           summaryResultsCache[failedPairs[i].originalIndex] = { status: 'success', data: result };
                       } catch (error) {
                           console.error(`Retry failed for pair ${failedPairs[i].originalIndex}:`, error);
@@ -644,11 +677,11 @@
                 ## 2. CORE DIRECTIVE: Analyze 'customer' vs 'blindiq' files, extract parameters, compare them, and return a structured JSON report.
                 ## 3. DATA EXTRACTION & ANALYSIS LOGIC:
                 - You may receive one customer document and multiple Blind IQ documents. Your task is to treat all Blind IQ documents as a single, consolidated order and compare all of their combined line items against the single customer document.
-                - For each line item, extract the primary fields: Item, Location, QTY, Width, Drop, Colour, Control, Blind Type, Range, and Fix. The 'Item' should correspond to the alphabetical identifier (A, B, C...).
-                - The 'Range' field corresponds to the fabric name. You MUST extract this value from the Blind IQ document only, as the customer document may not have it or may use a different name.
+                - For each line item in the 'Blinds' table, extract the primary fields: Item, Location, QTY, Width, Drop, Colour, Control, Blind Type, Range, and Fix. The 'Item' should correspond to the alphabetical identifier (A, B, C...).
+                - NEW: You MUST also extract all items from the 'Sundries' table. Each sundry should have a description and quantity.
+                - The 'Range' field corresponds to the fabric name. You MUST extract this value from the Blind IQ document only.
                 - The 'Colour' field is often empty for certain Blind Types. You must accurately extract the colour if present, or an empty string "" if it is not.
-                - CRITICAL: Look for a secondary line of text below the primary fields. This line contains detailed specifications separated by '|' and using '='. You MUST parse this line.
-                - For each key-value pair in the secondary line (e.g., "Val Returns=None"), treat it as a distinct specification.
+                - CRITICAL: Look for a secondary line of text below the primary fields in the 'Blinds' table. This line contains detailed specifications separated by '|' and using '='. You MUST parse this line.
                 - Compare all primary fields, all parsed specifications, and the special instructions between the two documents.
                 ## 4. JSON OUTPUT STRUCTURE: Respond ONLY with a single JSON object conforming to the schema.
                 ${guidelines}
@@ -709,9 +742,20 @@
                             },
                             required: ["item", "location", "qty", "width", "drop", "colour", "control", "blindType", "range", "fix"]
                         }
+                    },
+                    "sundries": {
+                        type: "ARRAY",
+                        items: {
+                            type: "OBJECT",
+                            properties: {
+                                "description": { "type": "STRING" },
+                                "quantity": { "type": "NUMBER" }
+                            },
+                             required: ["description", "quantity"]
+                        }
                     }
                 },
-                required: ["bdoOrderNumber", "customerOrderNumber"]
+                required: ["bdoOrderNumber", "customerOrderNumber", "lineItems"]
             };
 
             const geminiPayload = { contents: [{ role: "user", parts: parts }], generationConfig: { responseMimeType: "application/json", responseSchema: schema } };
@@ -749,8 +793,9 @@
                     let hasAlert = false;
 
                     // Check for mismatches, omissions, or any validation alerts
+                    if (data.motorValidation) hasAlert = true;
                     (data.lineItems || []).forEach(item => {
-                        if (item.fabricValidation || item.colourValidation) hasAlert = true;
+                        if (item.fabricValidation || item.colourValidation || item.motorValidation) hasAlert = true;
                         Object.values(item).forEach(field => {
                             if (field && (field.result === 'MISMATCH' || field.result === 'OMISSION')) hasMismatch = true;
                         });
@@ -899,8 +944,14 @@
                     </div>
                 `;
             };
+            
+            let globalValidationHtml = '';
+            if (data.motorValidation && data.motorValidation.global) {
+                globalValidationHtml = `<div class="mb-4 p-2 text-sm font-semibold bg-red-100 text-red-800 rounded-lg flex items-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.21 3.03-1.742 3.03H4.42c-1.532 0-2.492-1.696-1.742-3.03l5.58-9.92zM10 13a1 1 0 110-2 1 1 0 010 2zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" /></svg> ${data.motorValidation.global}</div>`;
+            }
 
             const orderNumberRow = `
+                ${globalValidationHtml}
                 <div class="mb-4 p-4 rounded-lg ${data.customerOrderNumber.result === 'MATCH' ? 'bg-green-100' : 'bg-red-100'}">
                     <h3 class="font-bold text-lg ${data.customerOrderNumber.result === 'MATCH' ? 'text-green-800' : 'text-red-800'}">Order Number Comparison</h3>
                     <p class="text-sm ${data.customerOrderNumber.result === 'MATCH' ? 'text-green-700' : 'text-red-700'}">
@@ -924,6 +975,12 @@
                 if(lineItem.colourValidation) {
                      const alertClass = 'bg-red-100 text-red-800'; // Always an error for colour
                     validationHtml += `<div class="p-2 text-sm font-semibold ${alertClass} flex items-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.21 3.03-1.742 3.03H4.42c-1.532 0-2.492-1.696-1.742-3.03l5.58-9.92zM10 13a1 1 0 110-2 1 1 0 010 2zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" /></svg> ${lineItem.colourValidation.message}</div>`;
+                }
+                if (lineItem.motorValidation) {
+                    const alertClass = 'bg-red-100 text-red-800';
+                    lineItem.motorValidation.forEach(msg => {
+                         validationHtml += `<div class="p-2 text-sm font-semibold ${alertClass} flex items-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.21 3.03-1.742 3.03H4.42c-1.532 0-2.492-1.696-1.742-3.03l5.58-9.92zM10 13a1 1 0 110-2 1 1 0 010 2zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" /></svg> ${msg}</div>`;
+                    });
                 }
 
 
@@ -1174,7 +1231,7 @@
             }
         });
         
-        // --- FABRIC PROPERTIES & COLLAPSIBLE LOGIC ---
+        // --- PROPERTIES & COLLAPSIBLE LOGIC ---
 
         function setupCollapsible(header, content) {
             header.addEventListener('click', () => {
@@ -1187,6 +1244,7 @@
             });
         }
         
+        // --- FABRIC PROPERTIES ---
         function setupFabricDropZone() {
             const dropZone = allDomElements.fabricCsvDropZone;
             dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
@@ -1406,60 +1464,284 @@
             return fabricMap;
         }
 
-        function runPostAIValidations(comparisonData, fabricProperties) {
-            if (!comparisonData || !comparisonData.lineItems) return comparisonData;
+        function runPostAIValidations(comparisonData, fabricProperties, motorProperties) {
+            if (!comparisonData) return comparisonData;
         
-            comparisonData.lineItems.forEach(item => {
-                // --- 1. Fabric Width & Drop Validation ---
-                if (fabricProperties && fabricProperties.size > 0) {
-                    const fabricName = item.range?.blindIQValue?.toLowerCase().trim();
-                    const widthString = item.width?.blindIQValue || '';
-                    const widthMatch = widthString.match(/\d+/);
-                    const blindWidth = widthMatch ? parseInt(widthMatch[0], 10) : NaN;
-                    const dropString = item.drop?.blindIQValue || '';
-                    const dropMatch = dropString.match(/\d+/);
-                    const blindDrop = dropMatch ? parseInt(dropMatch[0], 10) : NaN;
+            if (comparisonData.lineItems) {
+                comparisonData.lineItems.forEach(item => {
+                    // --- 1. Fabric Width & Drop Validation ---
+                    if (fabricProperties && fabricProperties.size > 0) {
+                        const fabricName = item.range?.blindIQValue?.toLowerCase().trim();
+                        const widthString = item.width?.blindIQValue || '';
+                        const widthMatch = widthString.match(/\d+/);
+                        const blindWidth = widthMatch ? parseInt(widthMatch[0], 10) : NaN;
+                        const dropString = item.drop?.blindIQValue || '';
+                        const dropMatch = dropString.match(/\d+/);
+                        const blindDrop = dropMatch ? parseInt(dropMatch[0], 10) : NaN;
 
-                    if (fabricName && !isNaN(blindWidth) && !isNaN(blindDrop)) {
-                        const properties = fabricProperties.get(fabricName);
-                        if (properties) {
-                            const fabricWidth = properties.fabricWidth;
-                            const canTurn = properties.canTurn.toLowerCase();
-                            if (blindWidth > fabricWidth) {
-                                if (canTurn === 'no') {
-                                    item.fabricValidation = { type: 'error', message: `Fabric Alert: Width (${blindWidth}mm) exceeds max fabric width (${fabricWidth}mm). Fabric cannot be turned.` };
-                                } else if (canTurn === 'yes' || canTurn === 'out') {
-                                    if (blindDrop > fabricWidth) {
-                                        item.fabricValidation = { type: 'error', message: `Fabric Alert: Drop (${blindDrop}mm) exceeds max turned width (${fabricWidth}mm). Blind cannot be made.` };
-                                    } else if (canTurn === 'out') {
-                                        item.fabricValidation = { type: 'warning', message: `Fabric Alert: Width (${blindWidth}mm) exceeds fabric width (${fabricWidth}mm). Turning is Out of Warranty.` };
+                        if (fabricName && !isNaN(blindWidth) && !isNaN(blindDrop)) {
+                            const properties = fabricProperties.get(fabricName);
+                            if (properties) {
+                                const fabricWidth = properties.fabricWidth;
+                                const canTurn = properties.canTurn.toLowerCase();
+                                if (blindWidth > fabricWidth) {
+                                    if (canTurn === 'no') {
+                                        item.fabricValidation = { type: 'error', message: `Fabric Alert: Width (${blindWidth}mm) exceeds max fabric width (${fabricWidth}mm). Fabric cannot be turned.` };
+                                    } else if (canTurn === 'yes' || canTurn === 'out') {
+                                        if (blindDrop > fabricWidth) {
+                                            item.fabricValidation = { type: 'error', message: `Fabric Alert: Drop (${blindDrop}mm) exceeds max turned width (${fabricWidth}mm). Blind cannot be made.` };
+                                        } else if (canTurn === 'out') {
+                                            item.fabricValidation = { type: 'warning', message: `Fabric Alert: Width (${blindWidth}mm) exceeds fabric width (${fabricWidth}mm). Turning is Out of Warranty.` };
+                                        }
                                     }
                                 }
                             }
                         }
                     }
-                }
 
-                // --- 2. Colour Validation ---
-                const blindType = item.blindType?.blindIQValue?.toLowerCase().trim();
-                const colour = item.colour?.blindIQValue?.trim();
+                    // --- 2. Colour Validation ---
+                    const blindType = item.blindType?.blindIQValue?.toLowerCase().trim();
+                    const colour = item.colour?.blindIQValue?.trim();
 
-                if (blindType && !BLIND_TYPE_EXCLUSIONS_FOR_COLOUR_CHECK.includes(blindType)) {
-                    if (!colour || colour === 'N/A' || colour === '-') {
-                         item.colourValidation = { type: 'error', message: `Colour Alert: No colour has been specified for this blind type.` };
+                    if (blindType && !BLIND_TYPE_EXCLUSIONS_FOR_COLOUR_CHECK.includes(blindType)) {
+                        if (!colour || colour === 'N/A' || colour === '-') {
+                            item.colourValidation = { type: 'error', message: `Colour Alert: No colour has been specified for this blind type.` };
+                        }
                     }
-                }
-            });
+                });
+            }
+
+            // --- 3. Motor & Sundries Validation ---
+            if (motorProperties && motorProperties.size > 0 && comparisonData.sundries) {
+                 validateMotorDependencies(comparisonData, motorProperties);
+            }
+
             return comparisonData;
         }
         
+        // --- MOTOR PROPERTIES ---
+        function setupMotorDropZone() {
+            const dropZone = allDomElements.motorCsvDropZone;
+            dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+            dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+            dropZone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                dropZone.classList.remove('drag-over');
+                const file = e.dataTransfer.files[0];
+                if (file && file.name.endsWith('.csv')) {
+                    showConfirmModal("This will delete all existing motor properties and replace them with this file's contents. Are you sure?", () => {
+                        processMotorFile(file);
+                    });
+                }
+            });
+        }
+
+        function processMotorFile(file) {
+            const listEl = allDomElements.motorPropertiesList;
+            listEl.innerHTML = `<div class="flex items-center justify-center gap-2 text-slate-600"><div class="loader !w-5 !h-5 !border-2"></div>Processing CSV...</div>`;
+
+            try {
+                const reader = new FileReader();
+                reader.onload = async (e) => {
+                    const text = e.target.result;
+                    const parsedData = parseCsvAndExtractMotorData(text);
+                    if (parsedData.length === 0) throw new Error("CSV is empty or could not be parsed correctly.");
+
+                    await uploadMotorProperties(parsedData);
+                    await loadAndDisplayMotorProperties();
+                };
+                reader.readAsText(file);
+            } catch (error) {
+                console.error("Error processing motor CSV:", error);
+                listEl.innerHTML = `<p class="text-red-500 text-center">Error: ${error.message}</p>`;
+            }
+        }
+
+        allDomElements.motorCsvUpload.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (file) {
+                showConfirmModal("This will delete all existing motor properties and replace them with this file's contents. Are you sure?", () => {
+                    processMotorFile(file);
+                });
+            }
+            event.target.value = ''; // Reset file input
+        });
+
+        function parseCsvAndExtractMotorData(text) {
+            const rows = text.replace(/\r\n/g, '\n').split('\n').filter(row => row.trim() !== '');
+            if (rows.length < 2) return [];
+
+            const header = rows[0];
+            const delimiter = header.includes(';') ? ';' : ',';
+
+            const data = [];
+            for (let i = 1; i < rows.length; i++) {
+                const rowText = rows[i];
+                if (!rowText.trim()) continue;
+
+                const columns = rowText.match(new RegExp(`(\\${delimiter}|\\r?\\n|\\r|^)(?:"([^"]*(?:""[^"]*)*)"|([^"\\${delimiter}\\r\\n]*))`, 'gi'));
+                if (!columns) continue;
+
+                const cleanColumns = columns.map(col => {
+                    let c = col.trim();
+                    if (c.startsWith(delimiter)) c = c.substring(1);
+                    if (c.startsWith('"') && c.endsWith('"')) c = c.substring(1, c.length - 1);
+                    return c.replace(/""/g, '"');
+                });
+
+
+                if (cleanColumns.length >= 8) {
+                    const motorName = cleanColumns[0];
+                    const torque = parseFloat(cleanColumns[1].replace(',', '.'));
+                    const blindType = cleanColumns[2];
+                    const adapterKit = cleanColumns[3];
+                    const accessories = cleanColumns[4];
+                    const otherDependencies = cleanColumns[5];
+                    const blindControl = cleanColumns[6];
+                    const controlOptions = cleanColumns[7];
+
+                    if (motorName && !isNaN(torque) && blindType) {
+                        data.push({ motorName, torque, blindType, adapterKit, accessories, otherDependencies, blindControl, controlOptions });
+                    } else {
+                        console.warn('Skipping malformed motor CSV row:', rowText, 'Parsed as:', cleanColumns);
+                    }
+                }
+            }
+            return data;
+        }
+
+        async function uploadMotorProperties(motorData) {
+            if (!db) throw new Error("Database not connected.");
+
+            const propertiesRef = collection(db, 'orderbot_motor_properties');
+            const oldDocsSnapshot = await getDocs(propertiesRef);
+            const deleteBatch = writeBatch(db);
+            oldDocsSnapshot.forEach(doc => deleteBatch.delete(doc.ref));
+            await deleteBatch.commit();
+
+            const addBatch = writeBatch(db);
+            motorData.forEach(motor => {
+                const newDocRef = doc(propertiesRef);
+                addBatch.set(newDocRef, motor);
+            });
+            await addBatch.commit();
+        }
+
+        async function loadAndDisplayMotorProperties() {
+            if (!db) return;
+            const listEl = allDomElements.motorPropertiesList;
+            listEl.innerHTML = `<div class="flex items-center justify-center gap-2 text-slate-600"><div class="loader !w-5 !h-5 !border-2"></div>Loading motors...</div>`;
+
+            const propertiesRef = collection(db, 'orderbot_motor_properties');
+            const snapshot = await getDocs(propertiesRef);
+
+            listEl.innerHTML = '';
+            if (snapshot.empty) {
+                listEl.innerHTML = '<p class="text-slate-400 italic text-center">No motor properties loaded.</p>';
+                return;
+            }
+
+            snapshot.docs.sort((a, b) => a.data().motorName.localeCompare(b.data().motorName) || a.data().blindType.localeCompare(b.data().blindType)).forEach(doc => {
+                renderMotorRow(doc.id, doc.data());
+            });
+        }
+
+        function renderMotorRow(id, data, isNew = false) {
+            const listEl = allDomElements.motorPropertiesList;
+            const motorRow = document.createElement('div');
+            motorRow.className = 'motor-row p-2 bg-slate-50 rounded-lg grid grid-cols-[1fr,auto,1fr,1fr,1fr,1fr,1fr,1fr,auto] items-center gap-2';
+            motorRow.dataset.id = id;
+
+            motorRow.innerHTML = `
+                <input type="text" value="${data.motorName || ''}" placeholder="Motor Name" class="motor-name-input w-full p-1 border rounded text-sm font-semibold">
+                <input type="number" step="0.1" value="${data.torque || ''}" placeholder="Torque" class="motor-torque-input w-20 p-1 border rounded text-sm">
+                <input type="text" value="${data.blindType || ''}" placeholder="Blind Type" class="motor-blindtype-input w-full p-1 border rounded text-sm">
+                <input type="text" value="${data.adapterKit || ''}" placeholder="Adapter Kit" class="motor-adapter-input w-full p-1 border rounded text-sm">
+                <input type="text" value="${data.accessories || ''}" placeholder="Accessories" class="motor-accessories-input w-full p-1 border rounded text-sm">
+                <input type="text" value="${data.otherDependencies || ''}" placeholder="Other Dependencies" class="motor-dependencies-input w-full p-1 border rounded text-sm">
+                <input type="text" value="${data.blindControl || ''}" placeholder="Blind Control" class="motor-blindcontrol-input w-full p-1 border rounded text-sm">
+                <input type="text" value="${data.controlOptions || ''}" placeholder="Control, Options" class="motor-controls-input w-full p-1 border rounded text-sm">
+                <div class="flex gap-2">
+                    <button class="save-motor-btn bg-blue-500 text-white text-xs font-bold py-1 px-3 rounded hover:bg-blue-600">${isNew ? 'Add' : 'Save'}</button>
+                    ${isNew ? `<button class="cancel-new-motor-btn bg-gray-200 text-gray-700 text-xs font-bold py-1 px-3 rounded hover:bg-gray-300">Cancel</button>` : `<button class="delete-motor-btn text-red-400 hover:text-red-600 font-bold text-lg">&times;</button>`}
+                </div>
+            `;
+            listEl.appendChild(motorRow);
+
+            motorRow.querySelector('.save-motor-btn').addEventListener('click', async () => {
+                const dataToSave = {
+                    motorName: motorRow.querySelector('.motor-name-input').value.trim(),
+                    torque: parseFloat(motorRow.querySelector('.motor-torque-input').value),
+                    blindType: motorRow.querySelector('.motor-blindtype-input').value.trim(),
+                    adapterKit: motorRow.querySelector('.motor-adapter-input').value.trim(),
+                    accessories: motorRow.querySelector('.motor-accessories-input').value.trim(),
+                    otherDependencies: motorRow.querySelector('.motor-dependencies-input').value.trim(),
+                    blindControl: motorRow.querySelector('.motor-blindcontrol-input').value.trim(),
+                    controlOptions: motorRow.querySelector('.motor-controls-input').value.trim()
+                };
+
+                if (!dataToSave.motorName || isNaN(dataToSave.torque) || !dataToSave.blindType) {
+                    alert("Please provide valid Name, Torque, and Blind Type values.");
+                    return;
+                }
+
+                try {
+                    if (isNew) {
+                        await addDoc(collection(db, 'orderbot_motor_properties'), dataToSave);
+                    } else {
+                        await updateDoc(doc(db, 'orderbot_motor_properties', id), dataToSave);
+                    }
+                    loadAndDisplayMotorProperties();
+                } catch (error) {
+                    console.error("Error saving motor:", error);
+                    alert("Could not save motor properties.");
+                }
+            });
+
+            if (isNew) {
+                motorRow.querySelector('.cancel-new-motor-btn').addEventListener('click', () => motorRow.remove());
+            } else {
+                motorRow.querySelector('.delete-motor-btn').addEventListener('click', () => {
+                    showConfirmModal(`Are you sure you want to delete this motor configuration?`, async () => {
+                        try {
+                            await deleteDoc(doc(db, 'orderbot_motor_properties', id));
+                            loadAndDisplayMotorProperties();
+                        } catch (error) {
+                            console.error("Error deleting motor:", error);
+                            alert("Could not delete motor.");
+                        }
+                    });
+                });
+            }
+        }
+
+        allDomElements.addMotorBtn.addEventListener('click', () => {
+            renderMotorRow(null, {}, true);
+        });
+
+        async function getMotorProperties() {
+            if (!db) return new Map();
+            const propertiesRef = collection(db, 'orderbot_motor_properties');
+            const snapshot = await getDocs(propertiesRef);
+            const motorMap = new Map();
+             snapshot.forEach(doc => {
+                const data = doc.data();
+                const key = `${data.motorName.toLowerCase().trim()}|${data.blindType.toLowerCase().trim()}`;
+                motorMap.set(key, data);
+            });
+            return motorMap;
+        }
+
         // Initial Load
         addNewPair();
         loadAndDisplayGuidelines();
         loadAndDisplayFabricProperties();
+        loadAndDisplayMotorProperties(); // New
         setupCollapsible(allDomElements.guidelinesHeader, allDomElements.guidelinesContent);
         setupCollapsible(allDomElements.fabricPropertiesHeader, allDomElements.fabricPropertiesContent);
+        setupCollapsible(allDomElements.motorPropertiesHeader, allDomElements.motorPropertiesContent); // New
         setupFabricDropZone();
+        setupMotorDropZone(); // New
 
     </script>
 </body>

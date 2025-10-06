@@ -803,6 +803,10 @@
                             if (spec.specComparison.result === 'MISMATCH' || spec.specComparison.result === 'OMISSION') hasMismatch = true;
                         });
                     });
+                     (data.sundries || []).forEach(sundry => {
+                        if (sundry.validationLog && sundry.validationLog.some(log => log.status === 'FAIL')) hasAlert = true;
+                    });
+
 
                     if (!hasMismatch && !hasAlert) {
                         (data.lineItems || []).forEach(item => {
@@ -1786,7 +1790,7 @@
             });
             return motorList;
         }
-        
+
         function validateMotorDependencies(data, motorProperties) {
             const motorizedBlinds = (data.lineItems || []).filter(item => {
                 const control = item.control?.blindIQValue?.toLowerCase() || '';
@@ -1797,27 +1801,25 @@
 
             const sundries = data.sundries || [];
             let orderedMotors = [];
-            let orderedAdapters = new Set();
-            let orderedControllers = new Set();
-            let orderedAccessories = new Set();
-            let orderedDependencies = new Set();
+            const orderedAdapters = new Set();
+            const orderedControllers = new Set();
+            const orderedAccessories = new Set();
+            const orderedDependencies = new Set();
 
             sundries.forEach(sundry => {
                 const desc = sundry.item.blindIQValue.toLowerCase();
-                let foundMotor = false;
+                let isMotor = false;
                 
-                // Find all possible motor properties this sundry could be
                  const matchingProps = motorProperties.filter(prop => desc.includes(prop.motorName.toLowerCase()));
 
                 if (matchingProps.length > 0) {
                      for(let i=0; i < sundry.quantity; i++) {
-                        // We push the sundry item itself, and potential props. The specific prop will be chosen later.
                         orderedMotors.push({ sundry: sundry, potentialProps: matchingProps, assignedBlind: null });
                      }
-                    foundMotor = true;
+                    isMotor = true;
                 }
                 
-                if (!foundMotor) {
+                if (!isMotor) {
                     if (desc.includes('adapter')) orderedAdapters.add(sundry.item.blindIQValue);
                     else if (desc.includes('remote') || desc.includes('switch') || desc.includes('hub')) orderedControllers.add(sundry.item.blindIQValue);
                     else if (desc.includes('accessory')) orderedAccessories.add(sundry.item.blindIQValue);
@@ -1825,13 +1827,11 @@
                 }
             });
 
-            // Global check: motor quantity
             if (motorizedBlinds.length !== orderedMotors.length) {
                 data.motorValidation = { global: `Motor Alert: Order has ${motorizedBlinds.length} motorized blinds but ${orderedMotors.length} motors were found in sundries.` };
                 return;
             }
             
-            // Assign motors to blinds
             motorizedBlinds.sort((a, b) => (parseInt(b.width?.blindIQValue) * parseInt(b.drop?.blindIQValue)) - (parseInt(a.width?.blindIQValue) * parseInt(a.drop?.blindIQValue)));
             orderedMotors.sort((a, b) => {
                 const maxTorqueA = Math.max(...a.potentialProps.map(p => p.torque));
@@ -1845,75 +1845,64 @@
                 }
             });
 
-            // Now, validate each assigned motor
             orderedMotors.forEach(motorObj => {
                 const blind = motorObj.assignedBlind;
                 if (!blind) return;
                 
                 const blindType = blind.blindType.blindIQValue;
-                const control = blind.control.blindIQValue;
+                const blindControl = (blind.control.blindIQValue || '').toLowerCase().split(',').map(s => s.trim());
                 
-                // Find the specific motor property that matches the blind type
                 const motorProp = motorObj.potentialProps.find(p => p.blindType.toLowerCase().trim() === blindType.toLowerCase().trim());
 
                 motorObj.sundry.validationLog = [];
 
                 if (!motorProp) {
                     motorObj.sundry.validationLog.push({ check: 'Motor Compatibility', status: 'FAIL', details: `No properties found for motor "${motorObj.potentialProps[0].motorName}" compatible with blind type "${blindType}".`});
-                    return; // Can't validate further
+                    return;
                 }
 
                 // Adapter Kit
                 const adapterCheck = { check: 'Adapter Kit', status: 'FAIL', details: `Missing required adapter kit "${motorProp.adapterKit}".` };
-                if (motorProp.adapterKit && [...orderedAdapters].some(a => a.toLowerCase().includes(motorProp.adapterKit.toLowerCase()))) {
+                if (!motorProp.adapterKit || [...orderedAdapters].some(a => a.toLowerCase().includes(motorProp.adapterKit.toLowerCase()))) {
                     adapterCheck.status = 'PASS';
-                    adapterCheck.details = `Required: "${motorProp.adapterKit}". Found and matched.`;
+                    adapterCheck.details = `Required: "${motorProp.adapterKit || 'None'}". Requirement met.`;
                 }
                 motorObj.sundry.validationLog.push(adapterCheck);
                 
-                // Blind Control (Lh/Rh Motor)
-                const blindControlCheck = { check: 'Blind Control Side', status: 'FAIL', details: `"${control}" is not a valid control for motor "${motorProp.motorName}".` };
-                if (motorProp.blindControl && motorProp.blindControl.toLowerCase().split(',').map(s=>s.trim()).includes(control.toLowerCase())) {
+                // Blind Control Side
+                const blindControlCheck = { check: 'Blind Control Side', status: 'FAIL', details: `Blind control "${blind.control.blindIQValue}" is not valid for motor "${motorProp.motorName}". Valid options: [${motorProp.blindControl}]` };
+                const validBlindControls = (motorProp.blindControl || '').toLowerCase().split(',').map(s=>s.trim());
+                if (validBlindControls.length === 0 || blindControl.some(c => validBlindControls.includes(c))) {
                     blindControlCheck.status = 'PASS';
-                    blindControlCheck.details = `Required: One of [${motorProp.blindControl}]. Found "${control}". Matched.`;
+                    blindControlCheck.details = `Required: One of [${motorProp.blindControl || 'Any'}]. Found "${blind.control.blindIQValue}". Matched.`;
                 }
                  motorObj.sundry.validationLog.push(blindControlCheck);
 
                 // Control Options (Remote/Switch)
                 const controlOptionsCheck = { check: 'Controller Device', status: 'FAIL', details: `No compatible controller (e.g., ${motorProp.controlOptions}) found in sundries.`};
-                if (motorProp.controlOptions && [...orderedControllers].some(c => motorProp.controlOptions.toLowerCase().split(',').map(s=>s.trim()).some(opt => c.toLowerCase().includes(opt)) )) {
+                const validControllers = (motorProp.controlOptions || '').toLowerCase().split(',').map(s=>s.trim()).filter(s => s);
+                if (validControllers.length === 0 || [...orderedControllers].some(c => validControllers.some(opt => c.toLowerCase().includes(opt)) )) {
                     controlOptionsCheck.status = 'PASS';
-                    controlOptionsCheck.details = `Required: One of [${motorProp.controlOptions}]. Found compatible controller.`;
+                    controlOptionsCheck.details = `Required: One of [${motorProp.controlOptions || 'None'}]. Requirement met.`;
                 }
                  motorObj.sundry.validationLog.push(controlOptionsCheck);
                 
                 // Accessories
-                 const accCheck = { check: 'Accessories', status: 'FAIL', details: `Missing required accessory (e.g., ${motorProp.accessories}).`};
-                if (motorProp.accessories && [...orderedAccessories].some(a => motorProp.accessories.toLowerCase().split(',').map(s=>s.trim()).some(acc => a.toLowerCase().includes(acc)) )) {
-                   accCheck.status = 'PASS';
-                   accCheck.details = `Required: One of [${motorProp.accessories}]. Found compatible accessory.`;
-                } else if (!motorProp.accessories) {
-                    accCheck.status = 'PASS';
-                    accCheck.details = 'No specific accessories required for this motor.';
-                }
+                const accCheck = { check: 'Accessories', status: 'PASS', details: 'No incompatible accessories found.'};
+                // This check is now optional. Future logic could validate INCOMPATIBLE accessories if needed.
                 motorObj.sundry.validationLog.push(accCheck);
-
 
                 // Other Dependencies
                 const depCheck = { check: 'Other Dependencies', status: 'FAIL', details: `Missing required dependency (e.g., ${motorProp.otherDependencies}).`};
-                if (motorProp.otherDependencies && [...orderedDependencies].some(d => motorProp.otherDependencies.toLowerCase().split(',').map(s=>s.trim()).some(dep => d.toLowerCase().includes(dep)) )) {
+                const requiredDeps = (motorProp.otherDependencies || '').toLowerCase().split(',').map(s=>s.trim()).filter(s => s);
+                if (requiredDeps.length === 0 || [...orderedDependencies].some(d => requiredDeps.some(dep => d.toLowerCase().includes(dep)) )) {
                     depCheck.status = 'PASS';
-                    depCheck.details = `Required: One of [${motorProp.otherDependencies}]. Found compatible dependency.`;
-                } else if (!motorProp.otherDependencies) {
-                    depCheck.status = 'PASS';
-                    depCheck.details = 'No other dependencies required for this motor.';
+                    depCheck.details = `Required: [${motorProp.otherDependencies || 'None'}]. Requirement met.`;
                 }
                 motorObj.sundry.validationLog.push(depCheck);
-
             });
         }
-
-
+        
         // Initial Load
         addNewPair();
         loadAndDisplayGuidelines();

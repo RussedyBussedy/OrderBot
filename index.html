@@ -1740,16 +1740,103 @@
         });
 
         async function getMotorProperties() {
-            if (!db) return new Map();
+            if (!db) return [];
             const propertiesRef = collection(db, 'orderbot_motor_properties');
             const snapshot = await getDocs(propertiesRef);
-            const motorMap = new Map();
+            const motorList = [];
              snapshot.forEach(doc => {
-                const data = doc.data();
-                const key = `${data.motorName.toLowerCase().trim()}|${data.blindType.toLowerCase().trim()}`;
-                motorMap.set(key, data);
+                motorList.push(doc.data());
             });
-            return motorMap;
+            return motorList;
+        }
+        
+        function validateMotorDependencies(data, motorProperties) {
+            const motorizedBlinds = (data.lineItems || []).filter(item => {
+                const control = item.control?.blindIQValue?.toLowerCase() || '';
+                return control.includes('motor') || control.includes('dual');
+            });
+
+            if (motorizedBlinds.length === 0) return; // No motors to validate
+
+            const sundries = data.sundries || [];
+            let orderedMotors = [];
+            let orderedAdapters = new Set();
+            let orderedControllers = new Set();
+            let orderedAccessories = new Set();
+            let orderedDependencies = new Set();
+
+            sundries.forEach(sundry => {
+                const desc = sundry.item.blindIQValue.toLowerCase();
+                let foundMotor = false;
+                motorProperties.forEach(prop => {
+                    if (desc.includes(prop.motorName.toLowerCase())) {
+                        for(let i=0; i < sundry.quantity; i++) orderedMotors.push(prop);
+                        foundMotor = true;
+                    }
+                });
+                
+                if (!foundMotor) {
+                    if (desc.includes('adapter')) orderedAdapters.add(sundry.item.blindIQValue);
+                    else if (desc.includes('remote') || desc.includes('switch') || desc.includes('hub')) orderedControllers.add(sundry.item.blindIQValue);
+                    else if (desc.includes('accessory')) orderedAccessories.add(sundry.item.blindIQValue);
+                    else orderedDependencies.add(sundry.item.blindIQValue);
+                }
+            });
+
+            // Global check: motor quantity
+            if (motorizedBlinds.length !== orderedMotors.length) {
+                data.motorValidation = { global: `Motor Alert: Order has ${motorizedBlinds.length} motorized blinds but ${orderedMotors.length} motors were found in sundries.` };
+                return;
+            }
+            
+            // Assign motors to blinds
+            motorizedBlinds.sort((a, b) => (parseInt(b.width?.blindIQValue) * parseInt(b.drop?.blindIQValue)) - (parseInt(a.width?.blindIQValue) * parseInt(a.drop?.blindIQValue)));
+            orderedMotors.sort((a, b) => b.torque - a.torque);
+
+            motorizedBlinds.forEach((blind, i) => {
+                const motor = orderedMotors[i];
+                if (!motor) return; // Should not happen if quantities match
+                
+                blind.motorValidation = [];
+                const blindType = blind.blindType.blindIQValue;
+                const control = blind.control.blindIQValue;
+                
+                const motorPropKey = `${motor.motorName.toLowerCase().trim()}|${blindType.toLowerCase().trim()}`;
+                const motorProp = motorProperties.find(p => `${p.motorName.toLowerCase().trim()}|${p.blindType.toLowerCase().trim()}` === motorPropKey);
+
+
+                if (!motorProp) {
+                    blind.motorValidation.push(`Motor Alert: No properties found for motor "${motor.motorName}" with blind type "${blindType}".`);
+                    return; // Can't validate further
+                }
+
+                // Adapter Kit
+                if (motorProp.adapterKit && ![...orderedAdapters].some(a => a.toLowerCase().includes(motorProp.adapterKit.toLowerCase()))) {
+                     blind.motorValidation.push(`Adapter Alert: Missing required adapter kit "${motorProp.adapterKit}".`);
+                }
+                
+                // Blind Control (Lh/Rh Motor)
+                if (motorProp.blindControl && !motorProp.blindControl.toLowerCase().split(',').map(s=>s.trim()).includes(control.toLowerCase())) {
+                     blind.motorValidation.push(`Control Alert: "${control}" is not a valid control for motor "${motor.motorName}".`);
+                }
+
+                // Control Options (Remote/Switch)
+                if (motorProp.controlOptions && ![...orderedControllers].some(c => motorProp.controlOptions.toLowerCase().split(',').map(s=>s.trim()).some(opt => c.toLowerCase().includes(opt)) )) {
+                     blind.motorValidation.push(`Controller Alert: No compatible controller (e.g., ${motorProp.controlOptions}) found in sundries.`);
+                }
+                
+                // Accessories
+                if (motorProp.accessories && ![...orderedAccessories].some(a => motorProp.accessories.toLowerCase().split(',').map(s=>s.trim()).some(acc => a.toLowerCase().includes(acc)) )) {
+                    blind.motorValidation.push(`Accessory Alert: Missing required accessory (e.g., ${motorProp.accessories}).`);
+                }
+
+                // Other Dependencies
+                if (motorProp.otherDependencies && ![...orderedDependencies].some(d => motorProp.otherDependencies.toLowerCase().split(',').map(s=>s.trim()).some(dep => d.toLowerCase().includes(dep)) )) {
+                    blind.motorValidation.push(`Dependency Alert: Missing required dependency (e.g., ${motorProp.otherDependencies}).`);
+                }
+
+                if (blind.motorValidation.length === 0) delete blind.motorValidation;
+            });
         }
 
         // Initial Load

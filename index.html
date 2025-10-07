@@ -231,6 +231,29 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- Tube Properties Section -->
+                <div id="tube-properties-section" class="bg-white rounded-lg shadow-sm overflow-hidden">
+                    <div id="tube-properties-header" class="flex justify-between items-center p-4 cursor-pointer">
+                        <h3 class="font-bold text-lg text-slate-800">Tube Properties</h3>
+                        <svg class="chevron-icon w-6 h-6 text-slate-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg>
+                    </div>
+                     <div id="tube-properties-content" class="collapsible-content">
+                        <div class="p-4 border-t border-slate-200">
+                             <label id="tube-csv-drop-zone" class="drop-zone !min-h-0 p-4 mb-3 rounded-lg flex flex-col items-center justify-center cursor-pointer bg-white shadow-sm text-center">
+                                <h3 class="text-base font-semibold text-slate-700">Upload CSV to Replace All</h3>
+                                <p class="text-xs text-slate-500">Drag & drop new CSV here, or click to upload</p>
+                                <input type="file" id="tube-csv-upload" class="hidden" accept=".csv">
+                            </label>
+                            <div id="tube-properties-list" class="space-y-2">
+                                <!-- Tube properties will be loaded here -->
+                            </div>
+                             <button id="add-tube-btn" class="w-full mt-4 bg-green-100 text-green-700 font-bold py-2 px-4 rounded-lg hover:bg-green-200 transition-colors text-sm">
+                                Add New Tube
+                            </button>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <!-- History Section -->
@@ -422,6 +445,13 @@
             motorCsvUpload: document.getElementById('motor-csv-upload'),
             motorCsvDropZone: document.getElementById('motor-csv-drop-zone'),
             addMotorBtn: document.getElementById('add-motor-btn'),
+            tubePropertiesSection: document.getElementById('tube-properties-section'),
+            tubePropertiesHeader: document.getElementById('tube-properties-header'),
+            tubePropertiesContent: document.getElementById('tube-properties-content'),
+            tubePropertiesList: document.getElementById('tube-properties-list'),
+            tubeCsvUpload: document.getElementById('tube-csv-upload'),
+            tubeCsvDropZone: document.getElementById('tube-csv-drop-zone'),
+            addTubeBtn: document.getElementById('add-tube-btn'),
             confirmModal: document.getElementById('confirm-modal'),
             confirmModalTitle: document.getElementById('confirm-modal-title'),
             confirmModalBody: document.getElementById('confirm-modal-body'),
@@ -608,18 +638,19 @@
             summaryResultsCache = [];
             let failedPairs = [];
 
-            // Fetch fabric properties once for the whole batch
+            // Fetch properties once for the whole batch
             batchStatus.textContent = 'Fetching properties...';
-            const [fabricProperties, motorProperties] = await Promise.all([
+            const [fabricProperties, motorProperties, tubeProperties] = await Promise.all([
                 getFabricProperties(),
-                getMotorProperties()
+                getMotorProperties(),
+                getTubeProperties()
             ]);
 
             for (let i = 0; i < comparisonPairs.length; i++) {
                 batchStatus.textContent = `Processing order ${i + 1} of ${comparisonPairs.length}...`;
                 try {
                     let result = await processSingleComparison(comparisonPairs[i]);
-                    result = runPostAIValidations(result, fabricProperties, motorProperties);
+                    result = runPostAIValidations(result, fabricProperties, motorProperties, tubeProperties);
                     summaryResultsCache.push({ status: 'success', data: result });
                 } catch (error) {
                     console.error(`Failed comparison for pair ${i}:`, error);
@@ -633,7 +664,7 @@
                  for (let i = 0; i < failedPairs.length; i++) {
                       try {
                           let result = await processSingleComparison(failedPairs[i].pair);
-                          result = runPostAIValidations(result, fabricProperties, motorProperties);
+                          result = runPostAIValidations(result, fabricProperties, motorProperties, tubeProperties);
                           summaryResultsCache[failedPairs[i].originalIndex] = { status: 'success', data: result };
                       } catch (error) {
                           console.error(`Retry failed for pair ${failedPairs[i].originalIndex}:`, error);
@@ -795,7 +826,7 @@
                     // Check for mismatches, omissions, or any validation alerts
                     if (data.motorValidation) hasAlert = true;
                     (data.lineItems || []).forEach(item => {
-                        if (item.fabricValidation || item.colourValidation || item.motorValidation) hasAlert = true;
+                        if (item.fabricValidation || item.colourValidation || item.motorValidation || item.torqueValidation) hasAlert = true;
                         Object.values(item).forEach(field => {
                             if (field && (field.result === 'MISMATCH' || field.result === 'OMISSION')) hasMismatch = true;
                         });
@@ -991,11 +1022,9 @@
                      const alertClass = 'bg-red-100 text-red-800'; // Always an error for colour
                     validationHtml += `<div class="p-2 text-sm font-semibold ${alertClass} flex items-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.21 3.03-1.742 3.03H4.42c-1.532 0-2.492-1.696-1.742-3.03l5.58-9.92zM10 13a1 1 0 110-2 1 1 0 010 2zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" /></svg> ${lineItem.colourValidation.message}</div>`;
                 }
-                if (lineItem.motorValidation) {
+                if (lineItem.torqueValidation) {
                     const alertClass = 'bg-red-100 text-red-800';
-                    lineItem.motorValidation.forEach(msg => {
-                         validationHtml += `<div class="p-2 text-sm font-semibold ${alertClass} flex items-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.21 3.03-1.742 3.03H4.42c-1.532 0-2.492-1.696-1.742-3.03l5.58-9.92zM10 13a1 1 0 110-2 1 1 0 010 2zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" /></svg> ${msg}</div>`;
-                    });
+                    validationHtml += `<div class="p-2 text-sm font-semibold ${alertClass} flex items-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.21 3.03-1.742 3.03H4.42c-1.532 0-2.492-1.696-1.742-3.03l5.58-9.92zM10 13a1 1 0 110-2 1 1 0 010 2zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" /></svg> ${lineItem.torqueValidation.message}</div>`;
                 }
 
 
@@ -1054,7 +1083,6 @@
                     if (sundry.validationLog) { // It's a validated motor
                         const hasErrors = sundry.validationLog.some(log => log.status === 'FAIL');
                         const headerClass = hasErrors ? 'bg-red-50' : 'bg-green-50';
-                        const textClass = hasErrors ? 'text-red-800 font-semibold' : 'text-green-800 font-semibold';
                         const badgeClass = hasErrors ? 'bg-red-200 text-red-800' : 'bg-green-200 text-green-800';
 
                         let detailsHtml = '<ul class="p-2 space-y-1 text-xs">';
@@ -1525,7 +1553,7 @@
             return fabricMap;
         }
 
-        function runPostAIValidations(comparisonData, fabricProperties, motorProperties) {
+        function runPostAIValidations(comparisonData, fabricProperties, motorProperties, tubeProperties) {
             if (!comparisonData) return comparisonData;
         
             if (comparisonData.lineItems) {
@@ -1573,14 +1601,14 @@
             }
 
             // --- 3. Motor & Sundries Validation ---
-            if (motorProperties && motorProperties.length > 0 && comparisonData.sundries) {
-                 validateMotorDependencies(comparisonData, motorProperties);
+            if (motorProperties && motorProperties.length > 0 && comparisonData.sundries && tubeProperties) {
+                 validateMotorDependencies(comparisonData, motorProperties, tubeProperties, fabricProperties);
             }
 
             return comparisonData;
         }
         
-        function validateMotorDependencies(data, motorProperties) {
+        function validateMotorDependencies(data, motorProperties, tubeProperties, fabricProperties) {
             const motorizedBlinds = (data.lineItems || []).filter(item => {
                 const control = item.control?.blindIQValue?.toLowerCase() || '';
                 return control.includes('motor') || control.includes('dual');
@@ -1621,7 +1649,11 @@
                 return;
             }
             
-            motorizedBlinds.sort((a, b) => (parseInt(b.width?.blindIQValue) * parseInt(b.drop?.blindIQValue)) - (parseInt(a.width?.blindIQValue) * parseInt(a.drop?.blindIQValue)));
+            motorizedBlinds.forEach(blind => {
+                blind.calculatedArea = (parseInt(blind.width?.blindIQValue) / 1000) * (parseInt(blind.drop?.blindIQValue) / 1000);
+            });
+
+            motorizedBlinds.sort((a, b) => b.calculatedArea - a.calculatedArea);
             orderedMotors.sort((a, b) => {
                 const maxTorqueA = Math.max(...a.potentialProps.map(p => p.torque));
                 const maxTorqueB = Math.max(...b.potentialProps.map(p => p.torque));
@@ -1643,52 +1675,74 @@
                 
                 const motorProp = motorObj.potentialProps.find(p => p.blindType.toLowerCase().trim() === blindType.toLowerCase().trim());
 
-                motorObj.sundry.validationLog = [];
+                if (!blind.motorValidation) blind.motorValidation = [];
 
                 if (!motorProp) {
-                    motorObj.sundry.validationLog.push({ check: 'Motor Compatibility', status: 'FAIL', details: `No properties found for motor "${motorObj.potentialProps[0].motorName}" compatible with blind type "${blindType}".`});
+                    blind.motorValidation.push(`Motor Alert: No properties found for motor "${motorObj.potentialProps[0].motorName}" compatible with blind type "${blindType}".`);
                     return;
                 }
 
-                const checkListItem = (orderedItems, requiredItemsString, checkName, itemName) => {
-                    const requiredItems = (requiredItemsString || '').toLowerCase().split(',').map(s => s.trim()).filter(s => s);
-                    const check = { check: checkName, status: 'FAIL', details: `Missing required ${itemName} (e.g., ${requiredItemsString}).`};
-                    if (requiredItems.length === 0 || [...orderedItems].some(ordered => requiredItems.some(req => ordered.toLowerCase().includes(req)))) {
-                        check.status = 'PASS';
-                        check.details = `Required: [${requiredItemsString || 'None'}]. Requirement met.`;
+                // Torque Calculation
+                const fabric = fabricProperties.get(blind.range.blindIQValue.toLowerCase().trim());
+                const tube = tubeProperties.get(blind.blindType.blindIQValue.toLowerCase().trim());
+
+                if (fabric && tube) {
+                    const blindWidthM = parseInt(blind.width.blindIQValue) / 1000;
+                    const blindDropM = parseInt(blind.drop.blindIQValue) / 1000;
+                    
+                    const fabricWeight = blindWidthM * blindDropM * fabric.fabricWeight;
+                    const bottomBarWeight = blindWidthM * 0.280; // 280g per meter
+                    const totalWeightKg = fabricWeight + bottomBarWeight;
+                    
+                    const tubeRadiusM = (tube.tubeDiameter / 1000) / 2;
+                    const requiredTorque = (totalWeightKg * 9.81 * tubeRadiusM).toFixed(2);
+                    
+                    blind.requiredTorque = requiredTorque;
+
+                    if (motorProp.torque < requiredTorque) {
+                         blind.torqueValidation = { message: `Torque Alert: Motor's torque (${motorProp.torque} Nm) is insufficient for this blind's calculated required torque of ${requiredTorque} Nm.` };
                     }
-                    return check;
+                }
+
+                const checkListItem = (orderedItems, requiredItemsString) => {
+                    const requiredItems = (requiredItemsString || '').toLowerCase().split(',').map(s => s.trim()).filter(s => s);
+                    if (requiredItems.length === 0) return { pass: true };
+                    const foundItem = [...orderedItems].find(ordered => requiredItems.some(req => ordered.toLowerCase().includes(req)));
+                    return { pass: !!foundItem, found: foundItem };
                 };
 
-                motorObj.sundry.validationLog.push(checkListItem(orderedAdapters, motorProp.adapterKit, 'Adapter Kit', 'adapter kit'));
-
-                const blindControlCheck = { check: 'Blind Control Side', status: 'FAIL', details: `Blind control "${blind.control.blindIQValue}" is not valid for motor "${motorProp.motorName}". Valid options: [${motorProp.blindControl}]` };
+                const adapterCheck = checkListItem(orderedAdapters, motorProp.adapterKit);
+                if (!adapterCheck.pass) {
+                     blind.motorValidation.push(`Adapter Alert: Missing required adapter kit (e.g., "${motorProp.adapterKit}").`);
+                }
+                
                 const validBlindControls = (motorProp.blindControl || '').toLowerCase().split(',').map(s=>s.trim());
-                if (validBlindControls.length === 0 || blindControl.some(c => validBlindControls.includes(c))) {
-                    blindControlCheck.status = 'PASS';
-                    blindControlCheck.details = `Required: One of [${motorProp.blindControl || 'Any'}]. Found "${blind.control.blindIQValue}". Matched.`;
+                if (validBlindControls.length > 0 && !blindControl.some(c => validBlindControls.includes(c))) {
+                     blind.motorValidation.push(`Control Alert: "${blind.control.blindIQValue}" is not a valid control for motor "${motorProp.motorName}". Valid options: [${motorProp.blindControl}]`);
                 }
-                motorObj.sundry.validationLog.push(blindControlCheck);
 
-                motorObj.sundry.validationLog.push(checkListItem(orderedControllers, motorProp.controlOptions, 'Controller Device', 'controller'));
-                
-                const accCheck = { check: 'Accessories', status: 'PASS', details: 'No incompatible accessories found.'};
-                if (motorProp.accessories) {
-                    const validAccessories = motorProp.accessories.toLowerCase().split(',').map(s => s.trim()).filter(s => s);
-                    const orderedAccessoryItems = [...orderedAccessories];
-                    const incompatibleAcc = orderedAccessoryItems.find(ordered => !validAccessories.some(valid => ordered.toLowerCase().includes(valid)));
-
-                    if (incompatibleAcc) {
-                        accCheck.status = 'FAIL';
-                        accCheck.details = `Incompatible accessory found: "${incompatibleAcc}". Valid options are: [${motorProp.accessories}]`;
-                    }
+                const controllerCheck = checkListItem(orderedControllers, motorProp.controlOptions);
+                if (!controllerCheck.pass) {
+                    blind.motorValidation.push(`Controller Alert: No compatible controller (e.g., ${motorProp.controlOptions}) found in sundries.`);
                 }
-                motorObj.sundry.validationLog.push(accCheck);
                 
-                motorObj.sundry.validationLog.push(checkListItem(orderedDependencies, motorProp.otherDependencies, 'Other Dependencies', 'dependency'));
+                const accessories = (motorProp.accessories || '').toLowerCase().split(',').map(s => s.trim()).filter(s => s);
+                if (accessories.length > 0) {
+                     const incompatibleAcc = [...orderedAccessories].find(ordered => !accessories.some(valid => ordered.toLowerCase().includes(valid)));
+                     if (incompatibleAcc) {
+                         blind.motorValidation.push(`Accessory Alert: Incompatible accessory found: "${incompatibleAcc}". Valid options are: [${motorProp.accessories}]`);
+                     }
+                }
+
+                const dependencyCheck = checkListItem(orderedDependencies, motorProp.otherDependencies);
+                if (!dependencyCheck.pass) {
+                    blind.motorValidation.push(`Dependency Alert: Missing required dependency (e.g., ${motorProp.otherDependencies}).`);
+                }
+
+                if (blind.motorValidation.length === 0) delete blind.motorValidation;
             });
         }
-
+        
         // --- MOTOR PROPERTIES ---
         function setupMotorDropZone() {
             const dropZone = allDomElements.motorCsvDropZone;
@@ -1899,17 +1953,206 @@
             });
             return motorList;
         }
+
+        // --- TUBE PROPERTIES ---
+        function setupTubeDropZone() {
+            const dropZone = allDomElements.tubeCsvDropZone;
+            dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+            dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+            dropZone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                dropZone.classList.remove('drag-over');
+                const file = e.dataTransfer.files[0];
+                if (file && file.name.endsWith('.csv')) {
+                    showConfirmModal("This will delete all existing tube properties and replace them with this file's contents. Are you sure?", () => {
+                        processTubeFile(file);
+                    });
+                }
+            });
+        }
+
+        function processTubeFile(file) {
+            const listEl = allDomElements.tubePropertiesList;
+            listEl.innerHTML = `<div class="flex items-center justify-center gap-2 text-slate-600"><div class="loader !w-5 !h-5 !border-2"></div>Processing CSV...</div>`;
+
+            try {
+                const reader = new FileReader();
+                reader.onload = async (e) => {
+                    const text = e.target.result;
+                    const parsedData = parseCsvAndExtractTubeData(text);
+                    if (parsedData.length === 0) throw new Error("CSV is empty or could not be parsed correctly.");
+
+                    await uploadTubeProperties(parsedData);
+                    await loadAndDisplayTubeProperties();
+                };
+                reader.readAsText(file);
+            } catch (error) {
+                console.error("Error processing tube CSV:", error);
+                listEl.innerHTML = `<p class="text-red-500 text-center">Error: ${error.message}</p>`;
+            }
+        }
+
+        allDomElements.tubeCsvUpload.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (file) {
+                showConfirmModal("This will delete all existing tube properties and replace them with this file's contents. Are you sure?", () => {
+                    processTubeFile(file);
+                });
+            }
+            event.target.value = '';
+        });
+
+        function parseCsvAndExtractTubeData(text) {
+             const rows = text.replace(/\r\n/g, '\n').split('\n').filter(row => row.trim() !== '');
+            if (rows.length < 2) return [];
+
+            const header = rows[0];
+            const delimiter = header.includes(';') ? ';' : ',';
+            
+            const data = [];
+            for (let i = 1; i < rows.length; i++) {
+                const rowText = rows[i];
+                if (!rowText.trim()) continue;
+
+                const columns = rowText.split(delimiter).map(cell => cell.trim().replace(/^"|"$/g, ''));
+
+                if (columns.length >= 2) {
+                    const blindType = columns[0];
+                    const tubeDiameter = parseInt(columns[1], 10);
+
+                    if (blindType && !isNaN(tubeDiameter)) {
+                        data.push({ blindType, tubeDiameter });
+                    } else {
+                        console.warn('Skipping malformed Tube CSV row:', rowText);
+                    }
+                }
+            }
+            return data;
+        }
+
+        async function uploadTubeProperties(tubeData) {
+            if (!db) throw new Error("Database not connected.");
+
+            const propertiesRef = collection(db, 'orderbot_tube_properties');
+            const oldDocsSnapshot = await getDocs(propertiesRef);
+            const deleteBatch = writeBatch(db);
+            oldDocsSnapshot.forEach(doc => deleteBatch.delete(doc.ref));
+            await deleteBatch.commit();
+
+            const addBatch = writeBatch(db);
+            tubeData.forEach(tube => {
+                const newDocRef = doc(propertiesRef);
+                addBatch.set(newDocRef, tube);
+            });
+            await addBatch.commit();
+        }
+
+        async function loadAndDisplayTubeProperties() {
+            if (!db) return;
+            const listEl = allDomElements.tubePropertiesList;
+            listEl.innerHTML = `<div class="flex items-center justify-center gap-2 text-slate-600"><div class="loader !w-5 !h-5 !border-2"></div>Loading tubes...</div>`;
+
+            const propertiesRef = collection(db, 'orderbot_tube_properties');
+            const snapshot = await getDocs(propertiesRef);
+
+            listEl.innerHTML = '';
+            if (snapshot.empty) {
+                listEl.innerHTML = '<p class="text-slate-400 italic text-center">No tube properties loaded.</p>';
+                return;
+            }
+
+            snapshot.docs.sort((a, b) => a.data().blindType.localeCompare(b.data().blindType)).forEach(doc => {
+                renderTubeRow(doc.id, doc.data());
+            });
+        }
+        
+        function renderTubeRow(id, data, isNew = false) {
+             const listEl = allDomElements.tubePropertiesList;
+            const tubeRow = document.createElement('div');
+            tubeRow.className = 'tube-row p-2 bg-slate-50 rounded-lg grid grid-cols-[1fr,auto,auto] items-center gap-2';
+            tubeRow.dataset.id = id;
+
+            tubeRow.innerHTML = `
+                <input type="text" value="${data.blindType || ''}" placeholder="Blind Type" class="tube-blindtype-input w-full p-1 border rounded text-sm font-semibold">
+                <input type="number" value="${data.tubeDiameter || ''}" placeholder="Diameter (mm)" class="tube-diameter-input w-32 p-1 border rounded text-sm">
+                <div class="flex gap-2">
+                    <button class="save-tube-btn bg-blue-500 text-white text-xs font-bold py-1 px-3 rounded hover:bg-blue-600">${isNew ? 'Add' : 'Save'}</button>
+                    ${isNew ? `<button class="cancel-new-tube-btn bg-gray-200 text-gray-700 text-xs font-bold py-1 px-3 rounded hover:bg-gray-300">Cancel</button>` : `<button class="delete-tube-btn text-red-400 hover:text-red-600 font-bold text-lg">&times;</button>`}
+                </div>
+            `;
+            listEl.appendChild(tubeRow);
+            
+             tubeRow.querySelector('.save-tube-btn').addEventListener('click', async () => {
+                const dataToSave = {
+                    blindType: tubeRow.querySelector('.tube-blindtype-input').value.trim(),
+                    tubeDiameter: parseInt(tubeRow.querySelector('.tube-diameter-input').value, 10),
+                };
+
+                if (!dataToSave.blindType || isNaN(dataToSave.tubeDiameter)) {
+                    alert("Please provide a valid Blind Type and Tube Diameter.");
+                    return;
+                }
+
+                try {
+                    if (isNew) {
+                        await addDoc(collection(db, 'orderbot_tube_properties'), dataToSave);
+                    } else {
+                        await updateDoc(doc(db, 'orderbot_tube_properties', id), dataToSave);
+                    }
+                    loadAndDisplayTubeProperties();
+                } catch (error) {
+                    console.error("Error saving tube:", error);
+                    alert("Could not save tube properties.");
+                }
+            });
+            
+             if (isNew) {
+                tubeRow.querySelector('.cancel-new-tube-btn').addEventListener('click', () => tubeRow.remove());
+            } else {
+                tubeRow.querySelector('.delete-tube-btn').addEventListener('click', () => {
+                    showConfirmModal(`Are you sure you want to delete the tube for "${data.blindType}"?`, async () => {
+                        try {
+                            await deleteDoc(doc(db, 'orderbot_tube_properties', id));
+                            loadAndDisplayTubeProperties();
+                        } catch (error) {
+                            console.error("Error deleting tube:", error);
+                            alert("Could not delete tube property.");
+                        }
+                    });
+                });
+            }
+        }
+        
+        allDomElements.addTubeBtn.addEventListener('click', () => {
+            renderTubeRow(null, {}, true);
+        });
+
+         async function getTubeProperties() {
+            if (!db) return new Map();
+            const propertiesRef = collection(db, 'orderbot_tube_properties');
+            const snapshot = await getDocs(propertiesRef);
+            const tubeMap = new Map();
+            snapshot.forEach(doc => {
+                const data = doc.data();
+                tubeMap.set(data.blindType.toLowerCase().trim(), data);
+            });
+            return tubeMap;
+        }
+
         
         // Initial Load
         addNewPair();
         loadAndDisplayGuidelines();
         loadAndDisplayFabricProperties();
-        loadAndDisplayMotorProperties(); // New
+        loadAndDisplayMotorProperties();
+        loadAndDisplayTubeProperties();
         setupCollapsible(allDomElements.guidelinesHeader, allDomElements.guidelinesContent);
         setupCollapsible(allDomElements.fabricPropertiesHeader, allDomElements.fabricPropertiesContent);
-        setupCollapsible(allDomElements.motorPropertiesHeader, allDomElements.motorPropertiesContent); // New
+        setupCollapsible(allDomElements.motorPropertiesHeader, allDomElements.motorPropertiesContent);
+        setupCollapsible(allDomElements.tubePropertiesHeader, allDomElements.tubePropertiesContent);
         setupFabricDropZone();
-        setupMotorDropZone(); // New
+        setupMotorDropZone();
+        setupTubeDropZone();
 
     </script>
 </body>

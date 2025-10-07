@@ -1586,7 +1586,7 @@
                 return control.includes('motor') || control.includes('dual');
             });
 
-            if (motorizedBlinds.length === 0) return; // No motors to validate
+            if (motorizedBlinds.length === 0) return;
 
             const sundries = data.sundries || [];
             let orderedMotors = [];
@@ -1599,9 +1599,9 @@
                 const desc = sundry.item.blindIQValue.toLowerCase();
                 let isMotor = false;
                 
-                 const matchingProps = motorProperties.filter(prop => desc.includes(prop.motorName.toLowerCase()));
+                const matchingProps = motorProperties.filter(prop => desc.includes(prop.motorName.toLowerCase()));
 
-                if (matchingProps.length > 0) {
+                if (matchingProps.length > 0 && desc.includes('motor')) {
                      for(let i=0; i < sundry.quantity; i++) {
                         orderedMotors.push({ sundry: sundry, potentialProps: matchingProps, assignedBlind: null });
                      }
@@ -1649,7 +1649,8 @@
                     motorObj.sundry.validationLog.push({ check: 'Motor Compatibility', status: 'FAIL', details: `No properties found for motor "${motorObj.potentialProps[0].motorName}" compatible with blind type "${blindType}".`});
                     return;
                 }
-                 const checkListItem = (orderedItems, requiredItemsString, checkName, itemName) => {
+
+                const checkListItem = (orderedItems, requiredItemsString, checkName, itemName) => {
                     const requiredItems = (requiredItemsString || '').toLowerCase().split(',').map(s => s.trim()).filter(s => s);
                     const check = { check: checkName, status: 'FAIL', details: `Missing required ${itemName} (e.g., ${requiredItemsString}).`};
                     if (requiredItems.length === 0 || [...orderedItems].some(ordered => requiredItems.some(req => ordered.toLowerCase().includes(req)))) {
@@ -1658,7 +1659,6 @@
                     }
                     return check;
                 };
-
 
                 motorObj.sundry.validationLog.push(checkListItem(orderedAdapters, motorProp.adapterKit, 'Adapter Kit', 'adapter kit'));
 
@@ -1672,21 +1672,23 @@
 
                 motorObj.sundry.validationLog.push(checkListItem(orderedControllers, motorProp.controlOptions, 'Controller Device', 'controller'));
                 
-                // Accessories are optional, so we only validate if one is ordered
-                const orderedAccessory = [...orderedAccessories].find(ordered => (motorProp.accessories || '').toLowerCase().split(',').map(s=>s.trim()).some(acc => ordered.toLowerCase().includes(acc)));
-                const accCheck = { check: 'Accessories', status: 'PASS', details: 'No accessories required or ordered.' };
-                if (motorProp.accessories && orderedAccessory) {
-                    accCheck.details = `Found compatible accessory: ${orderedAccessory}`;
-                } else if ([...orderedAccessories].length > 0 && !orderedAccessory) {
-                    accCheck.status = 'FAIL';
-                    accCheck.details = `An ordered accessory is not compatible. Valid options: [${motorProp.accessories}]`;
+                const accCheck = { check: 'Accessories', status: 'PASS', details: 'No incompatible accessories found.'};
+                if (motorProp.accessories) {
+                    const validAccessories = motorProp.accessories.toLowerCase().split(',').map(s => s.trim()).filter(s => s);
+                    const orderedAccessoryItems = [...orderedAccessories];
+                    const incompatibleAcc = orderedAccessoryItems.find(ordered => !validAccessories.some(valid => ordered.toLowerCase().includes(valid)));
+
+                    if (incompatibleAcc) {
+                        accCheck.status = 'FAIL';
+                        accCheck.details = `Incompatible accessory found: "${incompatibleAcc}". Valid options are: [${motorProp.accessories}]`;
+                    }
                 }
                 motorObj.sundry.validationLog.push(accCheck);
                 
                 motorObj.sundry.validationLog.push(checkListItem(orderedDependencies, motorProp.otherDependencies, 'Other Dependencies', 'dependency'));
-
             });
         }
+
         // --- MOTOR PROPERTIES ---
         function setupMotorDropZone() {
             const dropZone = allDomElements.motorCsvDropZone;

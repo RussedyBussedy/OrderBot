@@ -1649,46 +1649,42 @@
                     motorObj.sundry.validationLog.push({ check: 'Motor Compatibility', status: 'FAIL', details: `No properties found for motor "${motorObj.potentialProps[0].motorName}" compatible with blind type "${blindType}".`});
                     return;
                 }
+                 const checkListItem = (orderedItems, requiredItemsString, checkName, itemName) => {
+                    const requiredItems = (requiredItemsString || '').toLowerCase().split(',').map(s => s.trim()).filter(s => s);
+                    const check = { check: checkName, status: 'FAIL', details: `Missing required ${itemName} (e.g., ${requiredItemsString}).`};
+                    if (requiredItems.length === 0 || [...orderedItems].some(ordered => requiredItems.some(req => ordered.toLowerCase().includes(req)))) {
+                        check.status = 'PASS';
+                        check.details = `Required: [${requiredItemsString || 'None'}]. Requirement met.`;
+                    }
+                    return check;
+                };
 
-                // Adapter Kit
-                const adapterCheck = { check: 'Adapter Kit', status: 'FAIL', details: `Missing required adapter kit "${motorProp.adapterKit}".` };
-                if (!motorProp.adapterKit || [...orderedAdapters].some(a => a.toLowerCase().includes(motorProp.adapterKit.toLowerCase()))) {
-                    adapterCheck.status = 'PASS';
-                    adapterCheck.details = `Required: "${motorProp.adapterKit || 'None'}". Requirement met.`;
-                }
-                motorObj.sundry.validationLog.push(adapterCheck);
-                
-                // Blind Control Side
+
+                motorObj.sundry.validationLog.push(checkListItem(orderedAdapters, motorProp.adapterKit, 'Adapter Kit', 'adapter kit'));
+
                 const blindControlCheck = { check: 'Blind Control Side', status: 'FAIL', details: `Blind control "${blind.control.blindIQValue}" is not valid for motor "${motorProp.motorName}". Valid options: [${motorProp.blindControl}]` };
                 const validBlindControls = (motorProp.blindControl || '').toLowerCase().split(',').map(s=>s.trim());
                 if (validBlindControls.length === 0 || blindControl.some(c => validBlindControls.includes(c))) {
                     blindControlCheck.status = 'PASS';
                     blindControlCheck.details = `Required: One of [${motorProp.blindControl || 'Any'}]. Found "${blind.control.blindIQValue}". Matched.`;
                 }
-                 motorObj.sundry.validationLog.push(blindControlCheck);
+                motorObj.sundry.validationLog.push(blindControlCheck);
 
-                // Control Options (Remote/Switch)
-                const controlOptionsCheck = { check: 'Controller Device', status: 'FAIL', details: `No compatible controller (e.g., ${motorProp.controlOptions}) found in sundries.`};
-                const validControllers = (motorProp.controlOptions || '').toLowerCase().split(',').map(s=>s.trim()).filter(s => s);
-                if (validControllers.length === 0 || [...orderedControllers].some(c => validControllers.some(opt => c.toLowerCase().includes(opt)) )) {
-                    controlOptionsCheck.status = 'PASS';
-                    controlOptionsCheck.details = `Required: One of [${motorProp.controlOptions || 'None'}]. Requirement met.`;
-                }
-                 motorObj.sundry.validationLog.push(controlOptionsCheck);
+                motorObj.sundry.validationLog.push(checkListItem(orderedControllers, motorProp.controlOptions, 'Controller Device', 'controller'));
                 
-                // Accessories
-                const accCheck = { check: 'Accessories', status: 'PASS', details: 'No incompatible accessories found.'};
-                // This check is now optional. Future logic could validate INCOMPATIBLE accessories if needed.
-                motorObj.sundry.validationLog.push(accCheck);
-
-                // Other Dependencies
-                const depCheck = { check: 'Other Dependencies', status: 'FAIL', details: `Missing required dependency (e.g., ${motorProp.otherDependencies}).`};
-                const requiredDeps = (motorProp.otherDependencies || '').toLowerCase().split(',').map(s=>s.trim()).filter(s => s);
-                if (requiredDeps.length === 0 || [...orderedDependencies].some(d => requiredDeps.some(dep => d.toLowerCase().includes(dep)) )) {
-                    depCheck.status = 'PASS';
-                    depCheck.details = `Required: [${motorProp.otherDependencies || 'None'}]. Requirement met.`;
+                // Accessories are optional, so we only validate if one is ordered
+                const orderedAccessory = [...orderedAccessories].find(ordered => (motorProp.accessories || '').toLowerCase().split(',').map(s=>s.trim()).some(acc => ordered.toLowerCase().includes(acc)));
+                const accCheck = { check: 'Accessories', status: 'PASS', details: 'No accessories required or ordered.' };
+                if (motorProp.accessories && orderedAccessory) {
+                    accCheck.details = `Found compatible accessory: ${orderedAccessory}`;
+                } else if ([...orderedAccessories].length > 0 && !orderedAccessory) {
+                    accCheck.status = 'FAIL';
+                    accCheck.details = `An ordered accessory is not compatible. Valid options: [${motorProp.accessories}]`;
                 }
-                motorObj.sundry.validationLog.push(depCheck);
+                motorObj.sundry.validationLog.push(accCheck);
+                
+                motorObj.sundry.validationLog.push(checkListItem(orderedDependencies, motorProp.otherDependencies, 'Other Dependencies', 'dependency'));
+
             });
         }
         // --- MOTOR PROPERTIES ---
@@ -1916,5 +1912,4 @@
     </script>
 </body>
 </html>
-
 

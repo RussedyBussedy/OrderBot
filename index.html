@@ -466,6 +466,20 @@
             'curtain motion'
         ];
 
+        const BLIND_TYPES_REQUIRING_CONTROL_VALIDATION = [
+            'element roller',
+            'roller system 40',
+            'roller system 55',
+            'element vison',
+            'vision blind',
+            'romashade',
+            'outdoor channel x',
+            'outdoor free hang',
+            'outdoor zip x',
+            'outdoor wire x',
+            'outdoor widescreen'
+        ];
+
         const fileToB64 = (file) => new Promise((resolve, reject) => {
             const reader = new FileReader();
             reader.readAsDataURL(file);
@@ -1607,10 +1621,14 @@
 
                     // --- NEW 3. Control Configuration Validation ---
                     const controlValue = item.control?.blindIQValue?.toLowerCase() || '';
-                    const hasValidControl = controlValue.includes('chain') || controlValue.includes('motor') || controlValue.includes('dual');
+                    const blindTypeForControlCheck = item.blindType?.blindIQValue?.toLowerCase().trim();
 
-                    if (!hasValidControl) {
-                        item.controlValidation = { type: 'error', message: `Control Alert: Invalid configuration. Each blind must have a 'chain', 'motor', or 'dual' control.` };
+                    if (blindTypeForControlCheck && BLIND_TYPES_REQUIRING_CONTROL_VALIDATION.includes(blindTypeForControlCheck)) {
+                        const hasValidControl = controlValue.includes('chain') || controlValue.includes('motor') || controlValue.includes('dual');
+
+                        if (!hasValidControl) {
+                            item.controlValidation = { type: 'error', message: `Control Alert: Invalid configuration. Each blind must have a 'chain', 'motor', or 'dual' control.` };
+                        }
                     }
                 });
             }

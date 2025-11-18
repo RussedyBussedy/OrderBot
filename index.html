@@ -804,7 +804,8 @@
             };
 
             const geminiPayload = { contents: [{ role: "user", parts: parts }], generationConfig: { responseMimeType: "application/json", responseSchema: schema } };
-            const proxyPayload = { model: 'gemini-2.5-pro', payload: geminiPayload };
+            // UPDATE: Switched to 'gemini-3.0-pro' as requested
+            const proxyPayload = { model: 'gemini-3.0-pro', payload: geminiPayload };
             const response = await fetch(PROXY_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proxyPayload) });
             const resultText = await response.text();
             if (!response.ok) {
@@ -1033,7 +1034,7 @@
                     validationHtml += `<div class="p-2 text-sm font-semibold ${alertClass} flex items-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.21 3.03-1.742 3.03H4.42c-1.532 0-2.492-1.696-1.742-3.03l5.58-9.92zM10 13a1 1 0 110-2 1 1 0 010 2zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" /></svg> ${lineItem.fabricValidation.message}</div>`;
                 }
                 if(lineItem.colourValidation) {
-                     const alertClass = 'bg-red-100 text-red-800'; // Always an error for colour
+                      const alertClass = 'bg-red-100 text-red-800'; // Always an error for colour
                     validationHtml += `<div class="p-2 text-sm font-semibold ${alertClass} flex items-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.21 3.03-1.742 3.03H4.42c-1.532 0-2.492-1.696-1.742-3.03l5.58-9.92zM10 13a1 1 0 110-2 1 1 0 010 2zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" /></svg> ${lineItem.colourValidation.message}</div>`;
                 }
                 if (lineItem.controlValidation) {
@@ -1164,7 +1165,8 @@
                 if (pastedImageB64) { enhancementParts.push({ inlineData: { mimeType: 'image/png', data: pastedImageB64.split(',')[1] } }); }
 
                 const geminiPayload = { contents: [{ role: "user", parts: enhancementParts }] };
-                const proxyPayload = { model: 'gemini-2.5-flash', payload: geminiPayload };
+                // Using 'gemini-3.0-pro' for consistency across all LLM tasks.
+                const proxyPayload = { model: 'gemini-3.0-pro', payload: geminiPayload };
                 
                 const response = await fetch(PROXY_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proxyPayload) });
                 if (!response.ok) throw new Error('Failed to enhance explanation.');
@@ -1273,7 +1275,8 @@
                 
                 const enhancementSchema = { type: "OBJECT", properties: { "guidelines": { type: "ARRAY", items: { "type": "STRING" } } }, required: ["guidelines"] };
                 const geminiPayload = { contents: [{ role: "user", parts: [{ text: enhancementPrompt }] }], generationConfig: { responseMimeType: "application/json", responseSchema: enhancementSchema } };
-                const proxyPayload = { model: 'gemini-2.5-flash', payload: geminiPayload };
+                // Using 'gemini-3.0-pro' for consistency across all LLM tasks.
+                const proxyPayload = { model: 'gemini-3.0-pro', payload: geminiPayload };
                 
                 const response = await fetch(PROXY_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proxyPayload) });
                 if (!response.ok) throw new Error('Load failed');
@@ -2179,6 +2182,7 @@
         loadAndDisplayFabricProperties();
         loadAndDisplayMotorProperties();
         loadAndDisplayTubeProperties();
+        // The following calls ensure the collapsible menus are set up correctly:
         setupCollapsible(allDomElements.guidelinesHeader, allDomElements.guidelinesContent);
         setupCollapsible(allDomElements.fabricPropertiesHeader, allDomElements.fabricPropertiesContent);
         setupCollapsible(allDomElements.motorPropertiesHeader, allDomElements.motorPropertiesContent);
@@ -2190,4 +2194,3 @@
     </script>
 </body>
 </html>
-

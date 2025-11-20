@@ -127,19 +127,34 @@
             transition: max-height 0.5s ease-in-out;
         }
 
-        /* Collapsible Section Styles */
-        .collapsible-content {
-            max-height: 0;
-            overflow: hidden;
-            transition: max-height 0.3s ease-out;
+        /* Active Tab Styles */
+        .active-tab {
+            border-bottom-color: #4f46e5;
+            color: #4f46e5;
         }
-        .chevron-icon {
-            transition: transform 0.3s ease-out;
+
+        /* Rule Builder Styles */
+        .rule-row {
+            animation: fadeIn 0.3s ease-in-out;
         }
-        .open .chevron-icon {
-            transform: rotate(180deg);
+        .logic-operator {
+            position: relative;
         }
-        
+        .logic-operator::before {
+            content: '';
+            position: absolute;
+            left: 50%;
+            top: -10px;
+            bottom: -10px;
+            width: 2px;
+            background-color: #e2e8f0;
+            z-index: 0;
+            transform: translateX(-50%);
+        }
+        .logic-badge {
+            position: relative;
+            z-index: 1;
+        }
     </style>
 </head>
 <body class="bg-slate-50 text-slate-800">
@@ -168,91 +183,112 @@
         </header>
 
         <main>
-             <!-- Management Sections -->
-            <div class="space-y-4 mb-8">
-                <!-- Guidelines Section -->
-                <div class="bg-white rounded-lg shadow-sm overflow-hidden">
-                    <div id="guidelines-header" class="flex justify-between items-center p-4 cursor-pointer">
-                        <h3 class="font-bold text-lg text-slate-800">AI Guidelines</h3>
-                        <svg class="chevron-icon w-6 h-6 text-slate-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg>
-                    </div>
-                    <div id="guidelines-content" class="collapsible-content">
-                        <div class="p-4 border-t border-slate-200">
-                             <button id="add-guideline-btn" class="w-full bg-indigo-100 text-indigo-700 font-bold py-2 px-4 rounded-lg hover:bg-indigo-200 transition-colors text-sm mb-3">Add Guideline/s</button>
-                            <div id="guidelines-list" class="text-sm text-slate-600 space-y-2">
-                                <!-- Guidelines will be loaded here -->
-                            </div>
-                        </div>
-                    </div>
+             <!-- Management Tabs Section -->
+             <div class="mb-8 bg-white rounded-lg shadow-sm overflow-hidden">
+                <!-- Tab Headers -->
+                <div class="flex border-b border-slate-200 overflow-x-auto">
+                    <button class="tab-btn flex-1 py-4 px-4 text-sm font-bold text-slate-500 hover:text-slate-700 border-b-2 border-transparent hover:border-slate-300 focus:outline-none whitespace-nowrap" data-target="guidelines-panel">
+                        AI Guidelines
+                    </button>
+                    <button class="tab-btn flex-1 py-4 px-4 text-sm font-bold text-slate-500 hover:text-slate-700 border-b-2 border-transparent hover:border-slate-300 focus:outline-none whitespace-nowrap" data-target="fabric-panel">
+                        Fabric Properties
+                    </button>
+                    <button class="tab-btn flex-1 py-4 px-4 text-sm font-bold text-slate-500 hover:text-slate-700 border-b-2 border-transparent hover:border-slate-300 focus:outline-none whitespace-nowrap" data-target="motor-panel">
+                        Motor Properties
+                    </button>
+                    <button class="tab-btn flex-1 py-4 px-4 text-sm font-bold text-slate-500 hover:text-slate-700 border-b-2 border-transparent hover:border-slate-300 focus:outline-none whitespace-nowrap" data-target="tube-panel">
+                        Tube Properties
+                    </button>
                 </div>
 
-                <!-- Fabric Properties Section -->
-                <div id="fabric-properties-section" class="bg-white rounded-lg shadow-sm overflow-hidden">
-                    <div id="fabric-properties-header" class="flex justify-between items-center p-4 cursor-pointer">
-                        <h3 class="font-bold text-lg text-slate-800">Fabric Properties</h3>
-                        <svg class="chevron-icon w-6 h-6 text-slate-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg>
-                    </div>
-                      <div id="fabric-properties-content" class="collapsible-content">
-                        <div class="p-4 border-t border-slate-200">
-                             <label id="fabric-csv-drop-zone" class="drop-zone !min-h-0 p-4 mb-3 rounded-lg flex flex-col items-center justify-center cursor-pointer bg-white shadow-sm text-center">
-                                <h3 class="text-base font-semibold text-slate-700">Upload CSV to Replace All</h3>
-                                <p class="text-xs text-slate-500">Drag & drop new CSV here, or click to upload</p>
-                                <input type="file" id="fabric-csv-upload" class="hidden" accept=".csv">
-                            </label>
-                            <div id="fabric-properties-list" class="space-y-2">
-                                <!-- Fabric properties will be loaded here -->
-                            </div>
-                             <button id="add-fabric-btn" class="w-full mt-4 bg-green-100 text-green-700 font-bold py-2 px-4 rounded-lg hover:bg-green-200 transition-colors text-sm">
-                                Add New Fabric
-                            </button>
+                <!-- Tab Contents Container -->
+                <div>
+                    
+                    <!-- Guidelines Panel -->
+                    <div id="guidelines-panel" class="tab-content hidden p-6 bg-slate-50">
+                         <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-3">
+                             <h3 class="font-bold text-lg text-slate-800">Custom Rules</h3>
+                             <div class="flex gap-2">
+                                 <button id="open-rule-builder-btn" class="bg-white text-indigo-600 border border-indigo-200 font-bold py-2 px-4 rounded-lg hover:bg-indigo-50 transition-colors text-sm flex items-center gap-2">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                                      <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12c0 1.268-.63 2.39-1.593 3.068a3.745 3.745 0 01-1.043 3.296 3.745 3.745 0 01-3.296 1.043A3.745 3.745 0 0112 21c-1.268 0-2.39-.63-3.068-1.593a3.746 3.746 0 01-3.296-1.043 3.745 3.745 0 01-1.043-3.296A3.745 3.745 0 013 12c0-1.268.63-2.39 1.593-3.068a3.745 3.745 0 011.043-3.296 3.746 3.746 0 013.296-1.043A3.746 3.746 0 0112 3c1.268 0 2.39.63 3.068 1.593a3.746 3.746 0 013.296 1.043 3.746 3.746 0 011.043 3.296A3.745 3.745 0 0121 12z" />
+                                    </svg>
+                                     Logic Rule Builder
+                                 </button>
+                                 <button id="add-guideline-btn" class="bg-indigo-100 text-indigo-700 font-bold py-2 px-4 rounded-lg hover:bg-indigo-200 transition-colors text-sm">Add Sentence</button>
+                             </div>
+                         </div>
+                        <div id="guidelines-list" class="text-sm text-slate-600 space-y-2">
+                            <!-- Guidelines will be loaded here -->
                         </div>
                     </div>
-                </div>
 
-                <!-- Motor Properties Section -->
-                <div id="motor-properties-section" class="bg-white rounded-lg shadow-sm overflow-hidden">
-                    <div id="motor-properties-header" class="flex justify-between items-center p-4 cursor-pointer">
-                        <h3 class="font-bold text-lg text-slate-800">Motor Properties</h3>
-                        <svg class="chevron-icon w-6 h-6 text-slate-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg>
-                    </div>
-                      <div id="motor-properties-content" class="collapsible-content">
-                        <div class="p-4 border-t border-slate-200">
-                             <label id="motor-csv-drop-zone" class="drop-zone !min-h-0 p-4 mb-3 rounded-lg flex flex-col items-center justify-center cursor-pointer bg-white shadow-sm text-center">
-                                <h3 class="text-base font-semibold text-slate-700">Upload CSV to Replace All</h3>
-                                <p class="text-xs text-slate-500">Drag & drop new CSV here, or click to upload</p>
-                                <input type="file" id="motor-csv-upload" class="hidden" accept=".csv">
-                            </label>
-                            <div id="motor-properties-list" class="space-y-2">
-                                <!-- Motor properties will be loaded here -->
+                    <!-- Fabric Properties Panel -->
+                    <div id="fabric-panel" class="tab-content hidden p-6 bg-slate-50">
+                         <div class="mb-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                            <h3 class="font-bold text-lg text-slate-800">Fabric Database</h3>
+                            <div class="flex gap-2 w-full sm:w-auto">
+                                <button id="add-fabric-btn" class="bg-green-100 text-green-700 font-bold py-2 px-4 rounded-lg hover:bg-green-200 transition-colors text-sm whitespace-nowrap">
+                                    + Add New
+                                </button>
                             </div>
-                             <button id="add-motor-btn" class="w-full mt-4 bg-green-100 text-green-700 font-bold py-2 px-4 rounded-lg hover:bg-green-200 transition-colors text-sm">
-                                Add New Motor
-                            </button>
+                         </div>
+                        
+                         <label id="fabric-csv-drop-zone" class="drop-zone !min-h-0 p-4 mb-3 rounded-lg flex flex-col items-center justify-center cursor-pointer bg-white shadow-sm text-center border border-dashed border-slate-300 hover:bg-slate-50">
+                            <h3 class="text-sm font-semibold text-slate-700">Upload CSV to Replace All</h3>
+                            <p class="text-xs text-slate-500">Drag & drop new CSV here, or click to upload</p>
+                            <input type="file" id="fabric-csv-upload" class="hidden" accept=".csv">
+                        </label>
+
+                        <div id="fabric-properties-list" class="space-y-2 max-h-[500px] overflow-y-auto pr-2">
+                            <!-- Fabric properties will be loaded here -->
                         </div>
                     </div>
-                </div>
-                
-                <!-- Tube Properties Section -->
-                <div id="tube-properties-section" class="bg-white rounded-lg shadow-sm overflow-hidden">
-                    <div id="tube-properties-header" class="flex justify-between items-center p-4 cursor-pointer">
-                        <h3 class="font-bold text-lg text-slate-800">Tube Properties</h3>
-                        <svg class="chevron-icon w-6 h-6 text-slate-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg>
-                    </div>
-                      <div id="tube-properties-content" class="collapsible-content">
-                        <div class="p-4 border-t border-slate-200">
-                             <label id="tube-csv-drop-zone" class="drop-zone !min-h-0 p-4 mb-3 rounded-lg flex flex-col items-center justify-center cursor-pointer bg-white shadow-sm text-center">
-                                <h3 class="text-base font-semibold text-slate-700">Upload CSV to Replace All</h3>
-                                <p class="text-xs text-slate-500">Drag & drop new CSV here, or click to upload</p>
-                                <input type="file" id="tube-csv-upload" class="hidden" accept=".csv">
-                            </label>
-                            <div id="tube-properties-list" class="space-y-2">
-                                <!-- Tube properties will be loaded here -->
+
+                    <!-- Motor Properties Panel -->
+                    <div id="motor-panel" class="tab-content hidden p-6 bg-slate-50">
+                        <div class="mb-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                            <h3 class="font-bold text-lg text-slate-800">Motor Database</h3>
+                            <div class="flex gap-2 w-full sm:w-auto">
+                                <button id="add-motor-btn" class="bg-green-100 text-green-700 font-bold py-2 px-4 rounded-lg hover:bg-green-200 transition-colors text-sm whitespace-nowrap">
+                                    + Add New
+                                </button>
                             </div>
-                             <button id="add-tube-btn" class="w-full mt-4 bg-green-100 text-green-700 font-bold py-2 px-4 rounded-lg hover:bg-green-200 transition-colors text-sm">
-                                Add New Tube
-                            </button>
+                         </div>
+
+                         <label id="motor-csv-drop-zone" class="drop-zone !min-h-0 p-4 mb-3 rounded-lg flex flex-col items-center justify-center cursor-pointer bg-white shadow-sm text-center border border-dashed border-slate-300 hover:bg-slate-50">
+                            <h3 class="text-sm font-semibold text-slate-700">Upload CSV to Replace All</h3>
+                            <p class="text-xs text-slate-500">Drag & drop new CSV here, or click to upload</p>
+                            <input type="file" id="motor-csv-upload" class="hidden" accept=".csv">
+                        </label>
+
+                        <div id="motor-properties-list" class="space-y-2 max-h-[500px] overflow-y-auto pr-2">
+                            <!-- Motor properties will be loaded here -->
                         </div>
                     </div>
+                    
+                    <!-- Tube Properties Panel -->
+                    <div id="tube-panel" class="tab-content hidden p-6 bg-slate-50">
+                         <div class="mb-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                            <h3 class="font-bold text-lg text-slate-800">Tube Database</h3>
+                            <div class="flex gap-2 w-full sm:w-auto">
+                                <button id="add-tube-btn" class="bg-green-100 text-green-700 font-bold py-2 px-4 rounded-lg hover:bg-green-200 transition-colors text-sm whitespace-nowrap">
+                                    + Add New
+                                </button>
+                            </div>
+                         </div>
+
+                         <label id="tube-csv-drop-zone" class="drop-zone !min-h-0 p-4 mb-3 rounded-lg flex flex-col items-center justify-center cursor-pointer bg-white shadow-sm text-center border border-dashed border-slate-300 hover:bg-slate-50">
+                            <h3 class="text-sm font-semibold text-slate-700">Upload CSV to Replace All</h3>
+                            <p class="text-xs text-slate-500">Drag & drop new CSV here, or click to upload</p>
+                            <input type="file" id="tube-csv-upload" class="hidden" accept=".csv">
+                        </label>
+
+                        <div id="tube-properties-list" class="space-y-2 max-h-[500px] overflow-y-auto pr-2">
+                            <!-- Tube properties will be loaded here -->
+                        </div>
+                    </div>
+
                 </div>
             </div>
 
@@ -294,9 +330,75 @@
     <!-- Modals -->
     <div id="guideline-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden items-center justify-center p-4 modal-backdrop">
         <div class="modal-content bg-white rounded-lg shadow-xl w-full max-w-lg">
-             <div class="p-6 border-b"><h3 class="text-xl font-semibold text-slate-800">Add New Guideline/s</h3><p class="text-sm text-slate-500">Add one or more rules for OrderBot to follow. You can use a list.</p></div>
-             <div class="p-6"><label for="guideline-input" class="block text-sm font-medium text-slate-700 mb-2">Describe the new rule(s):</label><textarea id="guideline-input" rows="4" class="w-full p-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" placeholder="e.g., 1. If the location is 'Kitchen', the material must be water-resistant. 2. All shutter orders must specify a 'Rebate' type."></textarea></div>
-             <div class="px-6 py-4 bg-slate-50 rounded-b-lg flex justify-end gap-3"><button id="cancel-guideline-btn" class="bg-white text-slate-700 font-semibold py-2 px-4 rounded-md border border-slate-300 hover:bg-slate-100">Cancel</button><button id="save-guideline-btn" class="bg-indigo-600 text-white font-bold py-2 px-4 rounded-md hover:bg-indigo-700">Save Guideline/s</button></div>
+             <div class="p-6 border-b"><h3 class="text-xl font-semibold text-slate-800">Add New Guideline (Natural Language)</h3><p class="text-sm text-slate-500">Add a rule in plain English.</p></div>
+             <div class="p-6"><label for="guideline-input" class="block text-sm font-medium text-slate-700 mb-2">Describe the rule:</label><textarea id="guideline-input" rows="4" class="w-full p-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" placeholder="e.g., 1. If the location is 'Kitchen', the material must be water-resistant."></textarea></div>
+             <div class="px-6 py-4 bg-slate-50 rounded-b-lg flex justify-end gap-3"><button id="cancel-guideline-btn" class="bg-white text-slate-700 font-semibold py-2 px-4 rounded-md border border-slate-300 hover:bg-slate-100">Cancel</button><button id="save-guideline-btn" class="bg-indigo-600 text-white font-bold py-2 px-4 rounded-md hover:bg-indigo-700">Save Guideline</button></div>
+        </div>
+    </div>
+
+    <!-- Logic Rule Builder Modal -->
+    <div id="rule-builder-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden items-center justify-center p-4 modal-backdrop">
+        <div class="modal-content bg-white rounded-lg shadow-xl w-full max-w-4xl flex flex-col max-h-[90vh]">
+            <div class="p-6 border-b bg-slate-50 rounded-t-lg flex justify-between items-center">
+                <div>
+                    <h3 class="text-xl font-bold text-slate-800 flex items-center gap-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6 text-indigo-600">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 11-3 0m3 0a1.5 1.5 0 10-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-9.75 0h9.75" />
+                        </svg>
+                        Logic Rule Builder
+                    </h3>
+                    <p class="text-sm text-slate-500">Construct precise rules for the AI to follow.</p>
+                </div>
+                <button id="close-rule-builder-btn" class="text-slate-400 hover:text-slate-600">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+            </div>
+
+            <div class="p-6 overflow-y-auto flex-grow bg-slate-50/50">
+                <!-- IF Section -->
+                <div class="bg-white p-4 rounded-lg border border-slate-200 shadow-sm mb-4">
+                    <h4 class="text-sm font-bold text-slate-700 uppercase tracking-wide mb-3 border-b pb-2">IF (Conditions)</h4>
+                    <div id="rb-conditions-container" class="space-y-0">
+                        <!-- Conditions will be injected here -->
+                    </div>
+                    <button id="rb-add-condition-btn" class="mt-4 text-sm font-semibold text-indigo-600 hover:text-indigo-800 flex items-center gap-1">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4"><path d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z" /></svg>
+                        Add Condition
+                    </button>
+                </div>
+
+                <!-- THEN Section -->
+                <div class="bg-white p-4 rounded-lg border border-slate-200 shadow-sm mb-4">
+                    <h4 class="text-sm font-bold text-slate-700 uppercase tracking-wide mb-3 border-b pb-2">THEN (Action)</h4>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-500 mb-1">Action Type</label>
+                            <select id="rb-action-type" class="w-full p-2 border border-slate-300 rounded text-sm bg-slate-50">
+                                <option value="MUST MATCH">Must Match / Be Equal To</option>
+                                <option value="FLAG WARNING">Flag a Warning (Yellow)</option>
+                                <option value="FLAG CRITICAL">Flag a Critical Error (Red)</option>
+                                <option value="REQUIRE">Require specific component/value</option>
+                                <option value="FORBID">Forbid/Disallow</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-500 mb-1">Message / Value</label>
+                            <input type="text" id="rb-action-value" class="w-full p-2 border border-slate-300 rounded text-sm" placeholder="e.g., 'Motor must be Somfy' or 'Width too wide'">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Preview Section -->
+                <div class="bg-indigo-50 p-4 rounded-lg border border-indigo-100">
+                    <h4 class="text-xs font-bold text-indigo-800 uppercase tracking-wide mb-1">Generated Rule Preview</h4>
+                    <p id="rb-preview-text" class="text-sm text-indigo-900 font-medium italic">IF ... THEN ...</p>
+                </div>
+            </div>
+
+            <div class="p-6 border-t bg-white rounded-b-lg flex justify-end gap-3">
+                <button id="rb-cancel-btn" class="bg-white text-slate-700 font-semibold py-2 px-4 rounded-md border border-slate-300 hover:bg-slate-100">Cancel</button>
+                <button id="rb-save-btn" class="bg-indigo-600 text-white font-bold py-2 px-6 rounded-md hover:bg-indigo-700 shadow-md">Save Rule</button>
+            </div>
         </div>
     </div>
 
@@ -429,25 +531,29 @@
             saveGuidelineBtn: document.getElementById('save-guideline-btn'), 
             guidelineInput: document.getElementById('guideline-input'), 
             guidelinesList: document.getElementById('guidelines-list'),
-            guidelinesHeader: document.getElementById('guidelines-header'),
-            guidelinesContent: document.getElementById('guidelines-content'),
-            fabricPropertiesSection: document.getElementById('fabric-properties-section'),
-            fabricPropertiesHeader: document.getElementById('fabric-properties-header'),
-            fabricPropertiesContent: document.getElementById('fabric-properties-content'),
+            
+            // Rule Builder Elements
+            ruleBuilderModal: document.getElementById('rule-builder-modal'),
+            openRuleBuilderBtn: document.getElementById('open-rule-builder-btn'),
+            closeRuleBuilderBtn: document.getElementById('close-rule-builder-btn'),
+            rbConditionsContainer: document.getElementById('rb-conditions-container'),
+            rbAddConditionBtn: document.getElementById('rb-add-condition-btn'),
+            rbActionType: document.getElementById('rb-action-type'),
+            rbActionValue: document.getElementById('rb-action-value'),
+            rbPreviewText: document.getElementById('rb-preview-text'),
+            rbCancelBtn: document.getElementById('rb-cancel-btn'),
+            rbSaveBtn: document.getElementById('rb-save-btn'),
+
             fabricPropertiesList: document.getElementById('fabric-properties-list'),
             fabricCsvUpload: document.getElementById('fabric-csv-upload'),
             fabricCsvDropZone: document.getElementById('fabric-csv-drop-zone'),
             addFabricBtn: document.getElementById('add-fabric-btn'),
-            motorPropertiesSection: document.getElementById('motor-properties-section'),
-            motorPropertiesHeader: document.getElementById('motor-properties-header'),
-            motorPropertiesContent: document.getElementById('motor-properties-content'),
+            
             motorPropertiesList: document.getElementById('motor-properties-list'),
             motorCsvUpload: document.getElementById('motor-csv-upload'),
             motorCsvDropZone: document.getElementById('motor-csv-drop-zone'),
             addMotorBtn: document.getElementById('add-motor-btn'),
-            tubePropertiesSection: document.getElementById('tube-properties-section'),
-            tubePropertiesHeader: document.getElementById('tube-properties-header'),
-            tubePropertiesContent: document.getElementById('tube-properties-content'),
+            
             tubePropertiesList: document.getElementById('tube-properties-list'),
             tubeCsvUpload: document.getElementById('tube-csv-upload'),
             tubeCsvDropZone: document.getElementById('tube-csv-drop-zone'),
@@ -465,6 +571,210 @@
             'curtain somfy',
             'curtain motion'
         ];
+
+        // --- RULE BUILDER LOGIC ---
+        let ruleBuilderState = {
+            conditions: [],
+            actionType: 'MUST MATCH',
+            actionValue: ''
+        };
+
+        const RULE_FIELDS = [
+            'Blind Type', 'Location', 'QTY', 'Width', 'Drop', 'Colour', 'Control', 'Range (Fabric)', 'Fix', 'Order Number'
+        ];
+
+        const RULE_OPERATORS = [
+            { val: 'EQUALS', label: 'Equals (=)' },
+            { val: 'DOES NOT EQUAL', label: 'Does Not Equal (!=)' },
+            { val: 'CONTAINS', label: 'Contains' },
+            { val: 'DOES NOT CONTAIN', label: 'Does Not Contain' },
+            { val: 'STARTS WITH', label: 'Starts With' },
+            { val: 'IS GREATER THAN', label: 'Is Greater Than (>)' },
+            { val: 'IS LESS THAN', label: 'Is Less Than (<)' },
+            { val: 'IS EMPTY', label: 'Is Empty' }
+        ];
+
+        function initRuleBuilder() {
+            ruleBuilderState = {
+                conditions: [{ field: 'Blind Type', operator: 'CONTAINS', value: '', logic: 'AND' }],
+                actionType: 'FLAG WARNING',
+                actionValue: ''
+            };
+            renderRuleBuilder();
+        }
+
+        function renderRuleBuilder() {
+            allDomElements.rbConditionsContainer.innerHTML = '';
+            
+            ruleBuilderState.conditions.forEach((cond, index) => {
+                const row = document.createElement('div');
+                row.className = 'rule-row flex flex-col md:flex-row gap-2 items-center mb-2 relative pt-4 md:pt-0';
+                
+                // Logic Connector (AND/OR) - Show for all except the first one, visually attached to top
+                let logicHtml = '';
+                if (index > 0) {
+                    logicHtml = `
+                        <div class="md:w-20 flex justify-center logic-operator">
+                            <select class="rb-logic-select bg-indigo-100 text-indigo-700 font-bold text-xs py-1 px-2 rounded border-none focus:ring-0 cursor-pointer logic-badge" data-index="${index-1}">
+                                <option value="AND" ${ruleBuilderState.conditions[index-1].logic === 'AND' ? 'selected' : ''}>AND</option>
+                                <option value="OR" ${ruleBuilderState.conditions[index-1].logic === 'OR' ? 'selected' : ''}>OR</option>
+                            </select>
+                        </div>
+                    `;
+                } else {
+                    logicHtml = `<div class="md:w-20 flex justify-center"><span class="text-xs font-bold text-slate-400">IF</span></div>`;
+                }
+
+                // Field Select
+                const fieldOptions = RULE_FIELDS.map(f => `<option value="${f}" ${cond.field === f ? 'selected' : ''}>${f}</option>`).join('');
+                
+                // Operator Select
+                const opOptions = RULE_OPERATORS.map(op => `<option value="${op.val}" ${cond.operator === op.val ? 'selected' : ''}>${op.label}</option>`).join('');
+
+                row.innerHTML = `
+                    ${logicHtml}
+                    <div class="flex-1 grid grid-cols-1 md:grid-cols-3 gap-2 w-full">
+                        <select class="rb-field-select w-full p-2 border border-slate-300 rounded text-sm" data-index="${index}">${fieldOptions}</select>
+                        <select class="rb-operator-select w-full p-2 border border-slate-300 rounded text-sm" data-index="${index}">${opOptions}</select>
+                        <input type="text" class="rb-value-input w-full p-2 border border-slate-300 rounded text-sm" placeholder="Value" value="${cond.value}" data-index="${index}" ${cond.operator === 'IS EMPTY' ? 'disabled' : ''}>
+                    </div>
+                    <button class="rb-remove-btn text-slate-400 hover:text-red-500 p-2" data-index="${index}" title="Remove Condition">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-5 h-5"><path fill-rule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z" clip-rule="evenodd" /></svg>
+                    </button>
+                `;
+
+                allDomElements.rbConditionsContainer.appendChild(row);
+            });
+            
+            allDomElements.rbActionType.value = ruleBuilderState.actionType;
+            allDomElements.rbActionValue.value = ruleBuilderState.actionValue;
+            updateRulePreview();
+        }
+
+        function updateRuleState() {
+            // Read inputs back into state
+            const conditions = document.querySelectorAll('.rule-row');
+            conditions.forEach((row, idx) => {
+                if (idx >= ruleBuilderState.conditions.length) return;
+                ruleBuilderState.conditions[idx].field = row.querySelector('.rb-field-select').value;
+                ruleBuilderState.conditions[idx].operator = row.querySelector('.rb-operator-select').value;
+                ruleBuilderState.conditions[idx].value = row.querySelector('.rb-value-input').value;
+                
+                // Logic is controlled by the PREVIOUS row's dropdown (visual placement) but logic belongs to the link
+                // We store logic in the index of the condition that follows it in the UI, stored in the previous index logic property
+                if (idx > 0) {
+                    const logicSelect = row.querySelector('.rb-logic-select');
+                    if (logicSelect) {
+                         // Logic at row N controls relation between N-1 and N. We stored it in N-1.
+                         ruleBuilderState.conditions[idx-1].logic = logicSelect.value;
+                    }
+                }
+            });
+            ruleBuilderState.actionType = allDomElements.rbActionType.value;
+            ruleBuilderState.actionValue = allDomElements.rbActionValue.value;
+            updateRulePreview();
+        }
+
+        function updateRulePreview() {
+            let text = "IF ";
+            ruleBuilderState.conditions.forEach((cond, idx) => {
+                const opText = cond.operator.toLowerCase().replace(/_/g, ' ');
+                const valText = cond.operator === 'IS EMPTY' ? '' : `"${cond.value}"`;
+                
+                text += `the ${cond.field} ${opText} ${valText}`;
+                
+                if (idx < ruleBuilderState.conditions.length - 1) {
+                    text += ` ${cond.logic} `;
+                }
+            });
+
+            text += `, THEN ${ruleBuilderState.actionType.toLowerCase().replace('flag', 'flag a')} "${ruleBuilderState.actionValue}".`;
+            allDomElements.rbPreviewText.textContent = text;
+        }
+
+        // --- EVENT LISTENERS FOR BUILDER ---
+        allDomElements.openRuleBuilderBtn.addEventListener('click', () => {
+            initRuleBuilder();
+            allDomElements.ruleBuilderModal.style.display = 'flex';
+        });
+
+        allDomElements.closeRuleBuilderBtn.addEventListener('click', () => allDomElements.ruleBuilderModal.style.display = 'none');
+        allDomElements.rbCancelBtn.addEventListener('click', () => allDomElements.ruleBuilderModal.style.display = 'none');
+
+        allDomElements.rbAddConditionBtn.addEventListener('click', () => {
+            updateRuleState(); // Save current state first
+            ruleBuilderState.conditions.push({ field: 'Width', operator: 'IS GREATER THAN', value: '', logic: 'AND' });
+            renderRuleBuilder();
+        });
+
+        allDomElements.rbConditionsContainer.addEventListener('click', (e) => {
+            if (e.target.closest('.rb-remove-btn')) {
+                const idx = parseInt(e.target.closest('.rb-remove-btn').dataset.index);
+                if (ruleBuilderState.conditions.length > 1) {
+                    updateRuleState();
+                    ruleBuilderState.conditions.splice(idx, 1);
+                    renderRuleBuilder();
+                } else {
+                    alert("You need at least one condition.");
+                }
+            }
+        });
+
+        allDomElements.rbConditionsContainer.addEventListener('change', (e) => {
+             if (e.target.matches('select') || e.target.matches('input')) {
+                 // If operator changed to IS EMPTY, disable input
+                 if (e.target.classList.contains('rb-operator-select')) {
+                     const idx = e.target.dataset.index;
+                     const input = allDomElements.rbConditionsContainer.querySelector(`.rb-value-input[data-index="${idx}"]`);
+                     if (e.target.value === 'IS EMPTY') {
+                         input.value = '';
+                         input.disabled = true;
+                     } else {
+                         input.disabled = false;
+                     }
+                 }
+                 updateRuleState();
+             }
+        });
+        
+        allDomElements.rbConditionsContainer.addEventListener('input', (e) => {
+             if (e.target.matches('input')) updateRuleState();
+        });
+
+        allDomElements.rbActionType.addEventListener('change', updateRuleState);
+        allDomElements.rbActionValue.addEventListener('input', updateRuleState);
+
+        allDomElements.rbSaveBtn.addEventListener('click', async () => {
+            updateRuleState();
+            const ruleText = allDomElements.rbPreviewText.textContent;
+            
+            if (!ruleBuilderState.actionValue && !ruleBuilderState.actionType.includes('IS EMPTY')) {
+                alert("Please define an action value (e.g., the warning message).");
+                return;
+            }
+            
+            allDomElements.rbSaveBtn.disabled = true;
+            allDomElements.rbSaveBtn.innerHTML = `<div class="loader !w-5 !h-5 !border-2 mx-auto"></div>`;
+
+            try {
+                 await addDoc(collection(db, `orderbot_guidelines`), {
+                    userId: userId,
+                    timestamp: new Date().toISOString(),
+                    originalGuideline: "LOGIC_BUILDER", // Flag origin
+                    enhancedGuideline: ruleText, // Save the generated sentence
+                    structuredData: JSON.stringify(ruleBuilderState) // Backup structured data for potential future edits (though not strictly used by AI yet)
+                });
+                
+                allDomElements.ruleBuilderModal.style.display = 'none';
+                loadAndDisplayGuidelines();
+            } catch (error) {
+                console.error("Error saving rule:", error);
+                alert("Failed to save rule.");
+            } finally {
+                allDomElements.rbSaveBtn.disabled = false;
+                allDomElements.rbSaveBtn.textContent = 'Save Rule';
+            }
+        });
 
         const BLIND_TYPES_REQUIRING_CONTROL_VALIDATION = [
             'element roller',
@@ -1341,17 +1651,31 @@
             }
         });
         
+        // --- TAB SWITCHING LOGIC ---
+        document.querySelectorAll('.tab-btn').forEach(button => {
+            button.addEventListener('click', () => {
+                const targetId = button.dataset.target;
+                const targetPanel = document.getElementById(targetId);
+                const isActive = button.classList.contains('active-tab');
+
+                // Always close all tabs first
+                document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active-tab'));
+                document.querySelectorAll('.tab-content').forEach(content => content.classList.add('hidden'));
+                
+                // If the clicked tab wasn't active before, open it now
+                // If it WAS active, we do nothing else (it stays closed/toggled off)
+                if (!isActive && targetPanel) {
+                    button.classList.add('active-tab');
+                    targetPanel.classList.remove('hidden');
+                }
+            });
+        });
+
+
         // --- PROPERTIES & COLLAPSIBLE LOGIC ---
 
         function setupCollapsible(header, content) {
-            header.addEventListener('click', () => {
-                header.classList.toggle('open');
-                if (content.style.maxHeight) {
-                    content.style.maxHeight = null;
-                } else {
-                    content.style.maxHeight = content.scrollHeight + "px";
-                }
-            });
+            // Logic removed as collapsibles are replaced by tabs
         }
         
         // --- FABRIC PROPERTIES ---
@@ -1642,6 +1966,7 @@
         }
         
         function validateMotorDependencies(data, motorProperties, tubeProperties, fabricProperties) {
+            // 1. Identify Motorized Blinds
             const motorizedBlinds = (data.lineItems || []).filter(item => {
                 const control = item.control?.blindIQValue?.toLowerCase() || '';
                 return control.includes('motor') || control.includes('dual');
@@ -1649,75 +1974,14 @@
 
             if (motorizedBlinds.length === 0) return;
 
-            const sundries = data.sundries || [];
-            let orderedMotors = [];
-            const orderedAdapters = new Set();
-            const orderedControllers = new Set();
-            const orderedAccessories = new Set();
-            const orderedDependencies = new Set();
-
-            sundries.forEach(sundry => {
-                const desc = sundry.item.blindIQValue.toLowerCase();
-                let isMotor = false;
-                
-                const matchingProps = motorProperties.filter(prop => desc.includes(prop.motorName.toLowerCase()));
-
-                if (matchingProps.length > 0 && desc.includes('motor')) {
-                     for(let i=0; i < sundry.quantity; i++) {
-                        orderedMotors.push({ sundry: sundry, potentialProps: matchingProps, assignedBlind: null });
-                     }
-                    isMotor = true;
-                }
-                
-                if (!isMotor) {
-                    if (desc.includes('adapter')) orderedAdapters.add(sundry.item.blindIQValue);
-                    else if (desc.includes('remote') || desc.includes('switch') || desc.includes('hub')) orderedControllers.add(sundry.item.blindIQValue);
-                    else if (desc.includes('accessory')) orderedAccessories.add(sundry.item.blindIQValue);
-                    else orderedDependencies.add(sundry.item.blindIQValue);
-                }
-            });
-
-            if (motorizedBlinds.length !== orderedMotors.length) {
-                data.motorValidation = { global: `Motor Alert: Order has ${motorizedBlinds.length} motorized blinds but ${orderedMotors.length} motors were found in sundries.` };
-                return;
-            }
-            
+            // --- STEP 1: CALCULATE REQUIRED TORQUE FOR ALL BLINDS FIRST ---
             motorizedBlinds.forEach(blind => {
-                blind.calculatedArea = (parseInt(blind.width?.blindIQValue) / 1000) * (parseInt(blind.drop?.blindIQValue) / 1000);
-            });
+                blind.motorValidation = []; // Initialize
+                const blindType = blind.blindType?.blindIQValue?.toLowerCase().trim();
+                const range = blind.range?.blindIQValue?.toLowerCase().trim();
 
-            motorizedBlinds.sort((a, b) => b.calculatedArea - a.calculatedArea);
-            orderedMotors.sort((a, b) => {
-                const maxTorqueA = Math.max(...a.potentialProps.map(p => p.torque));
-                const maxTorqueB = Math.max(...b.potentialProps.map(p => p.torque));
-                return maxTorqueB - maxTorqueA;
-            });
-
-            motorizedBlinds.forEach((blind, i) => {
-                if (orderedMotors[i]) {
-                    orderedMotors[i].assignedBlind = blind;
-                }
-            });
-
-            orderedMotors.forEach(motorObj => {
-                const blind = motorObj.assignedBlind;
-                if (!blind) return;
-                
-                const blindType = blind.blindType.blindIQValue;
-                const blindControl = (blind.control.blindIQValue || '').toLowerCase().split(',').map(s => s.trim());
-                
-                const motorProp = motorObj.potentialProps.find(p => p.blindType.toLowerCase().trim() === blindType.toLowerCase().trim());
-
-                if (!blind.motorValidation) blind.motorValidation = [];
-
-                if (!motorProp) {
-                    blind.motorValidation.push(`Motor Alert: No properties found for motor "${motorObj.potentialProps[0].motorName}" compatible with blind type "${blindType}".`);
-                    return;
-                }
-
-                // Torque Calculation
-                const fabric = fabricProperties.get(blind.range.blindIQValue.toLowerCase().trim());
-                const tube = tubeProperties.get(blind.blindType.blindIQValue.toLowerCase().trim());
+                const fabric = fabricProperties.get(range);
+                const tube = tubeProperties.get(blindType);
 
                 if (fabric && tube) {
                     const blindWidthM = parseInt(blind.width.blindIQValue) / 1000;
@@ -1727,53 +1991,163 @@
                     const bottomBarWeight = blindWidthM * 0.280; // 280g per meter
                     const totalWeightKg = fabricWeight + bottomBarWeight;
                     
+                    // Radius in meters
                     const tubeRadiusM = (tube.tubeDiameter / 1000) / 2;
-                    const requiredTorque = (totalWeightKg * 9.81 * tubeRadiusM).toFixed(2);
+                    // Torque = Force x Radius (Force = Mass x Gravity)
+                    // Adding 20% safety factor (1.2) for friction and real-world conditions
+                    const rawTorque = (totalWeightKg * 9.81 * tubeRadiusM) * 1.2;
                     
-                    blind.requiredTorque = requiredTorque;
+                    blind.calculatedTorqueVal = rawTorque;
+                    blind.requiredTorque = rawTorque.toFixed(2);
+                } else {
+                    blind.calculatedTorqueVal = 0; // Default to 0 if we can't calc, so it goes to end of sort
+                    if (!fabric) blind.motorValidation.push("Config Alert: Could not calculate torque (Fabric properties missing).");
+                    if (!tube) blind.motorValidation.push("Config Alert: Could not calculate torque (Tube properties missing).");
+                }
+            });
 
-                    if (motorProp.torque < requiredTorque) {
-                         blind.torqueValidation = { message: `Torque Alert: Motor's torque (${motorProp.torque} Nm) is insufficient for this blind's calculated required torque of ${requiredTorque} Nm.` };
+            // --- STEP 2: CREATE POOL & INVENTORY ---
+            const motorPool = []; // Array of individual available motor units
+            const sundryInventory = {}; // Map for accessories: { "description": count }
+
+            // Helper to add to inventory
+            const addToInventory = (desc, qty) => {
+                const key = desc.toLowerCase().trim();
+                sundryInventory[key] = (sundryInventory[key] || 0) + qty;
+            };
+
+            const sundries = data.sundries || [];
+            sundries.forEach(sundry => {
+                const desc = sundry.item.blindIQValue.toLowerCase();
+                const qty = sundry.quantity || 1;
+                
+                // Check if this sundry is a known motor type
+                const matchingMotorProps = motorProperties.filter(prop => desc.includes(prop.motorName.toLowerCase()));
+
+                if (matchingMotorProps.length > 0 && desc.includes('motor')) {
+                    // It's a motor. Add individual units to the pool.
+                    // We store the props with it for easy checking later.
+                    // If multiple props match (rare), we take the most specific (longest name) or just first.
+                    const bestMatch = matchingMotorProps.sort((a,b) => b.motorName.length - a.motorName.length)[0];
+                    for (let i = 0; i < qty; i++) {
+                        motorPool.push({
+                            sundryName: sundry.item.blindIQValue,
+                            props: bestMatch,
+                            id: Math.random().toString(36) // Unique ID for tracking
+                        });
                     }
+                } else {
+                    // It's an accessory/adapter/remote
+                    addToInventory(desc, qty);
+                }
+            });
+
+            // --- STEP 3: GREEDY BEST-FIT ALGORITHM ---
+            
+            // Sort blinds by Difficulty (Required Torque) Descending
+            motorizedBlinds.sort((a, b) => (b.calculatedTorqueVal || 0) - (a.calculatedTorqueVal || 0));
+
+            motorizedBlinds.forEach(blind => {
+                const requiredTorque = blind.calculatedTorqueVal || 0;
+                const blindTypeReq = blind.blindType?.blindIQValue?.toLowerCase().trim();
+
+                // 1. Try to find a motor that meets Torque AND Type requirements
+                let selectedMotorIndex = motorPool.findIndex(m => {
+                    const typeMatch = m.props.blindType.toLowerCase().trim() === blindTypeReq;
+                    const torqueMatch = m.props.torque >= requiredTorque;
+                    return typeMatch && torqueMatch;
+                });
+
+                // 2. Fallback: If no torque match, find one that fits the Blind Type (so we can flag the torque error)
+                if (selectedMotorIndex === -1) {
+                    selectedMotorIndex = motorPool.findIndex(m => {
+                         return m.props.blindType.toLowerCase().trim() === blindTypeReq;
+                    });
                 }
 
-                const checkListItem = (orderedItems, requiredItemsString) => {
-                    const requiredItems = (requiredItemsString || '').toLowerCase().split(',').map(s => s.trim()).filter(s => s);
-                    if (requiredItems.length === 0) return { pass: true };
-                    const foundItem = [...orderedItems].find(ordered => requiredItems.some(req => ordered.toLowerCase().includes(req)));
-                    return { pass: !!foundItem, found: foundItem };
-                };
+                // 3. Fallback: If no Type match (critical config error), grab any motor? 
+                // No, better to leave it unassigned to flag "Missing Motor".
 
-                const adapterCheck = checkListItem(orderedAdapters, motorProp.adapterKit);
-                if (!adapterCheck.pass) {
-                     blind.motorValidation.push(`Adapter Alert: Missing required adapter kit (e.g., "${motorProp.adapterKit}").`);
-                }
-                
-                const validBlindControls = (motorProp.blindControl || '').toLowerCase().split(',').map(s=>s.trim());
-                if (validBlindControls.length > 0 && !blindControl.some(c => validBlindControls.includes(c))) {
-                     blind.motorValidation.push(`Control Alert: "${blind.control.blindIQValue}" is not a valid control for motor "${motorProp.motorName}". Valid options: [${motorProp.blindControl}]`);
-                }
+                if (selectedMotorIndex !== -1) {
+                    // Grab the motor
+                    const assignedMotor = motorPool[selectedMotorIndex];
+                    // Remove from pool
+                    motorPool.splice(selectedMotorIndex, 1);
 
-                const controllerCheck = checkListItem(orderedControllers, motorProp.controlOptions);
-                if (!controllerCheck.pass) {
-                    blind.motorValidation.push(`Controller Alert: No compatible controller (e.g., ${motorProp.controlOptions}) found in sundries.`);
-                }
-                
-                const accessories = (motorProp.accessories || '').toLowerCase().split(',').map(s => s.trim()).filter(s => s);
-                if (accessories.length > 0) {
-                     const incompatibleAcc = [...orderedAccessories].find(ordered => !accessories.some(valid => ordered.toLowerCase().includes(valid)));
-                     if (incompatibleAcc) {
-                         blind.motorValidation.push(`Accessory Alert: Incompatible accessory found: "${incompatibleAcc}". Valid options are: [${motorProp.accessories}]`);
-                     }
-                }
+                    // --- VALIDATION LOGIC FOR ASSIGNED MOTOR ---
 
-                const dependencyCheck = checkListItem(orderedDependencies, motorProp.otherDependencies);
-                if (!dependencyCheck.pass) {
-                    blind.motorValidation.push(`Dependency Alert: Missing required dependency (e.g., ${motorProp.otherDependencies}).`);
+                    // A. Torque Checks (Critical vs Warning)
+                    if (requiredTorque > 0) {
+                        const motorLimit = assignedMotor.props.torque;
+                        const usagePercent = (requiredTorque / motorLimit) * 100;
+
+                        if (requiredTorque > motorLimit) {
+                             blind.torqueValidation = { 
+                                 type: 'error', // Red
+                                 message: `CRITICAL Torque Failure: Required ${requiredTorque.toFixed(2)}Nm > Motor Rating ${motorLimit}Nm (${assignedMotor.props.motorName}).` 
+                            };
+                        } else if (requiredTorque >= (motorLimit * 0.9)) {
+                             blind.torqueValidation = { 
+                                 type: 'warning', // Yellow/Orange
+                                 message: `Torque WARNING: Load is ${usagePercent.toFixed(1)}% of capacity. Required ${requiredTorque.toFixed(2)}Nm is within 10% of ${motorLimit}Nm limit.` 
+                            };
+                        }
+                    }
+
+                    // B. Inventory Consumption Helper
+                    const consumeInventoryItem = (requirementsString, categoryName) => {
+                        if (!requirementsString) return;
+                        
+                        const requirements = requirementsString.toLowerCase().split(',').map(s => s.trim()).filter(s => s);
+                        
+                        // Logic: Find the FIRST requirement in the inventory that has count > 0
+                        // Using fuzzy match (inventory item includes requirement string)
+                        const foundKey = Object.keys(sundryInventory).find(invKey => {
+                            return requirements.some(req => invKey.includes(req)) && sundryInventory[invKey] > 0;
+                        });
+
+                        if (foundKey) {
+                            sundryInventory[foundKey]--; // Decrement count
+                        } else {
+                            blind.motorValidation.push(`${categoryName} Alert: Missing required item from sundries matching [${requirementsString}].`);
+                        }
+                    };
+
+                    // C. Check Components
+                    consumeInventoryItem(assignedMotor.props.adapterKit, "Adapter");
+                    consumeInventoryItem(assignedMotor.props.controlOptions, "Controller");
+                    consumeInventoryItem(assignedMotor.props.otherDependencies, "Dependency");
+                    
+                    // D. Validate Control Type matches Motor capabilities
+                    const blindControl = (blind.control.blindIQValue || '').toLowerCase();
+                    const allowedControls = (assignedMotor.props.blindControl || '').toLowerCase().split(',').map(s=>s.trim());
+                    // Simple check: does the blind control string contain any of the allowed words?
+                    const isControlValid = allowedControls.some(allowed => blindControl.includes(allowed));
+                    
+                    if (allowedControls.length > 0 && !isControlValid) {
+                        blind.motorValidation.push(`Control Mismatch: Blind uses "${blind.control.blindIQValue}" but motor "${assignedMotor.props.motorName}" supports [${assignedMotor.props.blindControl}].`);
+                    }
+
+                } else {
+                    // No motor found in pool
+                    blind.motorValidation.push(`Missing Motor: No available motor in sundries matches Blind Type "${blindTypeReq}" or has sufficient torque.`);
                 }
 
                 if (blind.motorValidation.length === 0) delete blind.motorValidation;
             });
+
+            // Global check: Any leftover motors? (Optional info, maybe not an error)
+            if (motorPool.length > 0) {
+               // data.motorValidation = { global: `Note: ${motorPool.length} extra motors found in sundries not assigned to blinds.` };
+            }
+            
+            // Global check: Did we have enough motors total?
+            const totalMotorsNeeded = motorizedBlinds.length;
+            const totalMotorsAvailable = (data.sundries || []).reduce((acc, s) => s.item.blindIQValue.toLowerCase().includes('motor') ? acc + s.quantity : acc, 0);
+            
+            if (totalMotorsNeeded > totalMotorsAvailable) {
+                 data.motorValidation = { global: `Motor Count Error: Order requires ${totalMotorsNeeded} motors, but only ${totalMotorsAvailable} found in sundries.` };
+            }
         }
         
         // --- MOTOR PROPERTIES ---
@@ -2180,9 +2554,9 @@
         loadAndDisplayMotorProperties();
         loadAndDisplayTubeProperties();
         setupCollapsible(allDomElements.guidelinesHeader, allDomElements.guidelinesContent);
-        setupCollapsible(allDomElements.fabricPropertiesHeader, allDomElements.fabricPropertiesContent);
-        setupCollapsible(allDomElements.motorPropertiesHeader, allDomElements.motorPropertiesContent);
-        setupCollapsible(allDomElements.tubePropertiesHeader, allDomElements.tubePropertiesContent);
+        // setupCollapsible(allDomElements.fabricPropertiesHeader, allDomElements.fabricPropertiesContent);
+        // setupCollapsible(allDomElements.motorPropertiesHeader, allDomElements.motorPropertiesContent);
+        // setupCollapsible(allDomElements.tubePropertiesHeader, allDomElements.tubePropertiesContent);
         setupFabricDropZone();
         setupMotorDropZone();
         setupTubeDropZone();

@@ -290,7 +290,7 @@
                 msgP.textContent = msg;
             }
         }
-        
+
         const fileToB64 = (file) => new Promise((resolve, reject) => {
             const reader = new FileReader();
             reader.readAsDataURL(file);
@@ -405,7 +405,7 @@
                 allDomElements.confirmModal.style.display = 'flex';
             }
             
-            function addNewPair() {
+             function addNewPair() {
                 if (comparisonPairs.length >= 10) { allDomElements.addPairBtn.disabled = true; return; }
                 const newPair = { customerFiles: [], blindIQFiles: [] };
                 comparisonPairs.push(newPair);
@@ -554,7 +554,7 @@
                 };
 
                 const geminiPayload = { contents: [{ role: "user", parts: parts }], generationConfig: { responseMimeType: "application/json", responseSchema: schema } };
-                const proxyPayload = { model: 'gemini-3-pro-preview', payload: geminiPayload };
+                const proxyPayload = { model: 'gemini-2.5-flash-preview-09-2025', payload: geminiPayload };
                 const response = await fetch(PROXY_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proxyPayload) });
                 const resultText = await response.text();
                 if (!response.ok) throw new Error(`API Error: ${response.status} ${response.statusText} - ${resultText}`);
@@ -1063,7 +1063,7 @@
                  const q = query(getCollectionRef('tube_properties'));
                  const snapshot = await getDocs(q);
                  listEl.innerHTML = '';
-                 if (snapshot.empty) { // <--- FIXED: Added curly braces
+                 if(snapshot.empty) { 
                     listEl.innerHTML = '<p class="text-slate-400 italic text-center">No tube properties loaded.</p>'; 
                     return;
                  }
@@ -1339,7 +1339,7 @@
                     if (pastedImageB64) { enhancementParts.push({ inlineData: { mimeType: 'image/png', data: pastedImageB64.split(',')[1] } }); }
     
                     const geminiPayload = { contents: [{ role: "user", parts: enhancementParts }] };
-                    const proxyPayload = { model: 'gemini-2.5-flash', payload: geminiPayload };
+                    const proxyPayload = { model: 'gemini-2.5-flash-preview-09-2025', payload: geminiPayload };
                     
                     const response = await fetch(PROXY_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proxyPayload) });
                     if (!response.ok) throw new Error('Failed to enhance explanation.');

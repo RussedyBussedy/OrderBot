@@ -290,7 +290,8 @@
                 msgP.textContent = msg;
             }
         }
-        
+
+        // Helper defined in global scope
         const fileToB64 = (file) => new Promise((resolve, reject) => {
             const reader = new FileReader();
             reader.readAsDataURL(file);
@@ -396,15 +397,45 @@
             if(!allDomElements.uploadPairsContainer) { logError("Critical Error: DOM Elements missing."); return; }
 
             // ==========================================
-            // DEFINE ALL FUNCTIONS FIRST (ORDERED FOR DEPENDENCY)
+            // 1. DEFINE ALL FUNCTIONS FIRST (ORDERED FOR DEPENDENCY)
             // ==========================================
-
+            
             function showConfirmModal(message, onConfirm) {
                 allDomElements.confirmModalBody.textContent = message;
                 confirmCallback = onConfirm;
                 allDomElements.confirmModal.style.display = 'flex';
             }
             
+            function setupDropZone(dropZone, fileInput, fileList, fileArray) {
+                dropZone.addEventListener('click', () => fileInput.click());
+                dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+                dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+                dropZone.addEventListener('drop', (e) => { e.preventDefault(); dropZone.classList.remove('drag-over'); handleFiles(e.dataTransfer.files, fileList, fileArray); });
+                fileInput.addEventListener('change', (e) => handleFiles(e.target.files, fileList, fileArray));
+            }
+
+            function handleFiles(files, fileListElem, fileArray) {
+                fileArray.length = 0;
+                [...files].forEach(file => { if (['application/pdf', 'image/jpeg', 'image/png'].includes(file.type)) { fileArray.push(file); } });
+                updateFileList(fileListElem, fileArray);
+                checkCompareButtonState();
+            }
+
+            function updateFileList(listElement, fileArray) {
+                listElement.innerHTML = '';
+                fileArray.forEach(file => {
+                    const li = document.createElement('li');
+                    li.className = 'file-item flex items-center justify-between bg-slate-100 p-2 rounded-md mt-2';
+                    li.innerHTML = `<span class="text-sm text-slate-700 truncate">${file.name}</span> <span class="text-xs text-slate-500">${(file.size / 1024).toFixed(1)} KB</span>`;
+                    listElement.appendChild(li);
+                });
+            }
+            
+            function checkCompareButtonState() {
+                const allPairsValid = comparisonPairs.every(pair => pair.customerFiles.length > 0 && pair.blindIQFiles.length > 0);
+                allDomElements.compareBtn.disabled = !allPairsValid;
+            }
+
              function addNewPair() {
                 if (comparisonPairs.length >= 10) { allDomElements.addPairBtn.disabled = true; return; }
                 const newPair = { customerFiles: [], blindIQFiles: [] };
@@ -521,7 +552,7 @@
                 }
                 return `${orderNumberRow}${specialInstructionsRow}${lineItemsHtml}${sundriesHtml}`;
             }
-
+            
             function setupReportInteraction(container, reportData) {
                 const reportContainer = container;
                 const dataToUse = reportData;
@@ -545,7 +576,8 @@
                         const spec = lineItem.specifications[specIndex];
                         fieldName = spec.specName; fieldData = spec.specComparison;
                     } else {
-                        fieldName = target.dataset.fieldName; fieldData = lineItem[fieldName];
+                        fieldName = target.dataset.fieldName;
+                        fieldData = lineItem[fieldName];
                     }
                     if (!fieldData) return;
                     itemToCorrect = { lineItemIdentifier: { item: lineItem.item.blindIQValue, location: lineItem.location.blindIQValue }, fieldName: fieldName, fieldData: fieldData };
@@ -554,7 +586,7 @@
                     allDomElements.feedbackModal.style.display = 'flex';
                 });
             }
-
+            
              function renderHistoryList(items, container) {
                 if (items.length === 0) {
                     container.innerHTML = `<div class="text-center py-8 bg-slate-50 rounded-lg border border-dashed border-slate-300 text-slate-500 italic">No comparisons found.</div>`;
@@ -599,51 +631,36 @@
                 const searchTerm = allDomElements.historySearchInput.value.trim().toLowerCase();
                 if (!searchTerm) { alert("Please enter an order number to search."); return; }
                 if (!db) { alert("History feature is unavailable. Database not connected."); return; }
-
                 const originalBtnText = allDomElements.historySearchBtn.textContent;
                 allDomElements.historySearchBtn.textContent = "Searching...";
                 allDomElements.historySearchBtn.disabled = true;
-                console.log("Search button clicked for:", searchTerm); // DEBUG
-
                 allDomElements.historyResults.innerHTML = `<div class="flex items-center gap-2 text-slate-600"><div class="loader !w-6 !h-6"></div>Searching archives...</div>`;
-                
                 try {
                     const historyQuery = query(getCollectionRef('comparisons'));
                     const querySnapshot = await getDocs(historyQuery);
-                    
                     const filteredDocs = [];
                     querySnapshot.forEach(doc => {
                          const data = doc.data();
                          const matchesBDO = data.bdoOrderNumber && String(data.bdoOrderNumber).toLowerCase().includes(searchTerm);
                          const matchesCust = data.customerOrderNumber?.customerValue && String(data.customerOrderNumber.customerValue).toLowerCase().includes(searchTerm);
-                         if (matchesBDO || matchesCust) {
-                             filteredDocs.push({ id: doc.id, ...data });
-                         }
+                         if (matchesBDO || matchesCust) { filteredDocs.push({ id: doc.id, ...data }); }
                     });
-
                     if (filteredDocs.length === 0) {
                         allDomElements.historyResults.innerHTML = `<p class="text-slate-500 text-center py-2">No history found for: <strong>${searchTerm}</strong></p>`;
                         allDomElements.clearHistoryBtn.classList.remove('hidden');
                         return;
                     }
-                    
                     const latestComparisons = new Map();
                     filteredDocs.forEach(data => {
                         const orderNum = data.bdoOrderNumber || (data.customerOrderNumber ? data.customerOrderNumber.customerValue : null);
                         if (orderNum) {
                             const existing = latestComparisons.get(orderNum);
-                            if (!existing || new Date(data.timestamp) > new Date(existing.timestamp)) {
-                                latestComparisons.set(orderNum, data);
-                            }
+                            if (!existing || new Date(data.timestamp) > new Date(existing.timestamp)) { latestComparisons.set(orderNum, data); }
                         }
                     });
-
-                    const finalResults = Array.from(latestComparisons.values())
-                        .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-
+                    const finalResults = Array.from(latestComparisons.values()).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
                     renderHistoryList(finalResults, allDomElements.historyResults);
                     allDomElements.clearHistoryBtn.classList.remove('hidden');
-
                 } catch (error) {
                     console.error("Error fetching history:", error);
                     allDomElements.historyResults.innerHTML = `<p class="text-red-500">Failed to fetch history.</p>`;
@@ -660,18 +677,14 @@
                     const now = new Date();
                     const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).setHours(0,0,0,0);
                     const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).setHours(23,59,59,999);
-
                     const historyRef = getCollectionRef('comparisons'); 
                     const querySnapshot = await getDocs(historyRef);
-                    
                     const dailyItems = [];
                     querySnapshot.forEach(doc => {
                         const data = doc.data();
                         if (data.timestamp) {
                             const itemTime = new Date(data.timestamp).getTime();
-                            if (!isNaN(itemTime) && itemTime >= startOfDay && itemTime <= endOfDay) {
-                                dailyItems.push({ id: doc.id, ...data });
-                            }
+                            if (!isNaN(itemTime) && itemTime >= startOfDay && itemTime <= endOfDay) { dailyItems.push({ id: doc.id, ...data }); }
                         }
                     });
                     dailyItems.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
@@ -680,36 +693,6 @@
                     console.error("Error loading daily history:", error);
                     allDomElements.dailyHistoryList.innerHTML = `<p class="text-red-500 text-center py-4">Failed to load history. (Check console)</p>`;
                 }
-            }
-
-            function setupDropZone(dropZone, fileInput, fileList, fileArray) {
-                dropZone.addEventListener('click', () => fileInput.click());
-                dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
-                dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
-                dropZone.addEventListener('drop', (e) => { e.preventDefault(); dropZone.classList.remove('drag-over'); handleFiles(e.dataTransfer.files, fileList, fileArray); });
-                fileInput.addEventListener('change', (e) => handleFiles(e.target.files, fileList, fileArray));
-            }
-
-            function handleFiles(files, fileListElem, fileArray) {
-                fileArray.length = 0;
-                [...files].forEach(file => { if (['application/pdf', 'image/jpeg', 'image/png'].includes(file.type)) { fileArray.push(file); } });
-                updateFileList(fileListElem, fileArray);
-                checkCompareButtonState();
-            }
-
-            function updateFileList(listElement, fileArray) {
-                listElement.innerHTML = '';
-                fileArray.forEach(file => {
-                    const li = document.createElement('li');
-                    li.className = 'file-item flex items-center justify-between bg-slate-100 p-2 rounded-md mt-2';
-                    li.innerHTML = `<span class="text-sm text-slate-700 truncate">${file.name}</span> <span class="text-xs text-slate-500">${(file.size / 1024).toFixed(1)} KB</span>`;
-                    listElement.appendChild(li);
-                });
-            }
-            
-            function checkCompareButtonState() {
-                const allPairsValid = comparisonPairs.every(pair => pair.customerFiles.length > 0 && pair.blindIQFiles.length > 0);
-                allDomElements.compareBtn.disabled = !allPairsValid;
             }
             
             function setupFabricDropZone() {
@@ -784,12 +767,14 @@
                     const parsedData = parseCsvAndExtractFabricData(text);
                     if (parsedData.length === 0) return;
                     
+                    // Delete old
                     const q = query(getCollectionRef('fabric_properties'));
                     const oldDocs = await getDocs(q);
                     const deleteBatch = writeBatch(db);
                     oldDocs.forEach(doc => deleteBatch.delete(doc.ref));
                     await deleteBatch.commit();
 
+                    // Add new
                     const addBatch = writeBatch(db);
                     parsedData.forEach(item => {
                         const ref = doc(getCollectionRef('fabric_properties'));
@@ -849,6 +834,7 @@
                 reader.readAsText(file);
             }
             
+            // *** CSV Parsers ***
             function parseCsvAndExtractFabricData(text) {
                 const rows = text.replace(/\r\n/g, '\n').split('\n').filter(row => row.trim() !== '');
                 if (rows.length < 2) return [];
@@ -921,6 +907,7 @@
                 return data;
             }
             
+            // *** Loaders ***
              async function loadAndDisplayFabricProperties() {
                 if (!db) return;
                 const listEl = allDomElements.fabricPropertiesList;
@@ -956,6 +943,7 @@
                  });
             }
             
+            // *** Renderers ***
             function renderFabricRow(id, data, isNew = false) {
                 const listEl = allDomElements.fabricPropertiesList;
                 const fabricRow = document.createElement('div');
@@ -1199,6 +1187,92 @@
                     }
                 });
             });
+            
+            // Cancel Feedback Modal
+             allDomElements.cancelFeedbackBtn.addEventListener('click', () => {
+                 allDomElements.feedbackModal.style.display = 'none';
+                 allDomElements.feedbackExplanation.value = '';
+                 pastedImageB64 = null;
+                 allDomElements.feedbackImageContainer.classList.add('hidden');
+                 allDomElements.feedbackImagePreview.src = '';
+                 allDomElements.feedbackExplanation.style.paddingLeft = '0.5rem';
+            });
+            
+             // Submit Feedback
+            allDomElements.submitFeedbackBtn.addEventListener('click', async () => {
+                if (!itemToCorrect || !allDomElements.feedbackExplanation.value.trim()) { alert("Please provide an explanation."); return; }
+                allDomElements.submitFeedbackBtn.disabled = true;
+                allDomElements.submitFeedbackBtn.innerHTML = `<div class="loader !w-5 !h-5 !border-2 mx-auto"></div>`;
+    
+                try {
+                    const enhancementPrompt = `You are an expert prompt engineer. A user has provided a guideline for an AI document comparison tool. Rewrite their text into a clear, precise, and unambiguous rule that the AI can easily follow. User's text: "${allDomElements.feedbackExplanation.value.trim()}"`;
+                    const enhancementParts = [{ text: enhancementPrompt }];
+                    if (pastedImageB64) { enhancementParts.push({ inlineData: { mimeType: 'image/png', data: pastedImageB64.split(',')[1] } }); }
+    
+                    const geminiPayload = { contents: [{ role: "user", parts: enhancementParts }] };
+                    const proxyPayload = { model: 'gemini-2.5-flash', payload: geminiPayload };
+                    
+                    const response = await fetch(PROXY_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proxyPayload) });
+                    if (!response.ok) throw new Error('Failed to enhance explanation.');
+                    
+                    const result = await response.json();
+                    const enhancedExplanation = result.candidates[0].content.parts[0].text;
+    
+                    const feedbackData = { 
+                        userId: userId, 
+                        timestamp: new Date().toISOString(), 
+                        incorrectItem: itemToCorrect, 
+                        userExplanation: allDomElements.feedbackExplanation.value.trim(), 
+                        enhancedExplanation: enhancedExplanation,
+                    };
+                    if (pastedImageB64) { feedbackData.imageSnippet = pastedImageB64; }
+    
+                    await addDoc(getCollectionRef('feedback'), feedbackData);
+                    allDomElements.cancelFeedbackBtn.click();
+                } catch (error) { 
+                    console.error("Error submitting feedback: ", error); 
+                    alert("Failed to submit feedback. The original explanation will be saved.");
+                    const fallbackData = { 
+                        userId: userId, 
+                        timestamp: new Date().toISOString(), 
+                        incorrectItem: itemToCorrect, 
+                        userExplanation: allDomElements.feedbackExplanation.value.trim(), 
+                        enhancedExplanation: `RAW: ${allDomElements.feedbackExplanation.value.trim()}`,
+                    };
+                    if (pastedImageB64) { fallbackData.imageSnippet = pastedImageB64; }
+                    await addDoc(getCollectionRef('feedback'), fallbackData);
+                    allDomElements.cancelFeedbackBtn.click();
+                } finally { 
+                    allDomElements.submitFeedbackBtn.disabled = false; 
+                    allDomElements.submitFeedbackBtn.textContent = 'Submit Feedback'; 
+                }
+            });
+            
+            allDomElements.feedbackTextareaContainer.addEventListener('paste', (event) => {
+                const items = (event.clipboardData || event.originalEvent.clipboardData).items;
+                for (const item of items) {
+                    if (item.kind === 'file') {
+                        const blob = item.getAsFile();
+                        const reader = new FileReader();
+                        reader.onload = (e) => {
+                            pastedImageB64 = e.target.result;
+                            allDomElements.feedbackImagePreview.src = pastedImageB64;
+                            allDomElements.feedbackImageContainer.classList.remove('hidden');
+                            allDomElements.feedbackExplanation.style.paddingLeft = '72px'; // Make space for the image
+                        };
+                        reader.readAsDataURL(blob);
+                        event.preventDefault();
+                    }
+                }
+            });
+    
+            allDomElements.feedbackImageDelete.addEventListener('click', () => {
+                pastedImageB64 = null;
+                allDomElements.feedbackImageContainer.classList.add('hidden');
+                allDomElements.feedbackImagePreview.src = '';
+                allDomElements.feedbackExplanation.style.paddingLeft = '0.5rem';
+            });
+
 
             // Dropzones for Properties
             // Using the functions defined above

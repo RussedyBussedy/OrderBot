@@ -290,8 +290,7 @@
                 msgP.textContent = msg;
             }
         }
-
-        // Helper defined in global scope
+        
         const fileToB64 = (file) => new Promise((resolve, reject) => {
             const reader = new FileReader();
             reader.readAsDataURL(file);
@@ -399,44 +398,14 @@
             // ==========================================
             // 1. DEFINE ALL FUNCTIONS FIRST (ORDERED FOR DEPENDENCY)
             // ==========================================
-            
+
             function showConfirmModal(message, onConfirm) {
                 allDomElements.confirmModalBody.textContent = message;
                 confirmCallback = onConfirm;
                 allDomElements.confirmModal.style.display = 'flex';
             }
             
-            function setupDropZone(dropZone, fileInput, fileList, fileArray) {
-                dropZone.addEventListener('click', () => fileInput.click());
-                dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
-                dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
-                dropZone.addEventListener('drop', (e) => { e.preventDefault(); dropZone.classList.remove('drag-over'); handleFiles(e.dataTransfer.files, fileList, fileArray); });
-                fileInput.addEventListener('change', (e) => handleFiles(e.target.files, fileList, fileArray));
-            }
-
-            function handleFiles(files, fileListElem, fileArray) {
-                fileArray.length = 0;
-                [...files].forEach(file => { if (['application/pdf', 'image/jpeg', 'image/png'].includes(file.type)) { fileArray.push(file); } });
-                updateFileList(fileListElem, fileArray);
-                checkCompareButtonState();
-            }
-
-            function updateFileList(listElement, fileArray) {
-                listElement.innerHTML = '';
-                fileArray.forEach(file => {
-                    const li = document.createElement('li');
-                    li.className = 'file-item flex items-center justify-between bg-slate-100 p-2 rounded-md mt-2';
-                    li.innerHTML = `<span class="text-sm text-slate-700 truncate">${file.name}</span> <span class="text-xs text-slate-500">${(file.size / 1024).toFixed(1)} KB</span>`;
-                    listElement.appendChild(li);
-                });
-            }
-            
-            function checkCompareButtonState() {
-                const allPairsValid = comparisonPairs.every(pair => pair.customerFiles.length > 0 && pair.blindIQFiles.length > 0);
-                allDomElements.compareBtn.disabled = !allPairsValid;
-            }
-
-             function addNewPair() {
+            function addNewPair() {
                 if (comparisonPairs.length >= 10) { allDomElements.addPairBtn.disabled = true; return; }
                 const newPair = { customerFiles: [], blindIQFiles: [] };
                 comparisonPairs.push(newPair);
@@ -471,6 +440,131 @@
                     div.innerHTML = `<span class="text-sm text-slate-700">- ${guidelineData.enhancedGuideline}</span><button data-id="${doc.id}" class="delete-guideline-btn text-red-400 hover:text-red-600 font-bold ml-2 text-lg">&times;</button>`;
                     allDomElements.guidelinesList.appendChild(div);
                 });
+            }
+            
+            async function processSingleComparison(pair) {
+                const { customerFiles, blindIQFiles } = pair;
+                let feedbackExamples = "";
+                let guidelines = "";
+
+                if (db) {
+                    const feedbackQuery = query(getCollectionRef('feedback'));
+                    const guidelineQuery = query(getCollectionRef('guidelines'));
+                    const [feedbackSnapshot, guidelineSnapshot] = await Promise.all([getDocs(feedbackQuery), getDocs(guidelineQuery)]);
+                    
+                    const feedbackDocs = [];
+                    feedbackSnapshot.forEach(doc => feedbackDocs.push(doc.data()));
+                    if (feedbackDocs.length > 0) {
+                        feedbackDocs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+                        feedbackExamples = "\n## 5. CORRECTION EXAMPLES (LEARNING)\n" + feedbackDocs.slice(0, 10).map((fb, i) => `Example ${i + 1}:\n- Incorrect Item: ${JSON.stringify(fb.incorrectItem)}\n- Enhanced Explanation: "${fb.enhancedExplanation}"\n`).join("\n");
+                    }
+
+                    const guidelineDocs = [];
+                    guidelineSnapshot.forEach(doc => guidelineDocs.push(doc.data().enhancedGuideline));
+                    if (guidelineDocs.length > 0) {
+                        guidelines = "\n## 6. USER-DEFINED GUIDELINES (CRITICAL)\nYou must follow these rules without exception:\n- " + guidelineDocs.join("\n- ") + "\n";
+                    }
+                }
+
+                const systemPrompt = `
+                    # OrderBot - System Prompt
+                    ## 1. IDENTITY & PERSONA: You are OrderBot, an AI assistant.
+                    ## 2. CORE DIRECTIVE: Analyze 'customer' vs 'blindiq' files, extract parameters, compare them, and return a structured JSON report.
+                    ## 3. DATA EXTRACTION & ANALYSIS LOGIC:
+                    - You may receive one customer document and multiple Blind IQ documents. Your task is to treat all Blind IQ documents as a single, consolidated order and compare all of their combined line items against the single customer document.
+                    - For each line item in the 'Blinds' table, extract the primary fields: Item, Location, QTY, Width, Drop, Colour, Control, Blind Type, Range, and Fix. The 'Item' should correspond to the alphabetical identifier (A, B, C...).
+                    - You MUST also extract and compare all items from the 'Sundries' table against the customer document. Each sundry item has a description and a quantity. It is common for these items not to appear on the customer order; in this case, the result should be 'OMISSION'.
+                    - The 'Range' field corresponds to the fabric name. You MUST extract this value from the Blind IQ document only.
+                    - The 'Colour' field is often empty for certain Blind Types. You must accurately extract the colour if present, or an empty string "" if it is not.
+                    - CRITICAL: Look for a secondary line of text below the primary fields in the 'Blinds' table. This line contains detailed specifications separated by '|' and using '='. You MUST parse this line.
+                    - Compare all primary fields, all parsed specifications, and the special instructions between the two documents.
+                    ## 4. JSON OUTPUT STRUCTURE: Respond ONLY with a single JSON object conforming to the schema.
+                    ${guidelines}
+                    ${feedbackExamples}
+                `;
+
+                const parts = [{ text: systemPrompt }];
+                
+                const customerFilePromises = customerFiles.map(fileToB64);
+                const blindIQFilePromises = blindIQFiles.map(fileToB64);
+                const [customerB64FileObjects, blindIQB64FileObjects] = await Promise.all([
+                    Promise.all(customerFilePromises),
+                    Promise.all(blindIQFilePromises)
+                ]);
+
+                for (const fileObj of customerB64FileObjects) {
+                    parts.push({ text: `\n--- START CUSTOMER FILE: ${fileObj.name} ---` });
+                    parts.push({ inlineData: { mimeType: fileObj.type, data: fileObj.data } });
+                }
+                for (const fileObj of blindIQB64FileObjects) {
+                    parts.push({ text: `\n--- START BLIND IQ FILE: ${fileObj.name} ---` });
+                    parts.push({ inlineData: { mimeType: fileObj.type, data: fileObj.data } });
+                }
+
+                const comparisonFieldSchema = { type: "OBJECT", properties: { "customerValue": { "type": "STRING" }, "blindIQValue": { "type": "STRING" }, "result": { "type": "STRING", "enum": ["MATCH", "MISMATCH", "OMISSION", "NOTE"] }, "confidence": { "type": "NUMBER" } }, required: ["customerValue", "blindIQValue", "result", "confidence"] };
+                const schema = {
+                    type: "OBJECT",
+                    properties: {
+                        "bdoOrderNumber": { "type": "STRING" },
+                        "customerOrderNumber": comparisonFieldSchema,
+                        "specialInstructions": comparisonFieldSchema,
+                        "lineItems": {
+                            type: "ARRAY",
+                            items: {
+                                type: "OBJECT",
+                                properties: {
+                                    "item": comparisonFieldSchema,
+                                    "location": comparisonFieldSchema,
+                                    "qty": comparisonFieldSchema,
+                                    "width": comparisonFieldSchema,
+                                    "drop": comparisonFieldSchema,
+                                    "colour": comparisonFieldSchema,
+                                    "control": comparisonFieldSchema,
+                                    "blindType": comparisonFieldSchema,
+                                    "range": comparisonFieldSchema,
+                                    "fix": comparisonFieldSchema,
+                                    "specifications": {
+                                        type: "ARRAY",
+                                        items: {
+                                            type: "OBJECT",
+                                            properties: {
+                                                "specName": { "type": "STRING" },
+                                                "specComparison": comparisonFieldSchema
+                                            },
+                                            required: ["specName", "specComparison"]
+                                        }
+                                    }
+                                },
+                                required: ["item", "location", "qty", "width", "drop", "colour", "control", "blindType", "range", "fix"]
+                            }
+                        },
+                        "sundries": {
+                            type: "ARRAY",
+                            items: {
+                            type: "OBJECT",
+                                properties: {
+                                    "item": comparisonFieldSchema,
+                                    "quantity": { "type": "NUMBER" }
+                                },
+                                required: ["item", "quantity"]
+                            }
+                        }
+                    },
+                    required: ["bdoOrderNumber", "customerOrderNumber", "lineItems"]
+                };
+
+                const geminiPayload = { contents: [{ role: "user", parts: parts }], generationConfig: { responseMimeType: "application/json", responseSchema: schema } };
+                const proxyPayload = { model: 'gemini-3-pro-preview', payload: geminiPayload };
+                const response = await fetch(PROXY_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proxyPayload) });
+                const resultText = await response.text();
+                if (!response.ok) throw new Error(`API Error: ${response.status} ${response.statusText} - ${resultText}`);
+                const result = JSON.parse(resultText);
+                if (!result.candidates || result.candidates.length === 0 || !result.candidates[0].content) throw new Error("No content.");
+                const data = JSON.parse(result.candidates[0].content.parts[0].text);
+                if (db && data.bdoOrderNumber) {
+                    await addDoc(getCollectionRef('comparisons'), { ...data, timestamp: new Date().toISOString(), userId: userId });
+                }
+                return data;
             }
             
             function renderReportTable(data) {
@@ -684,7 +778,9 @@
                         const data = doc.data();
                         if (data.timestamp) {
                             const itemTime = new Date(data.timestamp).getTime();
-                            if (!isNaN(itemTime) && itemTime >= startOfDay && itemTime <= endOfDay) { dailyItems.push({ id: doc.id, ...data }); }
+                            if (!isNaN(itemTime) && itemTime >= startOfDay && itemTime <= endOfDay) {
+                                dailyItems.push({ id: doc.id, ...data });
+                            }
                         }
                     });
                     dailyItems.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
@@ -693,6 +789,36 @@
                     console.error("Error loading daily history:", error);
                     allDomElements.dailyHistoryList.innerHTML = `<p class="text-red-500 text-center py-4">Failed to load history. (Check console)</p>`;
                 }
+            }
+            
+            function setupDropZone(dropZone, fileInput, fileList, fileArray) {
+                dropZone.addEventListener('click', () => fileInput.click());
+                dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+                dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+                dropZone.addEventListener('drop', (e) => { e.preventDefault(); dropZone.classList.remove('drag-over'); handleFiles(e.dataTransfer.files, fileList, fileArray); });
+                fileInput.addEventListener('change', (e) => handleFiles(e.target.files, fileList, fileArray));
+            }
+
+            function handleFiles(files, fileListElem, fileArray) {
+                fileArray.length = 0;
+                [...files].forEach(file => { if (['application/pdf', 'image/jpeg', 'image/png'].includes(file.type)) { fileArray.push(file); } });
+                updateFileList(fileListElem, fileArray);
+                checkCompareButtonState();
+            }
+
+            function updateFileList(listElement, fileArray) {
+                listElement.innerHTML = '';
+                fileArray.forEach(file => {
+                    const li = document.createElement('li');
+                    li.className = 'file-item flex items-center justify-between bg-slate-100 p-2 rounded-md mt-2';
+                    li.innerHTML = `<span class="text-sm text-slate-700 truncate">${file.name}</span> <span class="text-xs text-slate-500">${(file.size / 1024).toFixed(1)} KB</span>`;
+                    listElement.appendChild(li);
+                });
+            }
+            
+            function checkCompareButtonState() {
+                const allPairsValid = comparisonPairs.every(pair => pair.customerFiles.length > 0 && pair.blindIQFiles.length > 0);
+                allDomElements.compareBtn.disabled = !allPairsValid;
             }
             
             function setupFabricDropZone() {
@@ -937,7 +1063,10 @@
                  const q = query(getCollectionRef('tube_properties'));
                  const snapshot = await getDocs(q);
                  listEl.innerHTML = '';
-                 if(snapshot.empty) listEl.innerHTML = '<p class="text-slate-400 italic text-center">No tube properties loaded.</p>'; return;
+                 if (snapshot.empty) { // <--- FIXED: Added curly braces
+                    listEl.innerHTML = '<p class="text-slate-400 italic text-center">No tube properties loaded.</p>'; 
+                    return;
+                 }
                  snapshot.forEach(doc => {
                      renderTubeRow(doc.id, doc.data());
                  });

@@ -804,7 +804,7 @@
             };
 
             const geminiPayload = { contents: [{ role: "user", parts: parts }], generationConfig: { responseMimeType: "application/json", responseSchema: schema } };
-            const proxyPayload = { model: 'gemini-2.5-pro', payload: geminiPayload };
+            const proxyPayload = { model: 'gemini-3.0-flash-preview', payload: geminiPayload };
             const response = await fetch(PROXY_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proxyPayload) });
             const resultText = await response.text();
             if (!response.ok) {
@@ -1164,7 +1164,7 @@
                 if (pastedImageB64) { enhancementParts.push({ inlineData: { mimeType: 'image/png', data: pastedImageB64.split(',')[1] } }); }
 
                 const geminiPayload = { contents: [{ role: "user", parts: enhancementParts }] };
-                const proxyPayload = { model: 'gemini-2.5-flash', payload: geminiPayload };
+                const proxyPayload = { model: 'gemini-3.0-flash-preview', payload: geminiPayload };
                 
                 const response = await fetch(PROXY_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proxyPayload) });
                 if (!response.ok) throw new Error('Failed to enhance explanation.');
@@ -1273,7 +1273,7 @@
                 
                 const enhancementSchema = { type: "OBJECT", properties: { "guidelines": { type: "ARRAY", items: { "type": "STRING" } } }, required: ["guidelines"] };
                 const geminiPayload = { contents: [{ role: "user", parts: [{ text: enhancementPrompt }] }], generationConfig: { responseMimeType: "application/json", responseSchema: enhancementSchema } };
-                const proxyPayload = { model: 'gemini-2.5-flash', payload: geminiPayload };
+                const proxyPayload = { model: 'gemini-3.0-flash-preview', payload: geminiPayload };
                 
                 const response = await fetch(PROXY_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proxyPayload) });
                 if (!response.ok) throw new Error('Load failed');

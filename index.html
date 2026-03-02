@@ -727,6 +727,7 @@
                 - The 'Range' field corresponds to the fabric name. You MUST extract this value from the Blind IQ document only.
                 - The 'Colour' field is often empty for certain Blind Types. You must accurately extract the colour if present, or an empty string "" if it is not.
                 - CRITICAL: Look for a secondary line of text below the primary fields in the 'Blinds' table. This line contains detailed specifications separated by '|' and using '='. You MUST parse this line.
+                - CRITICAL ACCURACY STEP: For each line item, you MUST first fill out the 'reasoning' field. Write a short paragraph explaining your step-by-step logic comparing the customer's request to the Blind IQ specifications. Only after writing your reasoning should you output the MATCH/MISMATCH results for that item's fields.
                 - Compare all primary fields, all parsed specifications, and the special instructions between the two documents.
                 ## 4. JSON OUTPUT STRUCTURE: Respond ONLY with a single JSON object conforming to the schema.
                 ${guidelines}
@@ -763,6 +764,7 @@
                         items: {
                             type: "OBJECT",
                             properties: {
+                                "reasoning": { "type": "STRING", "description": "Explain your step-by-step logic for comparing this entire blind against the customer document before outputting the comparison results below." },
                                 "item": comparisonFieldSchema,
                                 "location": comparisonFieldSchema,
                                 "qty": comparisonFieldSchema,
@@ -785,7 +787,7 @@
                                     }
                                 }
                             },
-                            required: ["item", "location", "qty", "width", "drop", "colour", "control", "blindType", "range", "fix"]
+                            required: ["reasoning", "item", "location", "qty", "width", "drop", "colour", "control", "blindType", "range", "fix"]
                         }
                     },
                     "sundries": {
@@ -808,9 +810,6 @@
                 generationConfig: { 
                     responseMimeType: "application/json", 
                     responseSchema: schema 
-                },
-                thinkingConfig: {
-                    thinkingLevel: "high"
                 }
             };
             const proxyPayload = { model: 'gemini-3-flash-preview', payload: geminiPayload };
@@ -1138,6 +1137,12 @@
                     return `<span class="spec-text ${resultClass}" data-spec-index="${specIndex}">${text}${tooltip}</span>`;
                 }).join(' | ');
 
+                const reasoningHtml = lineItem.reasoning ? `
+                    <div class="p-3 bg-indigo-50/40 border-t border-slate-200 text-xs text-slate-700">
+                        <strong class="text-indigo-800">AI Reasoning:</strong> <span class="italic">${lineItem.reasoning}</span>
+                    </div>
+                ` : '';
+
                 return `
                     <div class="line-item-container border border-slate-200 rounded-lg mb-4" data-row-index="${index}">
                         ${validationHtml}
@@ -1156,6 +1161,7 @@
                         <div class="p-3 bg-white text-xs text-slate-600">
                             ${specHtml}
                         </div>
+                        ${reasoningHtml}
                     </div>
                 `;
             }).join('');

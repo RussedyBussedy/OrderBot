@@ -13,7 +13,7 @@
         .drop-zone {
             border: 2px dashed #cbd5e1;
             transition: background-color 0.2s ease-in-out, border-color 0.2s ease-in-out;
-            min-height: 120px; /* Reduced height */
+            min-height: 120px;
         }
         .drop-zone.drag-over {
             background-color: #e2e8f0;
@@ -51,7 +51,7 @@
         .reportable-cell, .reportable-spec {
             cursor: pointer;
             position: relative;
-            word-break: break-word; /* Added to prevent text overflow */
+            word-break: break-word;
         }
         .reportable-cell:hover {
             background-color: #eef2ff !important;
@@ -70,7 +70,6 @@
         .spec-mismatch { color: #b91c1c; font-weight: 600; }
         .spec-low-confidence { color: #b45309; }
         
-        /* Tooltip styles */
         .tooltip {
             position: absolute;
             bottom: 100%;
@@ -92,7 +91,6 @@
             visibility: visible;
         }
 
-        /* New Feedback Modal Styles */
         #feedback-textarea-container {
             position: relative;
         }
@@ -127,7 +125,6 @@
             transition: max-height 0.5s ease-in-out;
         }
 
-        /* Collapsible Section Styles */
         .collapsible-content {
             max-height: 0;
             overflow: hidden;
@@ -147,7 +144,6 @@
     <div class="container mx-auto p-4 md:p-8">
         <header class="bg-white p-4 rounded-lg mb-8 flex items-center justify-between shadow-sm">
             <div class="flex items-center gap-4">
-                <!-- SVG Logo -->
                 <svg class="w-12 h-12 text-slate-800" viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg">
                       <circle cx="30" cy="30" r="28" stroke="currentColor" stroke-width="2.5"/>
                       <path d="M18 20 H42" stroke="currentColor" stroke-width="2.5"/>
@@ -168,9 +164,7 @@
         </header>
 
         <main>
-             <!-- Management Sections -->
             <div class="space-y-4 mb-8">
-                <!-- Guidelines Section -->
                 <div class="bg-white rounded-lg shadow-sm overflow-hidden">
                     <div id="guidelines-header" class="flex justify-between items-center p-4 cursor-pointer">
                         <h3 class="font-bold text-lg text-slate-800">AI Guidelines</h3>
@@ -178,15 +172,13 @@
                     </div>
                     <div id="guidelines-content" class="collapsible-content">
                         <div class="p-4 border-t border-slate-200">
-                             <button id="add-guideline-btn" class="w-full bg-indigo-100 text-indigo-700 font-bold py-2 px-4 rounded-lg hover:bg-indigo-200 transition-colors text-sm mb-3">Add Guideline/s</button>
+                             <button id="add-guideline-btn" class="w-full bg-indigo-100 text-indigo-700 font-bold py-2 px-4 rounded-lg hover:bg-indigo-200 transition-colors text-sm mb-3">Add / Unify Guideline/s</button>
                             <div id="guidelines-list" class="text-sm text-slate-600 space-y-2">
-                                <!-- Guidelines will be loaded here -->
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <!-- Fabric Properties Section -->
                 <div id="fabric-properties-section" class="bg-white rounded-lg shadow-sm overflow-hidden">
                     <div id="fabric-properties-header" class="flex justify-between items-center p-4 cursor-pointer">
                         <h3 class="font-bold text-lg text-slate-800">Fabric Properties</h3>
@@ -200,7 +192,6 @@
                                 <input type="file" id="fabric-csv-upload" class="hidden" accept=".csv">
                             </label>
                             <div id="fabric-properties-list" class="space-y-2">
-                                <!-- Fabric properties will be loaded here -->
                             </div>
                              <button id="add-fabric-btn" class="w-full mt-4 bg-green-100 text-green-700 font-bold py-2 px-4 rounded-lg hover:bg-green-200 transition-colors text-sm">
                                 Add New Fabric
@@ -209,7 +200,6 @@
                     </div>
                 </div>
 
-                <!-- Motor Properties Section -->
                 <div id="motor-properties-section" class="bg-white rounded-lg shadow-sm overflow-hidden">
                     <div id="motor-properties-header" class="flex justify-between items-center p-4 cursor-pointer">
                         <h3 class="font-bold text-lg text-slate-800">Motor Properties</h3>
@@ -223,7 +213,6 @@
                                 <input type="file" id="motor-csv-upload" class="hidden" accept=".csv">
                             </label>
                             <div id="motor-properties-list" class="space-y-2">
-                                <!-- Motor properties will be loaded here -->
                             </div>
                              <button id="add-motor-btn" class="w-full mt-4 bg-green-100 text-green-700 font-bold py-2 px-4 rounded-lg hover:bg-green-200 transition-colors text-sm">
                                 Add New Motor
@@ -232,7 +221,6 @@
                     </div>
                 </div>
                 
-                <!-- Tube Properties Section -->
                 <div id="tube-properties-section" class="bg-white rounded-lg shadow-sm overflow-hidden">
                     <div id="tube-properties-header" class="flex justify-between items-center p-4 cursor-pointer">
                         <h3 class="font-bold text-lg text-slate-800">Tube Properties</h3>
@@ -246,7 +234,6 @@
                                 <input type="file" id="tube-csv-upload" class="hidden" accept=".csv">
                             </label>
                             <div id="tube-properties-list" class="space-y-2">
-                                <!-- Tube properties will be loaded here -->
                             </div>
                              <button id="add-tube-btn" class="w-full mt-4 bg-green-100 text-green-700 font-bold py-2 px-4 rounded-lg hover:bg-green-200 transition-colors text-sm">
                                 Add New Tube
@@ -256,7 +243,6 @@
                 </div>
             </div>
 
-            <!-- History Section -->
             <div id="history-section" class="mb-8 bg-white p-6 rounded-lg shadow-sm">
                 <h3 class="font-bold text-lg text-slate-800 mb-3">Comparison History</h3>
                 <div class="flex flex-col sm:flex-row gap-2">
@@ -267,10 +253,8 @@
                 <div id="history-results" class="mt-4 space-y-4"></div>
             </div>
 
-            <!-- Upload Section -->
             <div id="upload-section">
                 <div id="upload-pairs-container" class="space-y-6">
-                    <!-- Upload pair template will be cloned here -->
                 </div>
                 <div class="mt-6 flex justify-center">
                     <button id="add-pair-btn" class="bg-slate-200 text-slate-800 font-bold py-2 px-4 rounded-lg hover:bg-slate-300 transition-colors">+ Add Another Order</button>
@@ -280,7 +264,6 @@
                 </div>
             </div>
 
-            <!-- Comparison Report Section -->
             <div id="report-section" class="bg-white rounded-lg shadow-md p-6 md:p-8 hidden">
                 <div id="report-actions" class="flex justify-between items-center mb-6 border-b pb-4">
                      <h2 class="text-2xl font-bold text-slate-900">Comparison Summary</h2>
@@ -294,9 +277,9 @@
     <!-- Modals -->
     <div id="guideline-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden items-center justify-center p-4 modal-backdrop">
         <div class="modal-content bg-white rounded-lg shadow-xl w-full max-w-lg">
-             <div class="p-6 border-b"><h3 class="text-xl font-semibold text-slate-800">Add New Guideline/s</h3><p class="text-sm text-slate-500">Add one or more rules for OrderBot to follow. You can use a list.</p></div>
+             <div class="p-6 border-b"><h3 class="text-xl font-semibold text-slate-800">Add & Consolidate Guideline/s</h3><p class="text-sm text-slate-500">The AI will actively integrate this into the master list to prevent logic conflicts.</p></div>
              <div class="p-6"><label for="guideline-input" class="block text-sm font-medium text-slate-700 mb-2">Describe the new rule(s):</label><textarea id="guideline-input" rows="4" class="w-full p-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" placeholder="e.g., 1. If the location is 'Kitchen', the material must be water-resistant. 2. All shutter orders must specify a 'Rebate' type."></textarea></div>
-             <div class="px-6 py-4 bg-slate-50 rounded-b-lg flex justify-end gap-3"><button id="cancel-guideline-btn" class="bg-white text-slate-700 font-semibold py-2 px-4 rounded-md border border-slate-300 hover:bg-slate-100">Cancel</button><button id="save-guideline-btn" class="bg-indigo-600 text-white font-bold py-2 px-4 rounded-md hover:bg-indigo-700">Save Guideline/s</button></div>
+             <div class="px-6 py-4 bg-slate-50 rounded-b-lg flex justify-end gap-3"><button id="cancel-guideline-btn" class="bg-white text-slate-700 font-semibold py-2 px-4 rounded-md border border-slate-300 hover:bg-slate-100">Cancel</button><button id="save-guideline-btn" class="bg-indigo-600 text-white font-bold py-2 px-4 rounded-md hover:bg-indigo-700">Integrate Guideline/s</button></div>
         </div>
     </div>
 
@@ -331,7 +314,6 @@
         </div>
     </div>
 
-    <!-- Template for upload pairs -->
     <template id="upload-pair-template">
         <div class="upload-pair border-t-2 pt-6">
             <div class="grid md:grid-cols-2 gap-8">
@@ -361,7 +343,7 @@
         import { getFirestore, collection, addDoc, getDocs, query, where, deleteDoc, doc, writeBatch, getDoc, setDoc, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // =================================================================================
-        // === STEP 1: FIREBASE CONFIGURATION (Publicly Visible) ===
+        // === STEP 1: FIREBASE CONFIGURATION ===
         // =================================================================================
         const firebaseConfig = {
             apiKey: "AIzaSyB3x__sOsj8EPS9KnpweD6uWIhVt9ACNBM",
@@ -390,8 +372,8 @@
             userId = auth.currentUser?.uid;
             console.log("Firebase initialized and user signed in. UID:", userId);
         } catch (error) {
-            console.error("Firebase initialization failed. Please check your firebaseConfig object.", error);
-            alert("Could not connect to the database. Please ensure your Firebase configuration is correct.");
+            console.error("Firebase initialization failed.", error);
+            alert("Could not connect to the database.");
         }
 
         let comparisonPairs = [];
@@ -489,8 +471,8 @@
                 data: reader.result.split(',')[1]
             });
             reader.onerror = (error) => {
-                console.error("FileReader error on file:", file.name, error);
-                reject(new Error(`Failed to read file "${file.name}".`));
+                console.error("FileReader error", error);
+                reject(new Error(`Failed to read file`));
             };
         });
 
@@ -652,7 +634,6 @@
             summaryResultsCache = [];
             let failedPairs = [];
 
-            // Fetch properties once for the whole batch
             batchStatus.textContent = 'Fetching properties...';
             const [fabricProperties, motorProperties, tubeProperties] = await Promise.all([
                 getFabricProperties(),
@@ -727,7 +708,7 @@
                 - The 'Range' field corresponds to the fabric name. You MUST extract this value from the Blind IQ document only.
                 - The 'Colour' field is often empty for certain Blind Types. You must accurately extract the colour if present, or an empty string "" if it is not.
                 - CRITICAL: Look for a secondary line of text below the primary fields in the 'Blinds' table. This line contains detailed specifications separated by '|' and using '='. You MUST parse this line.
-                - CRITICAL ACCURACY STEP: For each line item, you MUST first fill out the 'reasoning' field. Write a short paragraph explaining your step-by-step logic comparing the customer's request to the Blind IQ specifications. Only after writing your reasoning should you output the MATCH/MISMATCH results for that item's fields.
+                - CRITICAL ACCURACY STEP: For each line item, you MUST first fill out the 'reasoning' field. You must explicitly write out the Customer value vs the Blind IQ value for EVERY specification (especially Rail Size, Closure Catch, Controls, etc.). Do not skip any specs. Only after writing your reasoning should you output the MATCH/MISMATCH results for that item's fields.
                 - Compare all primary fields, all parsed specifications, and the special instructions between the two documents.
                 - CRITICAL EXHAUSTION: You MUST extract and compare EVERY SINGLE blind and sundry item found in the documents. Do not skip, summarize, or truncate. If there are 9 blinds, your JSON array MUST contain exactly 9 objects.
                 ## 4. JSON OUTPUT STRUCTURE: Respond ONLY with a single JSON object conforming to the schema.
@@ -765,7 +746,7 @@
                         items: {
                             type: "OBJECT",
                             properties: {
-                                "reasoning": { "type": "STRING", "description": "Explain your step-by-step logic for comparing this entire blind against the customer document before outputting the comparison results below." },
+                                "reasoning": { "type": "STRING", "description": "Before outputting the results, explicitly list EACH field and specification (e.g., Rail Size, Closure Catch) side-by-side (Customer vs Blind IQ). If they are different, explicitly state 'MISMATCH'." },
                                 "item": comparisonFieldSchema,
                                 "location": comparisonFieldSchema,
                                 "qty": comparisonFieldSchema,
@@ -809,6 +790,7 @@
             const geminiPayload = { 
                 contents: [{ role: "user", parts: parts }], 
                 generationConfig: { 
+                    temperature: 0.1, // Ultra-rigid deterministic extraction
                     responseMimeType: "application/json", 
                     responseSchema: schema 
                 }
@@ -819,7 +801,7 @@
             let response;
             let resultText;
             const maxRetries = 3;
-            let delay = 2000; // 2 seconds initial wait
+            let delay = 2000;
 
             for (let attempt = 1; attempt <= maxRetries; attempt++) {
                 try {
@@ -832,23 +814,20 @@
                     resultText = await response.text();
 
                     if (response.ok) {
-                        break; // Success! Exit the retry loop.
+                        break;
                     }
 
-                    // Retry only on specific High Demand/Capacity/Server errors
                     if (response.status === 503 || response.status === 429 || response.status >= 500) {
                         if (attempt === maxRetries) {
                             throw new Error(`API Error: ${response.status} ${response.statusText} - ${resultText}`);
                         }
                         console.warn(`Attempt ${attempt} encountered ${response.status}. Retrying in ${delay/1000}s...`);
                         await new Promise(resolve => setTimeout(resolve, delay));
-                        delay *= 2; // Exponential backoff (2s, 4s, 8s...)
+                        delay *= 2; 
                     } else {
-                        // Throw immediately for 400s (Bad Request, Unauthorized) as retrying won't fix bad code/keys
                         throw new Error(`API Error: ${response.status} ${response.statusText} - ${resultText}`);
                     }
                 } catch (error) {
-                    // Catch network/DNS level errors
                     if (attempt === maxRetries) {
                         throw error; 
                     }
@@ -891,7 +870,6 @@
                     let hasLowConfidence = false;
                     let hasAlert = false;
 
-                    // Check for mismatches, omissions, or any validation alerts
                     if (data.motorValidation) hasAlert = true;
                     (data.lineItems || []).forEach(item => {
                         if (item.fabricValidation || item.colourValidation || item.motorValidation || item.torqueValidation || item.controlValidation) hasAlert = true;
@@ -933,7 +911,7 @@
                                 <div class="flex items-center gap-3">
                                     <span class="font-bold">${data.bdoOrderNumber || 'Unknown Order'}</span>
                                     <span class="text-[10px] bg-white/60 text-slate-600 px-2 py-0.5 rounded-full border border-slate-300 font-mono uppercase shadow-sm tracking-wider">
-                                        ${data.modelUsed || 'GEMINI-3'}
+                                        ${data.modelUsed || 'GEMINI-2.5-PRO'}
                                     </span>
                                 </div>
                                 <span class="text-sm font-semibold">${status.replace('-', ' ').toUpperCase()}${hasAlert ? ' (ACTION REQUIRED)' : ''}</span>
@@ -982,6 +960,26 @@
             const dataToUse = reportData;
 
             reportContainer.addEventListener('click', (e) => {
+                const reasoningToggle = e.target.closest('.reasoning-toggle');
+                if (reasoningToggle) {
+                    const content = reasoningToggle.nextElementSibling;
+                    const icon = reasoningToggle.querySelector('.chevron-icon');
+                    
+                    if (content.style.maxHeight) {
+                        content.style.maxHeight = null;
+                        if(icon) icon.style.transform = 'rotate(0deg)';
+                    } else {
+                        content.style.maxHeight = content.scrollHeight + "px";
+                        if(icon) icon.style.transform = 'rotate(180deg)';
+                        
+                        const parentDetails = reasoningToggle.closest('.summary-item-details');
+                        if (parentDetails && parentDetails.style.maxHeight) {
+                            parentDetails.style.maxHeight = (parseInt(parentDetails.style.maxHeight) + content.scrollHeight) + "px";
+                        }
+                    }
+                    return;
+                }
+
                 const target = e.target.closest('.reportable-cell, .spec-text, .sundry-header');
                 if (!target) return;
                 
@@ -991,6 +989,10 @@
                         details.style.maxHeight = null;
                     } else {
                         details.style.maxHeight = details.scrollHeight + "px";
+                        const parentDetails = target.closest('.summary-item-details');
+                        if (parentDetails && parentDetails.style.maxHeight) {
+                            parentDetails.style.maxHeight = (parseInt(parentDetails.style.maxHeight) + details.scrollHeight) + "px";
+                        }
                     }
                     return;
                 }
@@ -1074,9 +1076,6 @@
                 <div class="mb-4 p-4 rounded-lg ${data.customerOrderNumber.result === 'MATCH' ? 'bg-green-100' : 'bg-red-100'}">
                     <div class="flex items-center gap-3 mb-1">
                         <h3 class="font-bold text-lg ${data.customerOrderNumber.result === 'MATCH' ? 'text-green-800' : 'text-red-800'}">Order Number Comparison</h3>
-                        <span class="text-[10px] bg-white/60 text-slate-600 px-2 py-0.5 rounded-full border border-slate-300 font-mono uppercase shadow-sm tracking-wider">
-                            ${data.modelUsed || 'GEMINI-3'}
-                        </span>
                     </div>
                     <p class="text-sm ${data.customerOrderNumber.result === 'MATCH' ? 'text-green-700' : 'text-red-700'}">
                         Customer O/N: <strong>${data.customerOrderNumber.customerValue}</strong> | Blind IQ O/N: <strong>${data.customerOrderNumber.blindIQValue}</strong>
@@ -1097,7 +1096,7 @@
                     validationHtml += `<div class="p-2 text-sm font-semibold ${alertClass} flex items-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.21 3.03-1.742 3.03H4.42c-1.532 0-2.492-1.696-1.742-3.03l5.58-9.92zM10 13a1 1 0 110-2 1 1 0 010 2zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" /></svg> ${lineItem.fabricValidation.message}</div>`;
                 }
                 if(lineItem.colourValidation) {
-                     const alertClass = 'bg-red-100 text-red-800'; // Always an error for colour
+                     const alertClass = 'bg-red-100 text-red-800';
                     validationHtml += `<div class="p-2 text-sm font-semibold ${alertClass} flex items-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.21 3.03-1.742 3.03H4.42c-1.532 0-2.492-1.696-1.742-3.03l5.58-9.92zM10 13a1 1 0 110-2 1 1 0 010 2zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" /></svg> ${lineItem.colourValidation.message}</div>`;
                 }
                 if (lineItem.controlValidation) {
@@ -1139,8 +1138,16 @@
                 }).join(' | ');
 
                 const reasoningHtml = lineItem.reasoning ? `
-                    <div class="p-3 bg-indigo-50/40 border-t border-slate-200 text-xs text-slate-700">
-                        <strong class="text-indigo-800">AI Reasoning:</strong> <span class="italic">${lineItem.reasoning}</span>
+                    <div class="border-t border-slate-200">
+                        <div class="reasoning-toggle p-2 bg-indigo-50/40 cursor-pointer flex justify-between items-center text-xs text-indigo-800 hover:bg-indigo-100 transition-colors">
+                            <strong><span class="mr-2">🧠</span> AI Reasoning Log</strong>
+                            <svg class="chevron-icon w-4 h-4 transition-transform duration-300" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg>
+                        </div>
+                        <div class="reasoning-content max-h-0 overflow-hidden transition-all duration-300 ease-in-out bg-white text-xs text-slate-700">
+                            <div class="p-3 italic whitespace-pre-wrap">
+                                ${lineItem.reasoning}
+                            </div>
+                        </div>
                     </div>
                 ` : '';
 
@@ -1283,7 +1290,7 @@
                         pastedImageB64 = e.target.result;
                         allDomElements.feedbackImagePreview.src = pastedImageB64;
                         allDomElements.feedbackImageContainer.classList.remove('hidden');
-                        allDomElements.feedbackExplanation.style.paddingLeft = '72px'; // Make space for the image
+                        allDomElements.feedbackExplanation.style.paddingLeft = '72px';
                     };
                     reader.readAsDataURL(blob);
                     event.preventDefault();
@@ -1318,7 +1325,7 @@
         });
 
 
-        // --- GUIDELINE LOGIC ---
+        // --- GUIDELINE LOGIC (UPDATED FOR CONSOLIDATION) ---
         allDomElements.addGuidelineBtn.addEventListener('click', () => {
             allDomElements.guidelineModal.style.display = 'flex';
         });
@@ -1336,46 +1343,85 @@
             allDomElements.saveGuidelineBtn.innerHTML = `<div class="loader !w-5 !h-5 !border-2 mx-auto"></div>`;
 
             try {
-                const enhancementPrompt = `You are an expert prompt engineer. A user has provided a block of text that may contain one or more guidelines for an AI tool. Your tasks are:
-                1. Identify each distinct rule or guideline in the user's text.
-                2. For each rule, rewrite it into a clear, precise, and unambiguous instruction that an AI can easily follow.
-                3. Return these enhanced guidelines as a JSON array of strings.
-                User's text: "${guidelineText}"`;
+                // 1. Fetch existing guidelines
+                const guidelineQuery = query(collection(db, `orderbot_guidelines`));
+                const querySnapshot = await getDocs(guidelineQuery);
+                const existingDocs = [];
+                querySnapshot.forEach(docSnap => {
+                    existingDocs.push({ id: docSnap.id, text: docSnap.data().enhancedGuideline });
+                });
+                const existingText = existingDocs.map(d => `- ${d.text}`).join('\n');
+
+                // 2. Build Consolidation Prompt
+                const consolidationPrompt = `You are an expert AI system architect. 
+                Existing System Guidelines:
+                ${existingText ? existingText : "None."}
+
+                New Rule(s) provided by the user:
+                "${guidelineText}"
+
+                Your task:
+                1. Integrate the new rule(s) into the existing guidelines.
+                2. Review the ENTIRE combined list to find and resolve any contradictions. If the new rule contradicts an old rule, the NEW rule takes precedence. Remove or modify the old rule to ensure perfect mathematical logic.
+                3. Merge any redundant rules to prevent cognitive overload.
+                4. Return a highly optimized, unified master list of instructions.
+                5. Output strictly as a JSON array of strings.`;
                 
                 const enhancementSchema = { type: "OBJECT", properties: { "guidelines": { type: "ARRAY", items: { "type": "STRING" } } }, required: ["guidelines"] };
-                const geminiPayload = { contents: [{ role: "user", parts: [{ text: enhancementPrompt }] }], generationConfig: { responseMimeType: "application/json", responseSchema: enhancementSchema } };
+                const geminiPayload = { 
+                    contents: [{ role: "user", parts: [{ text: consolidationPrompt }] }], 
+                    generationConfig: { 
+                        temperature: 0.1, 
+                        responseMimeType: "application/json", 
+                        responseSchema: enhancementSchema 
+                    } 
+                };
+                
+                // Use Flash for prompt engineering tasks as it is extremely fast and capable of logic grouping
                 const proxyPayload = { model: 'gemini-3-flash-preview', payload: geminiPayload };
                 
                 const response = await fetch(PROXY_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proxyPayload) });
-                if (!response.ok) throw new Error('Load failed');
+                if (!response.ok) throw new Error('API Request failed during guideline consolidation.');
 
                 const result = await response.json();
                 if (!result.candidates?.[0]?.content?.parts?.[0]?.text) {
-                    throw new Error('Failed to enhance guideline. API returned empty or invalid JSON.');
+                    throw new Error('Failed to enhance guidelines. API returned empty or invalid JSON.');
                 }
+                
                 const data = JSON.parse(result.candidates[0].content.parts[0].text);
-                const enhancedGuidelines = data.guidelines;
+                const unifiedGuidelines = data.guidelines;
 
-                const savePromises = enhancedGuidelines.map(guideline => {
-                    return addDoc(collection(db, `orderbot_guidelines`), {
+                // 3. Batch Delete Old Guidelines
+                if (existingDocs.length > 0) {
+                    const deleteBatch = writeBatch(db);
+                    existingDocs.forEach(d => {
+                        deleteBatch.delete(doc(db, 'orderbot_guidelines', d.id));
+                    });
+                    await deleteBatch.commit();
+                }
+
+                // 4. Batch Add New Unified Guidelines
+                const addBatch = writeBatch(db);
+                unifiedGuidelines.forEach(guideline => {
+                    const newDocRef = doc(collection(db, 'orderbot_guidelines'));
+                    addBatch.set(newDocRef, {
                         userId: userId,
                         timestamp: new Date().toISOString(),
-                        originalGuideline: guidelineText, // Store original block for context
+                        originalUserInput: guidelineText,
                         enhancedGuideline: guideline
                     });
                 });
-
-                await Promise.all(savePromises);
+                await addBatch.commit();
                 
                 allDomElements.cancelGuidelineBtn.click();
                 loadAndDisplayGuidelines();
 
             } catch(error) {
-                console.error("Error saving guideline:", error);
-                alert("Failed to save guideline(s).");
+                console.error("Error saving/consolidating guideline:", error);
+                alert("Failed to save and unify guideline(s).");
             } finally {
                 allDomElements.saveGuidelineBtn.disabled = false;
-                allDomElements.saveGuidelineBtn.textContent = 'Save Guideline/s';
+                allDomElements.saveGuidelineBtn.textContent = 'Integrate Guideline/s';
             }
         });
 
@@ -1489,7 +1535,7 @@
 
                 if (columns.length >= 4) {
                     const name = columns[0];
-                    const weightString = columns[1].replace(',', '.'); // Handle both . and , for decimals
+                    const weightString = columns[1].replace(',', '.');
                     const weight = parseFloat(weightString);
                     const width = parseInt(columns[2], 10);
                     const canTurn = columns[3];

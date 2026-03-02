@@ -803,13 +803,62 @@
                 required: ["bdoOrderNumber", "customerOrderNumber", "lineItems"]
             };
 
-            const geminiPayload = { contents: [{ role: "user", parts: parts }], generationConfig: { responseMimeType: "application/json", responseSchema: schema } };
-            const proxyPayload = { model: 'gemini-3.1-pro-preview', payload: geminiPayload };
-            const response = await fetch(PROXY_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proxyPayload) });
-            const resultText = await response.text();
-            if (!response.ok) {
-                throw new Error(`API Error: ${response.status} ${response.statusText} - ${resultText}`);
+            const geminiPayload = { 
+                contents: [{ role: "user", parts: parts }], 
+                generationConfig: { 
+                    responseMimeType: "application/json", 
+                    responseSchema: schema 
+                },
+                thinkingConfig: {
+                    thinkingLevel: "high"
+                }
+            };
+            const proxyPayload = { model: 'gemini-3-flash-preview', payload: geminiPayload };
+            
+            // --- CIRCUIT BREAKER / RETRY LOGIC ---
+            let response;
+            let resultText;
+            const maxRetries = 3;
+            let delay = 2000; // 2 seconds initial wait
+
+            for (let attempt = 1; attempt <= maxRetries; attempt++) {
+                try {
+                    response = await fetch(PROXY_API_URL, { 
+                        method: 'POST', 
+                        headers: { 'Content-Type': 'application/json' }, 
+                        body: JSON.stringify(proxyPayload) 
+                    });
+                    
+                    resultText = await response.text();
+
+                    if (response.ok) {
+                        break; // Success! Exit the retry loop.
+                    }
+
+                    // Retry only on specific High Demand/Capacity/Server errors
+                    if (response.status === 503 || response.status === 429 || response.status >= 500) {
+                        if (attempt === maxRetries) {
+                            throw new Error(`API Error: ${response.status} ${response.statusText} - ${resultText}`);
+                        }
+                        console.warn(`Attempt ${attempt} encountered ${response.status}. Retrying in ${delay/1000}s...`);
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                        delay *= 2; // Exponential backoff (2s, 4s, 8s...)
+                    } else {
+                        // Throw immediately for 400s (Bad Request, Unauthorized) as retrying won't fix bad code/keys
+                        throw new Error(`API Error: ${response.status} ${response.statusText} - ${resultText}`);
+                    }
+                } catch (error) {
+                    // Catch network/DNS level errors
+                    if (attempt === maxRetries) {
+                        throw error; 
+                    }
+                    console.warn(`Network error on attempt ${attempt}: ${error.message}. Retrying in ${delay/1000}s...`);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    delay *= 2;
+                }
             }
+            // --- END RETRY LOGIC ---
+
             const result = JSON.parse(resultText);
             if (!result.candidates || result.candidates.length === 0 || !result.candidates[0].content) {
                 let errorMessage = "No valid content received from the API.";
@@ -820,7 +869,12 @@
                 }
                 throw new Error(errorMessage);
             }
+            
             const data = JSON.parse(result.candidates[0].content.parts[0].text);
+            
+            // Inject Model Type into data for display
+            data.modelUsed = result.modelVersion || proxyPayload.model;
+
             if (db && data.bdoOrderNumber) {
                 await addDoc(collection(db, `orderbot_comparisons`), { ...data, timestamp: new Date().toISOString(), userId: userId });
             }
@@ -876,7 +930,12 @@
                     summaryHtml += `
                         <div class="summary-item border rounded-lg overflow-hidden">
                             <div class="summary-item-header p-4 cursor-pointer flex justify-between items-center ${statusClasses}" data-summary-index="${index}">
-                                <span class="font-bold">${data.bdoOrderNumber || 'Unknown Order'}</span>
+                                <div class="flex items-center gap-3">
+                                    <span class="font-bold">${data.bdoOrderNumber || 'Unknown Order'}</span>
+                                    <span class="text-[10px] bg-white/60 text-slate-600 px-2 py-0.5 rounded-full border border-slate-300 font-mono uppercase shadow-sm tracking-wider">
+                                        ${data.modelUsed || 'GEMINI-3'}
+                                    </span>
+                                </div>
                                 <span class="text-sm font-semibold">${status.replace('-', ' ').toUpperCase()}${hasAlert ? ' (ACTION REQUIRED)' : ''}</span>
                             </div>
                             <div class="summary-item-details p-4 border-t border-slate-200">
@@ -1013,7 +1072,12 @@
             const orderNumberRow = `
                 ${globalValidationHtml}
                 <div class="mb-4 p-4 rounded-lg ${data.customerOrderNumber.result === 'MATCH' ? 'bg-green-100' : 'bg-red-100'}">
-                    <h3 class="font-bold text-lg ${data.customerOrderNumber.result === 'MATCH' ? 'text-green-800' : 'text-red-800'}">Order Number Comparison</h3>
+                    <div class="flex items-center gap-3 mb-1">
+                        <h3 class="font-bold text-lg ${data.customerOrderNumber.result === 'MATCH' ? 'text-green-800' : 'text-red-800'}">Order Number Comparison</h3>
+                        <span class="text-[10px] bg-white/60 text-slate-600 px-2 py-0.5 rounded-full border border-slate-300 font-mono uppercase shadow-sm tracking-wider">
+                            ${data.modelUsed || 'GEMINI-3'}
+                        </span>
+                    </div>
                     <p class="text-sm ${data.customerOrderNumber.result === 'MATCH' ? 'text-green-700' : 'text-red-700'}">
                         Customer O/N: <strong>${data.customerOrderNumber.customerValue}</strong> | Blind IQ O/N: <strong>${data.customerOrderNumber.blindIQValue}</strong>
                         <span class="font-bold ml-2">${getIndicator(data.customerOrderNumber.result)} ${data.customerOrderNumber.result}</span>

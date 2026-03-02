@@ -729,6 +729,7 @@
                 - CRITICAL: Look for a secondary line of text below the primary fields in the 'Blinds' table. This line contains detailed specifications separated by '|' and using '='. You MUST parse this line.
                 - CRITICAL ACCURACY STEP: For each line item, you MUST first fill out the 'reasoning' field. Write a short paragraph explaining your step-by-step logic comparing the customer's request to the Blind IQ specifications. Only after writing your reasoning should you output the MATCH/MISMATCH results for that item's fields.
                 - Compare all primary fields, all parsed specifications, and the special instructions between the two documents.
+                - CRITICAL EXHAUSTION: You MUST extract and compare EVERY SINGLE blind and sundry item found in the documents. Do not skip, summarize, or truncate. If there are 9 blinds, your JSON array MUST contain exactly 9 objects.
                 ## 4. JSON OUTPUT STRUCTURE: Respond ONLY with a single JSON object conforming to the schema.
                 ${guidelines}
                 ${feedbackExamples}
@@ -812,7 +813,7 @@
                     responseSchema: schema 
                 }
             };
-            const proxyPayload = { model: 'gemini-3-flash-preview', payload: geminiPayload };
+            const proxyPayload = { model: 'gemini-2.5-pro', payload: geminiPayload };
             
             // --- CIRCUIT BREAKER / RETRY LOGIC ---
             let response;

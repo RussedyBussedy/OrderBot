@@ -461,6 +461,15 @@
             'outdoor wire x',
             'outdoor widescreen'
         ];
+        
+        const BLIND_TYPES_REQUIRING_DUAL_CONTROL = [
+            'element roller sys 40',
+            'roller system 55',
+            'element double roller',
+            'outdoor free hang',
+            'element vision',
+            'vision blind'
+        ];
 
         const fileToB64 = (file) => new Promise((resolve, reject) => {
             const reader = new FileReader();
@@ -703,12 +712,16 @@
                 ## 2. CORE DIRECTIVE: Analyze 'customer' vs 'blindiq' files, extract parameters, compare them, and return a structured JSON report.
                 ## 3. DATA EXTRACTION & ANALYSIS LOGIC:
                 - You may receive one customer document and multiple Blind IQ documents. Your task is to treat all Blind IQ documents as a single, consolidated order and compare all of their combined line items against the single customer document.
-                - For each line item in the 'Blinds' table, extract the primary fields: Item, Location, QTY, Width, Drop, Colour, Control, Blind Type, Range, and Fix. The 'Item' should correspond to the alphabetical identifier (A, B, C...).
+                - For each line item in the 'Blinds' table, extract the primary fields: Item, Location, QTY, Width, Drop, Colour, Control 1, Control 2, Blind Type, Range, and Fix. The 'Item' should correspond to the alphabetical identifier (A, B, C...).
                 - You MUST also extract and compare all items from the 'Sundries' table against the customer document. Each sundry item has a description and a quantity. It is common for these items not to appear on the customer order; in this case, the result should be 'OMISSION'.
                 - The 'Range' field corresponds to the fabric name. You MUST extract this value from the Blind IQ document only.
                 - The 'Colour' field is often empty for certain Blind Types. You must accurately extract the colour if present, or an empty string "" if it is not.
                 - CRITICAL: Look for a secondary line of text below the primary fields in the 'Blinds' table. This line contains detailed specifications separated by '|' and using '='. You MUST parse this line.
-                - CRITICAL ACCURACY STEP: For each line item, you MUST first fill out the 'reasoning' field. You must explicitly write out the Customer value vs the Blind IQ value for EVERY specification (especially Rail Size, Closure Catch, Controls, etc.). Do not skip any specs. Only after writing your reasoning should you output the MATCH/MISMATCH results for that item's fields.
+                - CRITICAL TABLE EXTRACTION: The 'Blinds' table has TWO side-by-side columns that are BOTH named 'Control'. 
+                    1. Map the left-most 'Control' column to the 'control1' JSON field.
+                    2. Map the right-most 'Control' column to the 'control2' JSON field.
+                    3. If a cell is visually blank in the grid, extract it as an empty string "". Do not shift data from other columns into these fields.
+                - CRITICAL ACCURACY STEP: For each line item, you MUST first fill out the 'reasoning' field. You must explicitly list EACH field (including Control 1 and Control 2) and specification side-by-side (Customer vs Blind IQ). If they are different, explicitly state 'MISMATCH'.
                 - Compare all primary fields, all parsed specifications, and the special instructions between the two documents.
                 - CRITICAL EXHAUSTION: You MUST extract and compare EVERY SINGLE blind and sundry item found in the documents. Do not skip, summarize, or truncate. If there are 9 blinds, your JSON array MUST contain exactly 9 objects.
                 ## 4. JSON OUTPUT STRUCTURE: Respond ONLY with a single JSON object conforming to the schema.
@@ -746,14 +759,15 @@
                         items: {
                             type: "OBJECT",
                             properties: {
-                                "reasoning": { "type": "STRING", "description": "Before outputting the results, explicitly list EACH field and specification (e.g., Rail Size, Closure Catch) side-by-side (Customer vs Blind IQ). If they are different, explicitly state 'MISMATCH'." },
+                                "reasoning": { "type": "STRING", "description": "Before outputting the results, explicitly list EACH field and specification side-by-side (Customer vs Blind IQ). If they are different, explicitly state 'MISMATCH'." },
                                 "item": comparisonFieldSchema,
                                 "location": comparisonFieldSchema,
                                 "qty": comparisonFieldSchema,
                                 "width": comparisonFieldSchema,
                                 "drop": comparisonFieldSchema,
                                 "colour": comparisonFieldSchema,
-                                "control": comparisonFieldSchema,
+                                "control1": { ...comparisonFieldSchema, description: "The LEFT-MOST 'Control' column in the Blind IQ document." },
+                                "control2": { ...comparisonFieldSchema, description: "The RIGHT-MOST 'Control' column in the Blind IQ document." },
                                 "blindType": comparisonFieldSchema,
                                 "range": comparisonFieldSchema,
                                 "fix": comparisonFieldSchema,
@@ -769,7 +783,7 @@
                                     }
                                 }
                             },
-                            required: ["reasoning", "item", "location", "qty", "width", "drop", "colour", "control", "blindType", "range", "fix"]
+                            required: ["reasoning", "item", "location", "qty", "width", "drop", "colour", "control1", "control2", "blindType", "range", "fix"]
                         }
                     },
                     "sundries": {
@@ -1154,7 +1168,7 @@
                 return `
                     <div class="line-item-container border border-slate-200 rounded-lg mb-4" data-row-index="${index}">
                         ${validationHtml}
-                        <div class="grid grid-cols-10 bg-slate-50 font-semibold text-sm text-slate-700 border-b border-slate-200 divide-x divide-slate-200">
+                        <div class="grid grid-cols-11 bg-slate-50 font-semibold text-sm text-slate-700 border-b border-slate-200 divide-x divide-slate-200">
                             ${renderCell(lineItem.item, 'item', 'Item')}
                             ${renderCell(lineItem.qty, 'qty', 'QTY')}
                             ${renderCell(lineItem.location, 'location', 'Location')}
@@ -1163,7 +1177,8 @@
                             ${renderCell(lineItem.colour, 'colour', 'Colour')}
                             ${renderCell(lineItem.width, 'width', 'Width')}
                             ${renderCell(lineItem.drop, 'drop', 'Drop')}
-                            ${renderCell(lineItem.control, 'control', 'Control')}
+                            ${renderCell(lineItem.control1, 'control1', 'Control 1')}
+                            ${renderCell(lineItem.control2, 'control2', 'Control 2')}
                             ${renderCell(lineItem.fix, 'fix', 'Fix')}
                         </div>
                         <div class="p-3 bg-white text-xs text-slate-600">
@@ -1736,14 +1751,27 @@
                         }
                     }
 
-                    // --- NEW 3. Control Configuration Validation ---
-                    const controlValue = item.control?.blindIQValue?.toLowerCase() || '';
+                    // --- 3. Control Configuration Validation ---
+                    const control1Value = item.control1?.blindIQValue?.toLowerCase() || '';
+                    const control2Value = item.control2?.blindIQValue?.toLowerCase() || '';
+                    const combinedControlValue = control1Value + ' ' + control2Value;
+                    
                     const blindTypeForControlCheck = item.blindType?.blindIQValue?.toLowerCase().trim();
 
-                    if (blindTypeForControlCheck && BLIND_TYPES_REQUIRING_CONTROL_VALIDATION.includes(blindTypeForControlCheck)) {
-                        const hasValidControl = controlValue.includes('chain') || controlValue.includes('motor') || controlValue.includes('dual');
+                    // Specific Blind Types that MUST have both controls populated
+                    if (blindTypeForControlCheck && BLIND_TYPES_REQUIRING_DUAL_CONTROL.includes(blindTypeForControlCheck)) {
+                        if (!control1Value || !control2Value) {
+                            item.controlValidation = { type: 'error', message: `Control Alert: Both Control columns must be populated for ${item.blindType.blindIQValue}.` };
+                            if (!control1Value && item.control1) item.control1.result = 'MISMATCH';
+                            if (!control2Value && item.control2) item.control2.result = 'MISMATCH';
+                        }
+                    }
 
-                        if (!hasValidControl) {
+                    // General Blind Types that must contain specific keywords
+                    if (blindTypeForControlCheck && BLIND_TYPES_REQUIRING_CONTROL_VALIDATION.includes(blindTypeForControlCheck)) {
+                        const hasValidControl = combinedControlValue.includes('chain') || combinedControlValue.includes('motor') || combinedControlValue.includes('dual');
+
+                        if (!hasValidControl && !item.controlValidation) {
                             item.controlValidation = { type: 'error', message: `Control Alert: Invalid configuration. Each blind must have a 'chain', 'motor', or 'dual' control.` };
                         }
                     }
@@ -1760,7 +1788,7 @@
         
         function validateMotorDependencies(data, motorProperties, tubeProperties, fabricProperties) {
             const motorizedBlinds = (data.lineItems || []).filter(item => {
-                const control = item.control?.blindIQValue?.toLowerCase() || '';
+                const control = (item.control1?.blindIQValue || '') + ' ' + (item.control2?.blindIQValue || '').toLowerCase();
                 return control.includes('motor') || control.includes('dual');
             });
 
@@ -1821,7 +1849,7 @@
                 if (!blind) return;
                 
                 const blindType = blind.blindType.blindIQValue;
-                const blindControl = (blind.control.blindIQValue || '').toLowerCase().split(',').map(s => s.trim());
+                const blindControl = ((blind.control1?.blindIQValue || '') + ' ' + (blind.control2?.blindIQValue || '')).toLowerCase().split(',').map(s => s.trim());
                 
                 const motorProp = motorObj.potentialProps.find(p => p.blindType.toLowerCase().trim() === blindType.toLowerCase().trim());
 
@@ -1868,7 +1896,7 @@
                 
                 const validBlindControls = (motorProp.blindControl || '').toLowerCase().split(',').map(s=>s.trim());
                 if (validBlindControls.length > 0 && !blindControl.some(c => validBlindControls.includes(c))) {
-                     blind.motorValidation.push(`Control Alert: "${blind.control.blindIQValue}" is not a valid control for motor "${motorProp.motorName}". Valid options: [${motorProp.blindControl}]`);
+                     blind.motorValidation.push(`Control Alert: Missing valid control for motor "${motorProp.motorName}". Valid options: [${motorProp.blindControl}]`);
                 }
 
                 const controllerCheck = checkListItem(orderedControllers, motorProp.controlOptions);

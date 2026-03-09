@@ -716,11 +716,12 @@
                 - You MUST also extract and compare all items from the 'Sundries' table against the customer document. Each sundry item has a description and a quantity. It is common for these items not to appear on the customer order; in this case, the result should be 'OMISSION'.
                 - The 'Range' field corresponds to the fabric name. You MUST extract this value from the Blind IQ document only.
                 - The 'Colour' field is often empty for certain Blind Types. You must accurately extract the colour if present, or an empty string "" if it is not.
-                - CRITICAL: Look for a secondary line of text below the primary fields in the 'Blinds' table. This line contains detailed specifications separated by '|' and using '='. You MUST parse this line.
                 - CRITICAL TABLE EXTRACTION: The 'Blinds' table has TWO side-by-side columns that are BOTH named 'Control'. 
                     1. Map the left-most 'Control' column to the 'control1' JSON field.
                     2. Map the right-most 'Control' column to the 'control2' JSON field.
                     3. If a cell is visually blank in the grid, extract it as an empty string "". Do not shift data from other columns into these fields.
+                - CRITICAL: Look for a secondary line of text below the primary fields in the 'Blinds' table. This line contains detailed specifications separated by '|' and using '='. You MUST parse this line.
+                - CRITICAL: The secondary specification line is NOT a separate blind. It belongs to the blind in the row immediately above it. Do NOT create a new, empty line item for the specifications row, and ignore completely blank separator rows. Every extracted line item MUST have a valid alphabetical 'Item' identifier (A, B, C...).
                 - CRITICAL ACCURACY STEP: For each line item, you MUST first fill out the 'reasoning' field. You must explicitly list EACH field (including Control 1 and Control 2) and specification side-by-side (Customer vs Blind IQ). If they are different, explicitly state 'MISMATCH'.
                 - Compare all primary fields, all parsed specifications, and the special instructions between the two documents.
                 - CRITICAL EXHAUSTION: You MUST extract and compare EVERY SINGLE blind and sundry item found in the documents. Do not skip, summarize, or truncate. If there are 9 blinds, your JSON array MUST contain exactly 9 objects.
@@ -865,6 +866,15 @@
             
             const data = JSON.parse(result.candidates[0].content.parts[0].text);
             
+            // Filter out phantom/empty line items caused by AI misinterpreting sub-rows or blank spacer rows
+            if (data.lineItems && Array.isArray(data.lineItems)) {
+                data.lineItems = data.lineItems.filter(li => {
+                    const hasItemLetter = li.item && (li.item.blindIQValue?.trim() !== '' || li.item.customerValue?.trim() !== '');
+                    const hasBlindType = li.blindType && (li.blindType.blindIQValue?.trim() !== '' || li.blindType.customerValue?.trim() !== '');
+                    return hasItemLetter || hasBlindType; // Keep only genuine rows
+                });
+            }
+
             // Inject Model Type into data for display
             data.modelUsed = result.modelVersion || proxyPayload.model;
 

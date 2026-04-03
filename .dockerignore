@@ -1,0 +1,7 @@
+node_modules
+.git
+.DS_Store
+.gitignore
+CLAUDE.md
+README.md
+*.log

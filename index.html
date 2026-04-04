@@ -439,7 +439,7 @@
         // === STEP 2: YOUR SECURE PROXY URL ===
         // =================================================================================
         const PROXY_API_URL = 'https://gemini-secure-proxy-51064902388.africa-south1.run.app';
-        const PROMPT_VERSION = 'v1.3';
+        const PROMPT_VERSION = 'v1.4';
         // =================================================================================
 
 
@@ -856,6 +856,7 @@
             async function processOne(index) {
                 try {
                     let result = await processSingleComparison(comparisonPairs[index]);
+                    result = await reExtractLowConfidence(result, comparisonPairs[index].customerFiles, comparisonPairs[index].blindIQFiles);
                     result = runPostAIValidations(result, fabricProperties, motorProperties, tubeProperties);
                     result = applyConfidenceThresholds(result);
                     const reasoningFlags = analyzeReasoningPatterns(result.lineItems);
@@ -884,6 +885,7 @@
                 for (let i = 0; i < failedPairs.length; i++) {
                     try {
                         let result = await processSingleComparison(failedPairs[i].pair);
+                        result = await reExtractLowConfidence(result, failedPairs[i].pair.customerFiles, failedPairs[i].pair.blindIQFiles);
                         result = runPostAIValidations(result, fabricProperties, motorProperties, tubeProperties);
                         result = applyConfidenceThresholds(result);
                         const reasoningFlags = analyzeReasoningPatterns(result.lineItems);
@@ -916,6 +918,140 @@
             });
             scored.sort((a, b) => b._relevanceScore - a._relevanceScore || new Date(b.timestamp) - new Date(a.timestamp));
             return scored.slice(0, 10);
+        }
+
+        async function reExtractLowConfidence(data, customerFiles, blindIQFiles) {
+            const THRESHOLD = 0.80;
+            const FIELDS = ['item', 'location', 'qty', 'width', 'drop', 'colour', 'control1', 'control2', 'blindType', 'range', 'fix'];
+
+            // Find items with 2+ fields below confidence threshold
+            const lowConfidenceItems = (data.lineItems || []).reduce((acc, item, idx) => {
+                const lowFields = FIELDS.filter(f => item[f] && item[f].confidence < THRESHOLD);
+                if (lowFields.length >= 2) acc.push({ idx, item, lowFields });
+                return acc;
+            }, []);
+
+            if (lowConfidenceItems.length === 0) return data;
+
+            console.log(`[OrderBot] Pass 2 triggered for ${lowConfidenceItems.length} item(s): ${lowConfidenceItems.map(x => x.item.item?.blindIQValue || `#${x.idx + 1}`).join(', ')}`);
+
+            const itemDescriptions = lowConfidenceItems.map(({ item, lowFields }) =>
+                `- Item ${item.item?.blindIQValue || '?'} (re-check: ${lowFields.join(', ')})`
+            ).join('\n');
+
+            const focusedPrompt = `
+# TASK
+Re-examine ONLY the following specific line items from the order documents. The first extraction pass had low confidence on these items. Re-read the documents carefully and extract these items again with maximum precision.
+
+# ITEMS TO RE-EXAMINE
+${itemDescriptions}
+
+# RULES
+- Return ONLY the items listed above in the lineItems array. Do not include other items.
+- LEFT Control column = control1, RIGHT Control column = control2.
+- Every item MUST have a valid alphabetical item identifier (A, B, C...).
+- Fill the reasoning field first with a side-by-side comparison of each field.
+
+# OUTPUT
+Respond only with a JSON object containing a lineItems array.
+            `.trim();
+
+            // Re-encode files for second API call
+            const [customerB64Files, blindIQB64Files] = await Promise.all([
+                Promise.all(customerFiles.map(fileToB64)),
+                Promise.all(blindIQFiles.map(fileToB64))
+            ]);
+
+            const parts = [];
+            for (const f of customerB64Files) {
+                parts.push({ text: `\n--- START CUSTOMER FILE: ${f.name} ---` });
+                parts.push({ inlineData: { mimeType: f.type, data: f.data } });
+            }
+            for (const f of blindIQB64Files) {
+                parts.push({ text: `\n--- START BLIND IQ FILE: ${f.name} ---` });
+                parts.push({ inlineData: { mimeType: f.type, data: f.data } });
+            }
+
+            const cfSchema = { type: "OBJECT", properties: { customerValue: { type: "STRING" }, blindIQValue: { type: "STRING" }, result: { type: "STRING", enum: ["MATCH", "MISMATCH", "OMISSION", "NOTE"] }, confidence: { type: "NUMBER" } }, required: ["customerValue", "blindIQValue", "result", "confidence"] };
+            const focusedSchema = {
+                type: "OBJECT",
+                properties: {
+                    lineItems: {
+                        type: "ARRAY",
+                        items: {
+                            type: "OBJECT",
+                            properties: {
+                                reasoning: { type: "STRING" },
+                                item: cfSchema, location: cfSchema, qty: cfSchema,
+                                width: cfSchema, drop: cfSchema, colour: cfSchema,
+                                control1: cfSchema, control2: cfSchema,
+                                blindType: cfSchema, range: cfSchema, fix: cfSchema,
+                                specifications: {
+                                    type: "ARRAY",
+                                    items: {
+                                        type: "OBJECT",
+                                        properties: { specName: { type: "STRING" }, specComparison: cfSchema },
+                                        required: ["specName", "specComparison"]
+                                    }
+                                }
+                            },
+                            required: ["reasoning", "item", "location", "qty", "width", "drop", "colour", "control1", "control2", "blindType", "range", "fix"]
+                        }
+                    }
+                },
+                required: ["lineItems"]
+            };
+
+            try {
+                const geminiPayload = {
+                    systemInstruction: { parts: [{ text: focusedPrompt }] },
+                    contents: [{ role: "user", parts: parts }],
+                    generationConfig: { temperature: 0.2, responseMimeType: "application/json", responseSchema: focusedSchema }
+                };
+                const response = await fetch(PROXY_API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ model: 'gemini-2.5-pro', payload: geminiPayload })
+                });
+
+                if (!response.ok) {
+                    console.warn('[OrderBot] Pass 2 API call failed, using original results');
+                    return data;
+                }
+
+                const result = await response.json();
+                if (!result.candidates?.[0]?.content?.parts?.[0]?.text) {
+                    console.warn('[OrderBot] Pass 2 returned no content, using original results');
+                    return data;
+                }
+
+                const pass2Data = JSON.parse(result.candidates[0].content.parts[0].text);
+                let mergedCount = 0;
+
+                (pass2Data.lineItems || []).forEach(p2Item => {
+                    const p2Id = p2Item.item?.blindIQValue?.trim().toUpperCase();
+                    const orig = data.lineItems.find(li => li.item?.blindIQValue?.trim().toUpperCase() === p2Id);
+                    if (!orig) return;
+
+                    FIELDS.forEach(f => {
+                        if (!p2Item[f] || !orig[f]) return;
+                        if (p2Item[f].confidence > orig[f].confidence) {
+                            orig[f] = { ...p2Item[f], _fromPass2: true };
+                            mergedCount++;
+                        }
+                    });
+
+                    if (p2Item.reasoning) {
+                        orig.reasoning = `[Pass 1] ${orig.reasoning || ''}\n[Pass 2] ${p2Item.reasoning}`;
+                    }
+                });
+
+                console.log(`[OrderBot Perf] Pass 2 complete — ${mergedCount} field(s) updated from re-extraction`);
+            } catch (err) {
+                console.warn('[OrderBot] Pass 2 re-extraction failed:', err.message, '— using original results');
+            }
+
+            return data;
         }
 
         async function processSingleComparison(pair) {

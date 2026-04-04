@@ -297,12 +297,23 @@
 
             <div id="history-section" class="mb-8 bg-white p-6 rounded-lg shadow-sm">
                 <h3 class="font-bold text-lg text-slate-800 mb-3">Comparison History</h3>
-                <div class="flex flex-col sm:flex-row gap-2">
+                <div class="flex flex-col sm:flex-row gap-2 flex-wrap">
                     <input type="text" id="history-search-input" class="w-full sm:w-auto flex-grow p-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" placeholder="Search by Order Number">
+                    <div class="flex items-center gap-2">
+                        <label class="text-sm text-slate-500 whitespace-nowrap">From</label>
+                        <input type="date" id="history-from-date" class="p-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm">
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <label class="text-sm text-slate-500 whitespace-nowrap">To</label>
+                        <input type="date" id="history-to-date" class="p-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm">
+                    </div>
                     <button id="history-search-btn" class="bg-slate-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-slate-700 transition-colors">Find History</button>
                     <button id="clear-history-btn" class="bg-red-500 text-white font-bold py-2 px-6 rounded-lg hover:bg-red-600 transition-colors hidden">Clear</button>
                 </div>
                 <div id="history-results" class="mt-4 space-y-4"></div>
+                <div id="history-load-more-container" class="mt-4 text-center hidden">
+                    <button id="history-load-more-btn" class="bg-slate-200 text-slate-700 font-bold py-2 px-8 rounded-lg hover:bg-slate-300 transition-colors">Load More</button>
+                </div>
             </div>
 
             <div id="upload-section">
@@ -395,7 +406,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, addDoc, getDocs, query, where, deleteDoc, doc, writeBatch, getDoc, setDoc, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, collection, addDoc, getDocs, query, where, orderBy, limit, startAfter, deleteDoc, doc, writeBatch, getDoc, setDoc, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // =================================================================================
         // === STEP 1: FIREBASE CONFIGURATION ===
@@ -434,6 +445,7 @@
         let comparisonPairs = [];
         let itemToCorrect = null, pastedImageB64 = null;
         let historyDataCache = [];
+        let lastHistoryDoc = null;
         let summaryResultsCache = [];
 
         const allDomElements = {
@@ -449,11 +461,15 @@
             feedbackExplanation: document.getElementById('feedback-explanation'), 
             cancelFeedbackBtn: document.getElementById('cancel-feedback-btn'), 
             submitFeedbackBtn: document.getElementById('submit-feedback-btn'),
-            historySection: document.getElementById('history-section'), 
-            historySearchInput: document.getElementById('history-search-input'), 
+            historySection: document.getElementById('history-section'),
+            historySearchInput: document.getElementById('history-search-input'),
             historySearchBtn: document.getElementById('history-search-btn'),
-            historyResults: document.getElementById('history-results'), 
-            uploadSection: document.getElementById('upload-section'), 
+            historyResults: document.getElementById('history-results'),
+            historyFromDate: document.getElementById('history-from-date'),
+            historyToDate: document.getElementById('history-to-date'),
+            historyLoadMoreContainer: document.getElementById('history-load-more-container'),
+            historyLoadMoreBtn: document.getElementById('history-load-more-btn'),
+            uploadSection: document.getElementById('upload-section'),
             newComparisonBtn: document.getElementById('new-comparison-btn'),
             clearHistoryBtn: document.getElementById('clear-history-btn'),
             feedbackTextareaContainer: document.getElementById('feedback-textarea-container'),
@@ -654,11 +670,18 @@
         
         allDomElements.compareBtn.addEventListener('click', runAllComparisons);
         allDomElements.newComparisonBtn.addEventListener('click', resetUI);
-        allDomElements.historySearchBtn.addEventListener('click', findHistory);
+        allDomElements.historySearchBtn.addEventListener('click', () => findHistory(false));
+        allDomElements.historySearchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') findHistory(false); });
+        allDomElements.historyLoadMoreBtn.addEventListener('click', () => findHistory(true));
         allDomElements.clearHistoryBtn.addEventListener('click', () => {
             allDomElements.historyResults.innerHTML = '';
             allDomElements.historySearchInput.value = '';
+            allDomElements.historyFromDate.value = '';
+            allDomElements.historyToDate.value = '';
+            allDomElements.historyLoadMoreContainer.classList.add('hidden');
             allDomElements.clearHistoryBtn.classList.add('hidden');
+            lastHistoryDoc = null;
+            historyDataCache = [];
         });
         
         function resetUI() {
@@ -668,6 +691,11 @@
             allDomElements.clearHistoryBtn.classList.add('hidden');
             allDomElements.historyResults.innerHTML = '';
             allDomElements.historySearchInput.value = '';
+            allDomElements.historyFromDate.value = '';
+            allDomElements.historyToDate.value = '';
+            allDomElements.historyLoadMoreContainer.classList.add('hidden');
+            lastHistoryDoc = null;
+            historyDataCache = [];
             
             comparisonPairs = [];
             allDomElements.uploadPairsContainer.innerHTML = '';
@@ -675,67 +703,91 @@
             checkCompareButtonState();
         }
 
-        async function findHistory() {
+        async function findHistory(append = false) {
             const searchTerm = allDomElements.historySearchInput.value.trim().toLowerCase();
             if (!searchTerm) { showToast("Please enter an order number to search.", 'warning'); return; }
             if (!db) { showToast("History feature is unavailable. Database not connected.", 'error'); return; }
 
-            allDomElements.historyResults.innerHTML = `<div class="flex items-center gap-2 text-slate-600"><div class="loader !w-6 !h-6"></div>Searching for history...</div>`;
-            
-            try {
-                const historyQuery = query(collection(db, `orderbot_comparisons`));
-                const querySnapshot = await getDocs(historyQuery);
-                
+            if (!append) {
+                lastHistoryDoc = null;
                 historyDataCache = [];
-                querySnapshot.forEach(doc => { historyDataCache.push(doc.data()); });
+                allDomElements.historyResults.innerHTML = `<div class="flex items-center gap-2 text-slate-600"><div class="loader !w-6 !h-6"></div>Searching for history...</div>`;
+                allDomElements.historyLoadMoreContainer.classList.add('hidden');
+            } else {
+                allDomElements.historyLoadMoreBtn.textContent = 'Loading...';
+                allDomElements.historyLoadMoreBtn.disabled = true;
+            }
 
-                const filteredDocs = historyDataCache.filter(doc => 
-                    (doc.bdoOrderNumber && String(doc.bdoOrderNumber).toLowerCase().includes(searchTerm)) ||
-                    (doc.customerOrderNumber && doc.customerOrderNumber.customerValue && doc.customerOrderNumber.customerValue.toLowerCase().includes(searchTerm))
-                );
+            const fromDateVal = allDomElements.historyFromDate.value;
+            const toDateVal = allDomElements.historyToDate.value;
 
-                if (filteredDocs.length === 0) {
-                    allDomElements.historyResults.innerHTML = `<p class="text-slate-500">No history found for search term: <strong>${searchTerm}</strong></p>`;
+            try {
+                const PAGE_SIZE = 20;
+                const constraints = [
+                    where('bdoOrderNumberLower', '>=', searchTerm),
+                    where('bdoOrderNumberLower', '<=', searchTerm + '\uf8ff'),
+                    orderBy('bdoOrderNumberLower'),
+                    limit(PAGE_SIZE)
+                ];
+                if (append && lastHistoryDoc) constraints.push(startAfter(lastHistoryDoc));
+
+                const historyQuery = query(collection(db, 'orderbot_comparisons'), ...constraints);
+                const querySnapshot = await getDocs(historyQuery);
+
+                if (querySnapshot.empty && !append) {
+                    allDomElements.historyResults.innerHTML = `<p class="text-slate-500">No history found for: <strong>${searchTerm}</strong></p>`;
                     allDomElements.clearHistoryBtn.classList.remove('hidden');
                     return;
                 }
-                
-                const latestComparisons = new Map();
-                filteredDocs.forEach(doc => {
-                    const orderNum = doc.bdoOrderNumber || (doc.customerOrderNumber ? doc.customerOrderNumber.customerValue : null);
-                    if (orderNum) {
-                        const existing = latestComparisons.get(orderNum);
-                        if (!existing || new Date(doc.timestamp) > new Date(existing.timestamp)) {
-                            latestComparisons.set(orderNum, doc);
-                        }
-                    }
-                });
 
-                const finalResults = Array.from(latestComparisons.values())
-                    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+                lastHistoryDoc = querySnapshot.docs[querySnapshot.docs.length - 1] || null;
+                let docs = querySnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
 
-                allDomElements.historyResults.innerHTML = '';
-                finalResults.forEach((data, index) => {
-                    const historyItemDiv = document.createElement('div');
-                    historyItemDiv.className = 'history-item border border-slate-200 rounded-lg p-4';
-                    historyItemDiv.dataset.historyIndex = index;
-                    const formattedDate = new Date(data.timestamp).toLocaleString('en-ZA');
-                    historyItemDiv.innerHTML = `<h4 class="font-bold text-md text-slate-700">Comparison from: ${formattedDate}</h4>`;
-                    historyItemDiv.innerHTML += renderReportTable(data);
-                    allDomElements.historyResults.appendChild(historyItemDiv);
-                });
-                
-                allDomElements.historyResults.querySelectorAll('.history-item').forEach(item => {
-                    const historyIndex = item.dataset.historyIndex;
-                    const reportData = finalResults[historyIndex];
-                    setupReportInteraction(item, reportData);
-                });
+                if (fromDateVal) docs = docs.filter(d => d.timestamp >= fromDateVal);
+                if (toDateVal) docs = docs.filter(d => d.timestamp <= toDateVal + 'T23:59:59');
+
+                if (!append) allDomElements.historyResults.innerHTML = '';
+
+                if (docs.length === 0 && !append) {
+                    allDomElements.historyResults.innerHTML = `<p class="text-slate-500">No history found for: <strong>${searchTerm}</strong></p>`;
+                } else {
+                    const startIndex = historyDataCache.length;
+                    historyDataCache.push(...docs);
+                    docs.forEach((data, i) => {
+                        const index = startIndex + i;
+                        const historyItemDiv = document.createElement('div');
+                        historyItemDiv.className = 'history-item border border-slate-200 rounded-lg p-4';
+                        historyItemDiv.dataset.historyIndex = index;
+                        const formattedDate = new Date(data.timestamp).toLocaleString('en-ZA');
+                        historyItemDiv.innerHTML = `<h4 class="font-bold text-md text-slate-700">Comparison from: ${formattedDate}</h4>`;
+                        historyItemDiv.innerHTML += renderReportTable(data);
+                        allDomElements.historyResults.appendChild(historyItemDiv);
+                        setupReportInteraction(historyItemDiv, data);
+                    });
+                }
+
+                if (querySnapshot.docs.length === PAGE_SIZE) {
+                    allDomElements.historyLoadMoreContainer.classList.remove('hidden');
+                    allDomElements.historyLoadMoreBtn.textContent = 'Load More';
+                    allDomElements.historyLoadMoreBtn.disabled = false;
+                } else {
+                    allDomElements.historyLoadMoreContainer.classList.add('hidden');
+                }
 
                 allDomElements.clearHistoryBtn.classList.remove('hidden');
 
             } catch (error) {
                 console.error("Error fetching history:", error);
-                allDomElements.historyResults.innerHTML = `<p class="text-red-500">Failed to fetch history. Please check the console.</p>`;
+                const errMsg = error.code === 'failed-precondition'
+                    ? 'A Firestore index is required. Check the browser console for a direct link to create it.'
+                    : `Failed to fetch history. ${error.message}`;
+                if (!append) {
+                    allDomElements.historyResults.innerHTML = `<p class="text-red-500">${errMsg}</p>`;
+                } else {
+                    showToast(errMsg, 'error');
+                    allDomElements.historyLoadMoreBtn.textContent = 'Load More';
+                    allDomElements.historyLoadMoreBtn.disabled = false;
+                }
                 allDomElements.clearHistoryBtn.classList.remove('hidden');
             }
         }
@@ -986,7 +1038,7 @@
             data.modelUsed = result.modelVersion || proxyPayload.model;
 
             if (db && data.bdoOrderNumber) {
-                await addDoc(collection(db, `orderbot_comparisons`), { ...data, timestamp: new Date().toISOString(), userId: userId });
+                await addDoc(collection(db, `orderbot_comparisons`), { ...data, timestamp: new Date().toISOString(), userId: userId, bdoOrderNumberLower: data.bdoOrderNumber ? String(data.bdoOrderNumber).toLowerCase() : '' });
             }
             return data;
         }

@@ -459,6 +459,8 @@
         let comparisonPairs = [];
         let itemToCorrect = null, pastedImageB64 = null;
         let historyDataCache = [];
+        let _feedbackGuidelineCache = { feedback: null, guidelines: null, timestamp: 0 };
+        const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
         let lastHistoryDoc = null;
         let summaryResultsCache = [];
 
@@ -839,8 +841,9 @@
                 </div>`;
 
             const batchStatus = document.getElementById('batch-status');
-            summaryResultsCache = [];
+            summaryResultsCache = new Array(comparisonPairs.length);
             let failedPairs = [];
+            let completed = 0;
 
             batchStatus.textContent = 'Fetching properties...';
             const [fabricProperties, motorProperties, tubeProperties] = await Promise.all([
@@ -849,31 +852,41 @@
                 getTubeProperties()
             ]);
 
-            for (let i = 0; i < comparisonPairs.length; i++) {
-                batchStatus.textContent = `Processing order ${i + 1} of ${comparisonPairs.length}...`;
-                progressBar.style.width = `${10 + (i / comparisonPairs.length) * 80}%`;
+            const CONCURRENCY = 2;
+            async function processOne(index) {
                 try {
-                    let result = await processSingleComparison(comparisonPairs[i]);
+                    let result = await processSingleComparison(comparisonPairs[index]);
                     result = runPostAIValidations(result, fabricProperties, motorProperties, tubeProperties);
-                    summaryResultsCache.push({ status: 'success', data: result });
+                    summaryResultsCache[index] = { status: 'success', data: result };
                 } catch (error) {
-                    console.error(`Failed comparison for pair ${i}:`, error);
-                    summaryResultsCache.push({ status: 'failed', error: error.message, orderNumber: `Pair ${i+1}` });
-                    failedPairs.push({pair: comparisonPairs[i], originalIndex: i});
+                    console.error(`Failed comparison for pair ${index}:`, error);
+                    summaryResultsCache[index] = { status: 'failed', error: error.message, orderNumber: `Pair ${index + 1}` };
+                    failedPairs.push({ pair: comparisonPairs[index], originalIndex: index });
                 }
+                completed++;
+                batchStatus.textContent = `Completed ${completed} of ${comparisonPairs.length}...`;
+                progressBar.style.width = `${10 + (completed / comparisonPairs.length) * 80}%`;
+            }
+
+            for (let i = 0; i < comparisonPairs.length; i += CONCURRENCY) {
+                const chunk = [];
+                for (let j = i; j < Math.min(i + CONCURRENCY, comparisonPairs.length); j++) {
+                    chunk.push(processOne(j));
+                }
+                await Promise.allSettled(chunk);
             }
 
             if (failedPairs.length > 0) {
-                 batchStatus.textContent = `Retrying ${failedPairs.length} failed orders...`;
-                 for (let i = 0; i < failedPairs.length; i++) {
-                     try {
-                         let result = await processSingleComparison(failedPairs[i].pair);
-                         result = runPostAIValidations(result, fabricProperties, motorProperties, tubeProperties);
-                         summaryResultsCache[failedPairs[i].originalIndex] = { status: 'success', data: result };
-                     } catch (error) {
-                         console.error(`Retry failed for pair ${failedPairs[i].originalIndex}:`, error);
-                     }
-                 }
+                batchStatus.textContent = `Retrying ${failedPairs.length} failed orders...`;
+                for (let i = 0; i < failedPairs.length; i++) {
+                    try {
+                        let result = await processSingleComparison(failedPairs[i].pair);
+                        result = runPostAIValidations(result, fabricProperties, motorProperties, tubeProperties);
+                        summaryResultsCache[failedPairs[i].originalIndex] = { status: 'success', data: result };
+                    } catch (error) {
+                        console.error(`Retry failed for pair ${failedPairs[i].originalIndex}:`, error);
+                    }
+                }
             }
 
             progressBar.style.width = '100%';
@@ -891,21 +904,26 @@
             let guidelines = "";
 
             if (db) {
-                const feedbackQuery = query(collection(db, `orderbot_feedback`));
-                const guidelineQuery = query(collection(db, `orderbot_guidelines`));
-                const [feedbackSnapshot, guidelineSnapshot] = await Promise.all([getDocs(feedbackQuery), getDocs(guidelineQuery)]);
-                
-                const feedbackDocs = [];
-                feedbackSnapshot.forEach(doc => feedbackDocs.push(doc.data()));
-                if (feedbackDocs.length > 0) {
-                    feedbackDocs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-                    feedbackExamples = "\n## 5. CORRECTION EXAMPLES (LEARNING)\n" + feedbackDocs.slice(0, 10).map((fb, i) => `Example ${i + 1}:\n- Incorrect Item: ${JSON.stringify(fb.incorrectItem)}\n- Enhanced Explanation: "${fb.enhancedExplanation}"\n`).join("\n");
+                if (!_feedbackGuidelineCache.feedback || (Date.now() - _feedbackGuidelineCache.timestamp > CACHE_TTL_MS)) {
+                    const feedbackQuery = query(collection(db, `orderbot_feedback`));
+                    const guidelineQuery = query(collection(db, `orderbot_guidelines`));
+                    const [feedbackSnapshot, guidelineSnapshot] = await Promise.all([getDocs(feedbackQuery), getDocs(guidelineQuery)]);
+                    const feedbackDocs = [];
+                    feedbackSnapshot.forEach(doc => feedbackDocs.push(doc.data()));
+                    const guidelineDocs = [];
+                    guidelineSnapshot.forEach(doc => guidelineDocs.push(doc.data().enhancedGuideline));
+                    _feedbackGuidelineCache = { feedback: feedbackDocs, guidelines: guidelineDocs, timestamp: Date.now() };
                 }
 
-                const guidelineDocs = [];
-                guidelineSnapshot.forEach(doc => guidelineDocs.push(doc.data().enhancedGuideline));
+                const feedbackDocs = _feedbackGuidelineCache.feedback;
+                if (feedbackDocs.length > 0) {
+                    const sorted = [...feedbackDocs].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+                    feedbackExamples = "\n# CORRECTION EXAMPLES\n" + sorted.slice(0, 10).map((fb, i) => `Example ${i + 1}:\n- Incorrect Item: ${JSON.stringify(fb.incorrectItem)}\n- Enhanced Explanation: "${fb.enhancedExplanation}"\n`).join("\n");
+                }
+
+                const guidelineDocs = _feedbackGuidelineCache.guidelines;
                 if (guidelineDocs.length > 0) {
-                    guidelines = "\n## 6. USER-DEFINED GUIDELINES (CRITICAL)\nYou must follow these rules without exception:\n- " + guidelineDocs.join("\n- ") + "\n";
+                    guidelines = "\n# GUIDELINES (USER-DEFINED)\nYou must follow these rules without exception:\n- " + guidelineDocs.join("\n- ") + "\n";
                 }
             }
 
@@ -1528,19 +1546,21 @@ ${feedbackExamples}
                 if (pastedImageB64) { feedbackData.imageSnippet = pastedImageB64; }
 
                 await addDoc(collection(db, `orderbot_feedback`), feedbackData);
+                _feedbackGuidelineCache.feedback = null; // Invalidate cache
                 allDomElements.cancelFeedbackBtn.click();
-            } catch (error) { 
-                console.error("Error submitting feedback: ", error); 
+            } catch (error) {
+                console.error("Error submitting feedback: ", error);
                 showToast("Failed to submit feedback. The original explanation will be saved.", 'warning');
-                const fallbackData = { 
-                    userId: userId, 
-                    timestamp: new Date().toISOString(), 
-                    incorrectItem: itemToCorrect, 
-                    userExplanation: allDomElements.feedbackExplanation.value.trim(), 
+                const fallbackData = {
+                    userId: userId,
+                    timestamp: new Date().toISOString(),
+                    incorrectItem: itemToCorrect,
+                    userExplanation: allDomElements.feedbackExplanation.value.trim(),
                     enhancedExplanation: `RAW: ${allDomElements.feedbackExplanation.value.trim()}`,
                 };
                 if (pastedImageB64) { fallbackData.imageSnippet = pastedImageB64; }
                 await addDoc(collection(db, `orderbot_feedback`), fallbackData);
+                _feedbackGuidelineCache.feedback = null; // Invalidate cache
                 allDomElements.cancelFeedbackBtn.click();
             } finally { 
                 allDomElements.submitFeedbackBtn.disabled = false; 
@@ -1680,7 +1700,8 @@ ${feedbackExamples}
                     });
                 });
                 await addBatch.commit();
-                
+                _feedbackGuidelineCache.guidelines = null; // Invalidate cache
+
                 allDomElements.cancelGuidelineBtn.click();
                 loadAndDisplayGuidelines();
 

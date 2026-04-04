@@ -297,16 +297,8 @@
 
             <div id="history-section" class="mb-8 bg-white p-6 rounded-lg shadow-sm">
                 <h3 class="font-bold text-lg text-slate-800 mb-3">Comparison History</h3>
-                <div class="flex flex-col sm:flex-row gap-2 flex-wrap">
+                <div class="flex flex-col sm:flex-row gap-2">
                     <input type="text" id="history-search-input" class="w-full sm:w-auto flex-grow p-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" placeholder="Search by Order Number">
-                    <div class="flex items-center gap-2">
-                        <label class="text-sm text-slate-500 whitespace-nowrap">From</label>
-                        <input type="date" id="history-from-date" class="p-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm">
-                    </div>
-                    <div class="flex items-center gap-2">
-                        <label class="text-sm text-slate-500 whitespace-nowrap">To</label>
-                        <input type="date" id="history-to-date" class="p-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm">
-                    </div>
                     <button id="history-search-btn" class="bg-slate-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-slate-700 transition-colors">Find History</button>
                     <button id="clear-history-btn" class="bg-red-500 text-white font-bold py-2 px-6 rounded-lg hover:bg-red-600 transition-colors hidden">Clear</button>
                 </div>
@@ -465,8 +457,6 @@
             historySearchInput: document.getElementById('history-search-input'),
             historySearchBtn: document.getElementById('history-search-btn'),
             historyResults: document.getElementById('history-results'),
-            historyFromDate: document.getElementById('history-from-date'),
-            historyToDate: document.getElementById('history-to-date'),
             historyLoadMoreContainer: document.getElementById('history-load-more-container'),
             historyLoadMoreBtn: document.getElementById('history-load-more-btn'),
             uploadSection: document.getElementById('upload-section'),
@@ -676,8 +666,6 @@
         allDomElements.clearHistoryBtn.addEventListener('click', () => {
             allDomElements.historyResults.innerHTML = '';
             allDomElements.historySearchInput.value = '';
-            allDomElements.historyFromDate.value = '';
-            allDomElements.historyToDate.value = '';
             allDomElements.historyLoadMoreContainer.classList.add('hidden');
             allDomElements.clearHistoryBtn.classList.add('hidden');
             lastHistoryDoc = null;
@@ -691,8 +679,6 @@
             allDomElements.clearHistoryBtn.classList.add('hidden');
             allDomElements.historyResults.innerHTML = '';
             allDomElements.historySearchInput.value = '';
-            allDomElements.historyFromDate.value = '';
-            allDomElements.historyToDate.value = '';
             allDomElements.historyLoadMoreContainer.classList.add('hidden');
             lastHistoryDoc = null;
             historyDataCache = [];
@@ -718,9 +704,6 @@
                 allDomElements.historyLoadMoreBtn.disabled = true;
             }
 
-            const fromDateVal = allDomElements.historyFromDate.value;
-            const toDateVal = allDomElements.historyToDate.value;
-
             try {
                 const PAGE_SIZE = 20;
                 const constraints = [
@@ -742,9 +725,6 @@
 
                 lastHistoryDoc = querySnapshot.docs[querySnapshot.docs.length - 1] || null;
                 let docs = querySnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-
-                if (fromDateVal) docs = docs.filter(d => d.timestamp >= fromDateVal);
-                if (toDateVal) docs = docs.filter(d => d.timestamp <= toDateVal + 'T23:59:59');
 
                 if (!append) allDomElements.historyResults.innerHTML = '';
 

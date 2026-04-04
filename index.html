@@ -439,6 +439,7 @@
         // === STEP 2: YOUR SECURE PROXY URL ===
         // =================================================================================
         const PROXY_API_URL = 'https://gemini-secure-proxy-51064902388.africa-south1.run.app';
+        const PROMPT_VERSION = 'v1.2';
         // =================================================================================
 
 
@@ -884,7 +885,8 @@
 
         async function processSingleComparison(pair) {
             const { customerFiles, blindIQFiles } = pair;
-            
+            const _t = { start: performance.now() };
+
             let feedbackExamples = "";
             let guidelines = "";
 
@@ -908,37 +910,66 @@
             }
 
             const systemPrompt = `
-                # OrderBot - System Prompt
-                ## 1. IDENTITY & PERSONA: You are OrderBot, an AI assistant.
-                ## 2. CORE DIRECTIVE: Analyze 'customer' vs 'blindiq' files, extract parameters, compare them, and return a structured JSON report.
-                ## 3. DATA EXTRACTION & ANALYSIS LOGIC:
-                - You may receive one customer document and multiple Blind IQ documents. Your task is to treat all Blind IQ documents as a single, consolidated order and compare all of their combined line items against the single customer document.
-                - For each line item in the 'Blinds' table, extract the primary fields: Item, Location, QTY, Width, Drop, Colour, Control 1, Control 2, Blind Type, Range, and Fix. The 'Item' should correspond to the alphabetical identifier (A, B, C...).
-                - You MUST also extract and compare all items from the 'Sundries' table against the customer document. Each sundry item has a description and a quantity. It is common for these items not to appear on the customer order; in this case, the result should be 'OMISSION'.
-                - The 'Range' field corresponds to the fabric name. You MUST extract this value from the Blind IQ document only.
-                - The 'Colour' field is often empty for certain Blind Types. You must accurately extract the colour if present, or an empty string "" if it is not.
-                - CRITICAL TABLE EXTRACTION: The 'Blinds' table has TWO side-by-side columns that are BOTH named 'Control'. 
-                    1. Map the left-most 'Control' column to the 'control1' JSON field.
-                    2. Map the right-most 'Control' column to the 'control2' JSON field.
-                    3. If a cell is visually blank in the grid, extract it as an empty string "". Do not shift data from other columns into these fields.
-                - CRITICAL: Look for a secondary line of text below the primary fields in the 'Blinds' table. This line contains detailed specifications separated by '|' and using '='. You MUST parse this line.
-                - CRITICAL: The secondary specification line is NOT a separate blind. It belongs to the blind in the row immediately above it. Do NOT create a new, empty line item for the specifications row, and ignore completely blank separator rows. Every extracted line item MUST have a valid alphabetical 'Item' identifier (A, B, C...).
-                - CRITICAL ACCURACY STEP: For each line item, you MUST first fill out the 'reasoning' field. You must explicitly list EACH field (including Control 1 and Control 2) and specification side-by-side (Customer vs Blind IQ). If they are different, explicitly state 'MISMATCH'.
-                - Compare all primary fields, all parsed specifications, and the special instructions between the two documents.
-                - CRITICAL EXHAUSTION: You MUST extract and compare EVERY SINGLE blind and sundry item found in the documents. Do not skip, summarize, or truncate. If there are 9 blinds, your JSON array MUST contain exactly 9 objects.
-                ## 4. JSON OUTPUT STRUCTURE: Respond ONLY with a single JSON object conforming to the schema.
-                ${guidelines}
-                ${feedbackExamples}
+# IDENTITY
+You are OrderBot, an AI assistant for comparing blind/shutter order documents.
+
+# TASK
+Compare customer order document(s) against Blind IQ document(s). Extract all parameters from both, compare them field-by-field, and return a structured JSON report.
+
+# DOCUMENT RELATIONSHIP
+- You may receive one customer document and multiple Blind IQ documents.
+- Treat all Blind IQ documents as a single, consolidated order.
+- Compare all their combined line items against the single customer document.
+
+# EXTRACTION RULES
+
+## Primary Fields (Blinds Table)
+For each row, extract: Item (A, B, C...), Location, QTY, Width, Drop, Colour, Control 1, Control 2, Blind Type, Range, Fix.
+- The 'Range' field corresponds to the fabric name. Extract this value from the Blind IQ document only.
+- The 'Colour' field is often empty for certain Blind Types. Extract the colour if present, or an empty string "" if it is not.
+
+## Control Column Disambiguation
+The Blinds table has TWO side-by-side columns that are BOTH named "Control":
+- Map the LEFT-MOST "Control" column to the "control1" JSON field.
+- Map the RIGHT-MOST "Control" column to the "control2" JSON field.
+- If a cell is visually blank in the grid, extract it as an empty string "". Do not shift data from other columns into these fields.
+
+## Secondary Specification Line
+Below each primary row there is a line of detailed specifications separated by "|" and using "=" notation.
+- This line belongs to the blind in the row ABOVE it. Do NOT create a separate line item for it.
+- Ignore completely blank separator rows.
+- Every extracted line item MUST have a valid alphabetical Item identifier (A, B, C...).
+
+## Sundries Table
+Extract each sundry item's description and quantity. If a sundry item is absent from the customer document, the result should be "OMISSION".
+
+# COMPARISON PROTOCOL
+For EACH line item:
+1. Fill the "reasoning" field FIRST — explicitly list EACH field and specification side-by-side (Customer vs Blind IQ), including Control 1 and Control 2.
+2. If any fields differ, explicitly state "MISMATCH" in the reasoning.
+3. Then determine the result for each field based on the reasoning.
+Also compare all primary fields, all parsed specifications, and the special instructions between the two documents.
+
+# COMPLETENESS REQUIREMENT
+Extract and compare EVERY SINGLE blind and sundry item found in the documents. Do not skip, summarize, or truncate. If there are 9 blinds, your JSON array MUST contain exactly 9 objects.
+
+# JSON OUTPUT
+Respond ONLY with a single JSON object conforming to the provided schema.
+${guidelines}
+${feedbackExamples}
             `;
 
-            const parts = [{ text: systemPrompt }];
+            const parts = [];
             
+            _t.firebaseFetched = performance.now();
+
             const customerFilePromises = customerFiles.map(fileToB64);
             const blindIQFilePromises = blindIQFiles.map(fileToB64);
             const [customerB64FileObjects, blindIQB64FileObjects] = await Promise.all([
                 Promise.all(customerFilePromises),
                 Promise.all(blindIQFilePromises)
             ]);
+            _t.filesConverted = performance.now();
 
             for (const fileObj of customerB64FileObjects) {
                 parts.push({ text: `\n--- START CUSTOMER FILE: ${fileObj.name} ---` });
@@ -1003,12 +1034,13 @@
                 required: ["bdoOrderNumber", "customerOrderNumber", "lineItems"]
             };
 
-            const geminiPayload = { 
-                contents: [{ role: "user", parts: parts }], 
-                generationConfig: { 
+            const geminiPayload = {
+                systemInstruction: { parts: [{ text: systemPrompt }] },
+                contents: [{ role: "user", parts: parts }],
+                generationConfig: {
                     temperature: 0.1, // Ultra-rigid deterministic extraction
-                    responseMimeType: "application/json", 
-                    responseSchema: schema 
+                    responseMimeType: "application/json",
+                    responseSchema: schema
                 }
             };
             const proxyPayload = { model: 'gemini-2.5-pro', payload: geminiPayload };
@@ -1066,7 +1098,9 @@
             }
             
             const data = JSON.parse(result.candidates[0].content.parts[0].text);
-            
+            _t.apiComplete = performance.now();
+            console.log(`[OrderBot Perf] Firebase: ${(_t.firebaseFetched - _t.start).toFixed(0)}ms | Files: ${(_t.filesConverted - _t.firebaseFetched).toFixed(0)}ms | API: ${(_t.apiComplete - _t.filesConverted).toFixed(0)}ms | Total: ${(_t.apiComplete - _t.start).toFixed(0)}ms`);
+
             // Filter out phantom/empty line items caused by AI misinterpreting sub-rows or blank spacer rows
             if (data.lineItems && Array.isArray(data.lineItems)) {
                 data.lineItems = data.lineItems.filter(li => {
@@ -1080,7 +1114,7 @@
             data.modelUsed = result.modelVersion || proxyPayload.model;
 
             if (db && data.bdoOrderNumber) {
-                await addDoc(collection(db, `orderbot_comparisons`), { ...data, timestamp: new Date().toISOString(), userId: userId, bdoOrderNumberLower: data.bdoOrderNumber ? String(data.bdoOrderNumber).toLowerCase() : '' });
+                await addDoc(collection(db, `orderbot_comparisons`), { ...data, timestamp: new Date().toISOString(), userId: userId, bdoOrderNumberLower: data.bdoOrderNumber ? String(data.bdoOrderNumber).toLowerCase() : '', promptVersion: PROMPT_VERSION });
             }
             return data;
         }

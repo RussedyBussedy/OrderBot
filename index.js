@@ -9,7 +9,12 @@ const crypto = require('crypto');
 const app = express();
 
 // --- Security Headers (helmet) ---
-app.use(helmet());
+// Disable policies that interfere with cross-origin API responses.
+app.use(helmet({
+    crossOriginResourcePolicy: false,
+    crossOriginEmbedderPolicy: false,
+    contentSecurityPolicy: false,
+}));
 
 // Increased the JSON payload limit to handle large image data
 app.use(express.json({ limit: '10mb' }));

@@ -439,7 +439,7 @@
         // === STEP 2: YOUR SECURE PROXY URL ===
         // =================================================================================
         const PROXY_API_URL = 'https://gemini-secure-proxy-51064902388.africa-south1.run.app';
-        const PROMPT_VERSION = 'v1.2';
+        const PROMPT_VERSION = 'v1.3';
         // =================================================================================
 
 
@@ -857,6 +857,9 @@
                 try {
                     let result = await processSingleComparison(comparisonPairs[index]);
                     result = runPostAIValidations(result, fabricProperties, motorProperties, tubeProperties);
+                    result = applyConfidenceThresholds(result);
+                    const reasoningFlags = analyzeReasoningPatterns(result.lineItems);
+                    if (reasoningFlags.length > 0) result._reasoningFlags = reasoningFlags;
                     summaryResultsCache[index] = { status: 'success', data: result };
                 } catch (error) {
                     console.error(`Failed comparison for pair ${index}:`, error);
@@ -882,6 +885,9 @@
                     try {
                         let result = await processSingleComparison(failedPairs[i].pair);
                         result = runPostAIValidations(result, fabricProperties, motorProperties, tubeProperties);
+                        result = applyConfidenceThresholds(result);
+                        const reasoningFlags = analyzeReasoningPatterns(result.lineItems);
+                        if (reasoningFlags.length > 0) result._reasoningFlags = reasoningFlags;
                         summaryResultsCache[failedPairs[i].originalIndex] = { status: 'success', data: result };
                     } catch (error) {
                         console.error(`Retry failed for pair ${failedPairs[i].originalIndex}:`, error);
@@ -896,9 +902,32 @@
             allDomElements.newComparisonBtn.classList.remove('hidden');
         }
 
+        function selectRelevantFeedback(allFeedback, contextTerms) {
+            if (!contextTerms || contextTerms.length === 0) {
+                return [...allFeedback]
+                    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+                    .slice(0, 10);
+            }
+            const lowerTerms = contextTerms.map(t => t.toLowerCase());
+            const scored = allFeedback.map(fb => {
+                const text = (JSON.stringify(fb.incorrectItem) + ' ' + (fb.enhancedExplanation || '')).toLowerCase();
+                const score = lowerTerms.reduce((acc, term) => acc + (text.includes(term) ? 1 : 0), 0);
+                return { ...fb, _relevanceScore: score };
+            });
+            scored.sort((a, b) => b._relevanceScore - a._relevanceScore || new Date(b.timestamp) - new Date(a.timestamp));
+            return scored.slice(0, 10);
+        }
+
         async function processSingleComparison(pair) {
             const { customerFiles, blindIQFiles } = pair;
             const _t = { start: performance.now() };
+
+            // Extract context terms from file names for relevance-based feedback selection
+            const contextTerms = [...customerFiles, ...blindIQFiles]
+                .map(f => f.name.replace(/\.[^/.]+$/, ''))
+                .join(' ')
+                .split(/[\s_\-.,()]+/)
+                .filter(t => t.length > 2);
 
             let feedbackExamples = "";
             let guidelines = "";
@@ -917,8 +946,8 @@
 
                 const feedbackDocs = _feedbackGuidelineCache.feedback;
                 if (feedbackDocs.length > 0) {
-                    const sorted = [...feedbackDocs].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-                    feedbackExamples = "\n# CORRECTION EXAMPLES\n" + sorted.slice(0, 10).map((fb, i) => `Example ${i + 1}:\n- Incorrect Item: ${JSON.stringify(fb.incorrectItem)}\n- Enhanced Explanation: "${fb.enhancedExplanation}"\n`).join("\n");
+                    const relevant = selectRelevantFeedback(feedbackDocs, contextTerms);
+                    feedbackExamples = "\n# CORRECTION EXAMPLES\n" + relevant.map((fb, i) => `Example ${i + 1}:\n- Incorrect Item: ${JSON.stringify(fb.incorrectItem)}\n- Enhanced Explanation: "${fb.enhancedExplanation}"\n`).join("\n");
                 }
 
                 const guidelineDocs = _feedbackGuidelineCache.guidelines;
@@ -1193,6 +1222,11 @@ ${feedbackExamples}
                                 </div>
                                 <span class="text-sm font-semibold">${status.replace('-', ' ').toUpperCase()}${hasAlert ? ' (ACTION REQUIRED)' : ''}</span>
                             </div>
+                            ${data._reasoningFlags && data._reasoningFlags.length > 0 ? `
+                            <div class="px-4 py-2 bg-amber-50 border-t border-amber-200 text-sm text-amber-800 flex items-start gap-2">
+                                <span class="font-semibold shrink-0">AI flagged:</span>
+                                <span>${data._reasoningFlags.map(f => `Item ${f.item} — ${f.pattern}`).join(' &bull; ')}</span>
+                            </div>` : ''}
                             <div class="summary-item-details p-4 border-t border-slate-200">
                                 <!-- Detailed report will be injected here -->
                             </div>
@@ -1984,6 +2018,45 @@ ${feedbackExamples}
                 fabricMap.set(data.fabricName.toLowerCase().trim(), data);
             });
             return fabricMap;
+        }
+
+        function applyConfidenceThresholds(data) {
+            const LOW_CONFIDENCE = 0.75;
+            const FIELDS = ['item', 'location', 'qty', 'width', 'drop', 'colour', 'control1', 'control2', 'blindType', 'range', 'fix'];
+            (data.lineItems || []).forEach(item => {
+                FIELDS.forEach(f => {
+                    if (item[f] && item[f].confidence < LOW_CONFIDENCE && item[f].result === 'MATCH') {
+                        item[f].result = 'NOTE';
+                        item[f].confidenceOverride = true;
+                    }
+                });
+                (item.specifications || []).forEach(spec => {
+                    if (spec.specComparison && spec.specComparison.confidence < LOW_CONFIDENCE && spec.specComparison.result === 'MATCH') {
+                        spec.specComparison.result = 'NOTE';
+                        spec.specComparison.confidenceOverride = true;
+                    }
+                });
+            });
+            return data;
+        }
+
+        function analyzeReasoningPatterns(lineItems) {
+            const PATTERNS = [
+                { name: 'Control column confusion', regex: /control.*(?:shift|wrong|swap|mix)/i },
+                { name: 'Phantom row detected', regex: /(?:blank|empty|spacer|separator).*row/i },
+                { name: 'Handwriting unclear', regex: /(?:unclear|illegible|hard to read|handwrit|ambiguous)/i },
+                { name: 'Dimension uncertainty', regex: /(?:width|drop).*(?:could be|or |unclear|unsure)/i },
+            ];
+            const issues = [];
+            (lineItems || []).forEach(item => {
+                if (!item.reasoning) return;
+                PATTERNS.forEach(p => {
+                    if (p.regex.test(item.reasoning)) {
+                        issues.push({ item: item.item?.blindIQValue || '?', pattern: p.name });
+                    }
+                });
+            });
+            return issues;
         }
 
         function runPostAIValidations(comparisonData, fabricProperties, motorProperties, tubeProperties) {

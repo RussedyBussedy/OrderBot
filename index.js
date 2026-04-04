@@ -142,31 +142,20 @@ app.post('/', async (req, res) => {
         // API key sent as a header (not in the query string) to prevent leaking in logs.
         const geminiApiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
-        // Hard timeout matching the frontend's 120-second AbortController timeout.
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 120000);
-
-        let apiResponse;
-        try {
-            apiResponse = await fetch(geminiApiUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-                body: JSON.stringify(payload),
-                signal: controller.signal
-            });
-        } finally {
-            clearTimeout(timeoutId);
-        }
+        // Let Cloud Run's own timeout (300s) govern request duration.
+        // The old 120s AbortController was killing Gemini requests on complex
+        // multi-page documents before the model finished processing.
+        const apiResponse = await fetch(geminiApiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+            body: JSON.stringify(payload),
+        });
 
         const responseBody = await apiResponse.text();
         log('INFO', 'Gemini API call completed', { requestId, model, status: apiResponse.status });
         res.status(apiResponse.status).send(responseBody);
 
     } catch (error) {
-        if (error.name === 'AbortError') {
-            log('ERROR', 'Gemini API request timed out', { requestId });
-            return res.status(504).json({ error: 'Upstream API request timed out after 120 seconds.' });
-        }
         log('ERROR', 'Unhandled error in request handler', { requestId, message: error.message });
         res.status(500).json({ error: 'Internal Server Error.' });
     }

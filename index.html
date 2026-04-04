@@ -1692,6 +1692,9 @@ ${feedbackExamples}
             allDomElements.submitFeedbackBtn.disabled = true;
             allDomElements.submitFeedbackBtn.innerHTML = `<div class="loader !w-5 !h-5 !border-2 mx-auto"></div>`;
 
+            // Build fingerprint before the try block so fallback path can use it too
+            const fieldFingerprint = `${itemToCorrect.fieldName}_${itemToCorrect.lineItemIdentifier?.item || ''}`.toLowerCase();
+
             try {
                 const enhancementPrompt = `You are an expert prompt engineer. A user has provided a guideline for an AI document comparison tool. Rewrite their text into a clear, precise, and unambiguous rule that the AI can easily follow. User's text: "${allDomElements.feedbackExplanation.value.trim()}"`;
                 const enhancementParts = [{ text: enhancementPrompt }];
@@ -1699,23 +1702,33 @@ ${feedbackExamples}
 
                 const geminiPayload = { contents: [{ role: "user", parts: enhancementParts }] };
                 const proxyPayload = { model: 'gemini-3-flash-preview', payload: geminiPayload };
-                
+
                 const response = await fetch(PROXY_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proxyPayload) });
                 if (!response.ok) throw new Error('Failed to enhance explanation.');
-                
+
                 const result = await response.json();
                 const enhancedExplanation = result.candidates[0].content.parts[0].text;
 
-                const feedbackData = { 
-                    userId: userId, 
-                    timestamp: new Date().toISOString(), 
-                    incorrectItem: itemToCorrect, 
-                    userExplanation: allDomElements.feedbackExplanation.value.trim(), 
+                const feedbackData = {
+                    userId: userId,
+                    timestamp: new Date().toISOString(),
+                    incorrectItem: itemToCorrect,
+                    userExplanation: allDomElements.feedbackExplanation.value.trim(),
                     enhancedExplanation: enhancedExplanation,
+                    fieldFingerprint: fieldFingerprint
                 };
                 if (pastedImageB64) { feedbackData.imageSnippet = pastedImageB64; }
 
-                await addDoc(collection(db, `orderbot_feedback`), feedbackData);
+                // Check for existing feedback with the same field+item fingerprint; update instead of duplicating
+                const dupSnapshot = await getDocs(query(collection(db, 'orderbot_feedback'), where('fieldFingerprint', '==', fieldFingerprint)));
+                const existingDoc = dupSnapshot.docs.find(d => d.data().userId === userId);
+                if (existingDoc) {
+                    const updatePayload = { timestamp: feedbackData.timestamp, enhancedExplanation, userExplanation: feedbackData.userExplanation };
+                    if (pastedImageB64) updatePayload.imageSnippet = pastedImageB64;
+                    await updateDoc(doc(db, 'orderbot_feedback', existingDoc.id), updatePayload);
+                } else {
+                    await addDoc(collection(db, `orderbot_feedback`), feedbackData);
+                }
                 _feedbackGuidelineCache.feedback = null; // Invalidate cache
                 allDomElements.cancelFeedbackBtn.click();
             } catch (error) {
@@ -1727,14 +1740,15 @@ ${feedbackExamples}
                     incorrectItem: itemToCorrect,
                     userExplanation: allDomElements.feedbackExplanation.value.trim(),
                     enhancedExplanation: `RAW: ${allDomElements.feedbackExplanation.value.trim()}`,
+                    fieldFingerprint: fieldFingerprint
                 };
                 if (pastedImageB64) { fallbackData.imageSnippet = pastedImageB64; }
                 await addDoc(collection(db, `orderbot_feedback`), fallbackData);
                 _feedbackGuidelineCache.feedback = null; // Invalidate cache
                 allDomElements.cancelFeedbackBtn.click();
-            } finally { 
-                allDomElements.submitFeedbackBtn.disabled = false; 
-                allDomElements.submitFeedbackBtn.textContent = 'Submit Feedback'; 
+            } finally {
+                allDomElements.submitFeedbackBtn.disabled = false;
+                allDomElements.submitFeedbackBtn.textContent = 'Submit Feedback';
             }
         });
 

@@ -8,6 +8,10 @@ const crypto = require('crypto');
 
 const app = express();
 
+// Cloud Run sits behind a load balancer that sets X-Forwarded-For.
+// Without this, express-rate-limit throws ValidationError and may crash.
+app.set('trust proxy', 1);
+
 // --- Security Headers (helmet) ---
 // Disable policies that interfere with cross-origin API responses.
 app.use(helmet({

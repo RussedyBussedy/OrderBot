@@ -11,7 +11,7 @@ export const MODEL_FLASH      = 'gemini-3-flash-preview';
 // AI call thresholds
 export const COMPARISON_MAX_RETRIES   = 3;
 export const COMPARISON_INITIAL_DELAY = 2000;   // ms
-export const COMPARISON_TIMEOUT_MS    = 120000; // 120 s
+export const COMPARISON_TIMEOUT_MS    = 300000; // 300 s — match Cloud Run's timeout
 export const FLASH_MAX_RETRIES        = 2;
 export const FLASH_INITIAL_DELAY      = 1000;   // ms
 export const FLASH_TIMEOUT_MS         = 30000;  // 30 s

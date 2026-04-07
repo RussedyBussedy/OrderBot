@@ -1092,6 +1092,25 @@ Also compare all primary fields, all parsed specifications, and the special inst
 # COMPLETENESS REQUIREMENT
 Extract and compare EVERY SINGLE blind and sundry item found in the documents. Do not skip, summarize, or truncate. If there are 9 blinds, your JSON array MUST contain exactly 9 objects.
 
+## Order Number Extraction
+- The "bdoOrderNumber" is the Blind Designs Order number, format "BDO<digits>". It appears as "BDO O/N" or in the "ORDER CONFIRMATION: BDO<digits>" header in the Blind IQ document.
+- The "customerOrderNumber" comparison field is the customer's purchase order reference (often format "L<digits>"). It appears as "Customer O/N" in the Blind IQ document and as the "Online Purchase Order: L<digits>" header in the customer document.
+- If you cannot find a BDO order number, return an empty string "" for bdoOrderNumber — do NOT invent one.
+
+## Wrapped Multi-Line Row Layouts (BlindIQ Online Purchase Order)
+Some customer documents — specifically the BlindIQ "Online Purchase Order" export, identified by the header "Online Purchase Order: L<number>" and an "IQ Link ID" box in the top right — lay out each blind row across THREE visual lines:
+  Line 1: Item, QTY, Location, Blind Type, Range, Colour, Width, Cont. Drop
+  Line 2: The "key=value|key=value|..." specifications
+  Line 3: Drop, Control 1, Control 2, Fix, Price
+
+When you encounter this format, you MUST assign values using the COLUMN HEADER POSITIONS — not the top-to-bottom reading order. Specifically:
+- "Width" appears on line 1. "Drop" appears on line 3 (before the Control values). "Cont. Drop" (usually 0) appears on line 1 alongside Width.
+- Do NOT swap Width and Drop. Do NOT treat Cont. Drop as the Drop value simply because it appears higher in the row.
+- Do NOT treat the specification line as a separate blind row.
+- If the column position makes the value unambiguous, state it directly in your reasoning — do not hedge with phrases like "could be", "or", "unclear", or "unsure".
+
+The standard Blind IQ "ORDER CONFIRMATION" (BDO) format keeps all values on a single line in the order: Width, Drop, Cont. Drop, Control 1, Control 2, Fix, Price.
+
 # JSON OUTPUT
 Respond ONLY with a single JSON object conforming to the provided schema.
 ${guidelines}

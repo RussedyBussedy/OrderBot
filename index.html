@@ -1271,8 +1271,24 @@ ${feedbackExamples}
             // Inject Model Type into data for display
             data.modelUsed = result.modelVersion || proxyPayload.model;
 
-            if (db && data.bdoOrderNumber) {
-                await addDoc(collection(db, `orderbot_comparisons`), { ...data, timestamp: new Date().toISOString(), userId: userId, bdoOrderNumberLower: data.bdoOrderNumber ? String(data.bdoOrderNumber).toLowerCase() : '', promptVersion: PROMPT_VERSION });
+            if (db) {
+                const bdoNum = (data.bdoOrderNumber || '').trim();
+                const customerNum = (data.customerOrderNumber?.customerValue || data.customerOrderNumber?.blindIQValue || '').trim();
+                const fallbackId = bdoNum || (customerNum ? `UNKNOWN-${customerNum}` : `UNKNOWN-${Date.now()}`);
+
+                if (!bdoNum) {
+                    showToast(`BDO order number missing — saved as "${fallbackId}". Search by customer ref to find it.`, 'warning');
+                }
+
+                await addDoc(collection(db, `orderbot_comparisons`), {
+                    ...data,
+                    timestamp: new Date().toISOString(),
+                    userId: userId,
+                    bdoOrderNumber: fallbackId,
+                    bdoOrderNumberLower: fallbackId.toLowerCase(),
+                    customerOrderNumberLower: customerNum.toLowerCase(),
+                    promptVersion: PROMPT_VERSION
+                });
             }
             return data;
         }

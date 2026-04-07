@@ -689,70 +689,54 @@
             checkCompareButtonState();
         }
 
-        async function findHistory(append = false) {
+        async function findHistory() {
             const searchTerm = allDomElements.historySearchInput.value.trim().toLowerCase();
             if (!searchTerm) { showToast("Please enter an order number to search.", 'warning'); return; }
             if (!db) { showToast("History feature is unavailable. Database not connected.", 'error'); return; }
 
-            if (!append) {
-                lastHistoryDoc = null;
-                historyDataCache = [];
-                allDomElements.historyResults.innerHTML = `<div class="flex items-center gap-2 text-slate-600"><div class="loader !w-6 !h-6"></div>Searching for history...</div>`;
-                allDomElements.historyLoadMoreContainer.classList.add('hidden');
-            } else {
-                allDomElements.historyLoadMoreBtn.textContent = 'Loading...';
-                allDomElements.historyLoadMoreBtn.disabled = true;
-            }
+            lastHistoryDoc = null;
+            historyDataCache = [];
+            allDomElements.historyResults.innerHTML = `<div class="flex items-center gap-2 text-slate-600"><div class="loader !w-6 !h-6"></div>Searching for history...</div>`;
+            allDomElements.historyLoadMoreContainer.classList.add('hidden');
 
             try {
-                const PAGE_SIZE = 20;
-                const constraints = [
-                    where('bdoOrderNumberLower', '>=', searchTerm),
-                    where('bdoOrderNumberLower', '<=', searchTerm + '\uf8ff'),
-                    orderBy('bdoOrderNumberLower'),
-                    limit(PAGE_SIZE)
-                ];
-                if (append && lastHistoryDoc) constraints.push(startAfter(lastHistoryDoc));
-
-                const historyQuery = query(collection(db, 'orderbot_comparisons'), ...constraints);
+                const RECENT_WINDOW = 300;
+                const historyQuery = query(
+                    collection(db, 'orderbot_comparisons'),
+                    orderBy('timestamp', 'desc'),
+                    limit(RECENT_WINDOW)
+                );
                 const querySnapshot = await getDocs(historyQuery);
+                const allDocs = querySnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
 
-                if (querySnapshot.empty && !append) {
-                    allDomElements.historyResults.innerHTML = `<p class="text-slate-500">No history found for: <strong>${searchTerm}</strong></p>`;
+                const matches = allDocs.filter(doc => {
+                    const bdo = (doc.bdoOrderNumberLower || (doc.bdoOrderNumber || '').toLowerCase());
+                    const custLower = (doc.customerOrderNumberLower || '').toLowerCase();
+                    const custFromObj = (doc.customerOrderNumber?.customerValue || doc.customerOrderNumber?.blindIQValue || '').toLowerCase();
+                    return bdo.includes(searchTerm) || custLower.includes(searchTerm) || custFromObj.includes(searchTerm);
+                });
+
+                allDomElements.historyLoadMoreContainer.classList.add('hidden');
+                allDomElements.historyResults.innerHTML = '';
+
+                if (matches.length === 0) {
+                    allDomElements.historyResults.innerHTML = `<p class="text-slate-500">No history found for: <strong>${searchTerm}</strong>. (Searched the most recent ${RECENT_WINDOW} comparisons.)</p>`;
                     allDomElements.clearHistoryBtn.classList.remove('hidden');
                     return;
                 }
 
-                lastHistoryDoc = querySnapshot.docs[querySnapshot.docs.length - 1] || null;
-                let docs = querySnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-
-                if (!append) allDomElements.historyResults.innerHTML = '';
-
-                if (docs.length === 0 && !append) {
-                    allDomElements.historyResults.innerHTML = `<p class="text-slate-500">No history found for: <strong>${searchTerm}</strong></p>`;
-                } else {
-                    const startIndex = historyDataCache.length;
-                    historyDataCache.push(...docs);
-                    docs.forEach((data, i) => {
-                        const index = startIndex + i;
-                        const historyItemDiv = document.createElement('div');
-                        historyItemDiv.className = 'history-item border border-slate-200 rounded-lg p-4';
-                        historyItemDiv.dataset.historyIndex = index;
-                        const formattedDate = new Date(data.timestamp).toLocaleString('en-ZA');
-                        historyItemDiv.innerHTML = `<h4 class="font-bold text-md text-slate-700">Comparison from: ${formattedDate}</h4>`;
-                        historyItemDiv.innerHTML += renderReportTable(data);
-                        allDomElements.historyResults.appendChild(historyItemDiv);
-                        setupReportInteraction(historyItemDiv, data);
-                    });
-                }
-
-                if (querySnapshot.docs.length === PAGE_SIZE) {
-                    allDomElements.historyLoadMoreContainer.classList.remove('hidden');
-                    allDomElements.historyLoadMoreBtn.textContent = 'Load More';
-                    allDomElements.historyLoadMoreBtn.disabled = false;
-                } else {
-                    allDomElements.historyLoadMoreContainer.classList.add('hidden');
-                }
+                historyDataCache = [];
+                matches.forEach((data, index) => {
+                    const historyItemDiv = document.createElement('div');
+                    historyItemDiv.className = 'history-item border border-slate-200 rounded-lg p-4';
+                    historyItemDiv.dataset.historyIndex = index;
+                    const formattedDate = new Date(data.timestamp).toLocaleString('en-ZA');
+                    historyItemDiv.innerHTML = `<h4 class="font-bold text-md text-slate-700">Comparison from: ${formattedDate}</h4>`;
+                    historyItemDiv.innerHTML += renderReportTable(data);
+                    allDomElements.historyResults.appendChild(historyItemDiv);
+                    setupReportInteraction(historyItemDiv, data);
+                    historyDataCache.push(data);
+                });
 
                 allDomElements.clearHistoryBtn.classList.remove('hidden');
 
@@ -761,13 +745,7 @@
                 const errMsg = error.code === 'failed-precondition'
                     ? 'A Firestore index is required. Check the browser console for a direct link to create it.'
                     : `Failed to fetch history. ${error.message}`;
-                if (!append) {
-                    allDomElements.historyResults.innerHTML = `<p class="text-red-500">${errMsg}</p>`;
-                } else {
-                    showToast(errMsg, 'error');
-                    allDomElements.historyLoadMoreBtn.textContent = 'Load More';
-                    allDomElements.historyLoadMoreBtn.disabled = false;
-                }
+                allDomElements.historyResults.innerHTML = `<p class="text-red-500">${errMsg}</p>`;
                 allDomElements.clearHistoryBtn.classList.remove('hidden');
             }
         }

@@ -2285,6 +2285,23 @@ ${feedbackExamples}
                         }
                     }
 
+                    // Reject "two motors" or duplicate-control configurations.
+                    // Both controls must be populated for this check to fire — empty cases
+                    // are handled by the dual-control population check above.
+                    if (control1Value && control2Value && !item.controlValidation) {
+                        const c1HasMotor = control1Value.includes('motor');
+                        const c2HasMotor = control2Value.includes('motor');
+                        if (c1HasMotor && c2HasMotor) {
+                            item.controlValidation = { type: 'error', message: `Control Alert: Both controls cannot be motors. A motorised blind has one motor and one fixed/intermediate side.` };
+                            if (item.control1) item.control1.result = 'MISMATCH';
+                            if (item.control2) item.control2.result = 'MISMATCH';
+                        } else if (control1Value.trim() === control2Value.trim()) {
+                            item.controlValidation = { type: 'error', message: `Control Alert: Control 1 and Control 2 cannot be identical ("${item.control1.blindIQValue}").` };
+                            if (item.control1) item.control1.result = 'MISMATCH';
+                            if (item.control2) item.control2.result = 'MISMATCH';
+                        }
+                    }
+
                     // General Blind Types that must contain specific keywords
                     if (blindTypeForControlCheck && BLIND_TYPES_REQUIRING_CONTROL_VALIDATION.includes(blindTypeForControlCheck)) {
                         const hasValidControl = combinedControlValue.includes('chain') || combinedControlValue.includes('motor') || combinedControlValue.includes('dual');
@@ -2306,7 +2323,7 @@ ${feedbackExamples}
         
         function validateMotorDependencies(data, motorProperties, tubeProperties, fabricProperties) {
             const motorizedBlinds = (data.lineItems || []).filter(item => {
-                const control = (item.control1?.blindIQValue || '') + ' ' + (item.control2?.blindIQValue || '').toLowerCase();
+                const control = ((item.control1?.blindIQValue || '') + ' ' + (item.control2?.blindIQValue || '')).toLowerCase();
                 return control.includes('motor') || control.includes('dual');
             });
 
@@ -2314,6 +2331,7 @@ ${feedbackExamples}
 
             const sundries = data.sundries || [];
             let orderedMotors = [];
+            let orderedAdapterUnits = 0;
             const orderedAdapters = new Set();
             const orderedControllers = new Set();
             const orderedAccessories = new Set();
@@ -2321,28 +2339,55 @@ ${feedbackExamples}
 
             sundries.forEach(sundry => {
                 const desc = sundry.item.blindIQValue.toLowerCase();
+                const qty = parseInt(sundry.quantity) || 1;
                 let isMotor = false;
-                
+
                 const matchingProps = motorProperties.filter(prop => desc.includes(prop.motorName.toLowerCase()));
 
-                if (matchingProps.length > 0 && desc.includes('motor')) {
-                     for(let i=0; i < sundry.quantity; i++) {
+                // Only count as a separate motor if it's NOT actually an adapter kit.
+                // Sundries like "Motors Somfy Rts ZIQ20230 Sys 40 Adaptor Kit for Sonesse 30/28"
+                // contain both "motors" (the type column label) and "adaptor" — that's an adapter
+                // kit, not a separate motor unit. BD documents use the British spelling "adaptor".
+                const looksLikeAdapter = desc.includes('adapter') || desc.includes('adaptor');
+
+                if (matchingProps.length > 0 && desc.includes('motor') && !looksLikeAdapter) {
+                     for(let i=0; i < qty; i++) {
                         orderedMotors.push({ sundry: sundry, potentialProps: matchingProps, assignedBlind: null });
                      }
                     isMotor = true;
                 }
-                
+
                 if (!isMotor) {
-                    if (desc.includes('adapter')) orderedAdapters.add(sundry.item.blindIQValue);
+                    if (looksLikeAdapter) {
+                        orderedAdapterUnits += qty;
+                        orderedAdapters.add(sundry.item.blindIQValue);
+                    }
                     else if (desc.includes('remote') || desc.includes('switch') || desc.includes('hub')) orderedControllers.add(sundry.item.blindIQValue);
                     else if (desc.includes('accessory')) orderedAccessories.add(sundry.item.blindIQValue);
                     else orderedDependencies.add(sundry.item.blindIQValue);
                 }
             });
 
-            if (motorizedBlinds.length !== orderedMotors.length) {
-                data.motorValidation = { global: `Motor Alert: Order has ${motorizedBlinds.length} motorized blinds but ${orderedMotors.length} motors were found in sundries.` };
-                return;
+            // Hardware coverage check (replaces the old global "motors == motorised blinds" rule).
+            // Rules:
+            //  - adapter_kit_count must be >= motorised_blind_count (always required)
+            //  - if motors are ordered, motor_count must also be >= motorised_blind_count
+            //  - if zero motors are ordered, adapter kits alone can cover (customer is sourcing
+            //    motors externally — common for Sys 40 / integrated-cassette blind types)
+            // Do NOT early-return here — let per-blind compatibility checks still run below.
+            const motorisedCount = motorizedBlinds.length;
+            const motorCount = orderedMotors.length;
+            const adapterCount = orderedAdapterUnits;
+
+            const coverageProblems = [];
+            if (adapterCount < motorisedCount) {
+                coverageProblems.push(`${motorisedCount} motorised blinds but only ${adapterCount} adapter kit${adapterCount === 1 ? '' : 's'} found in sundries`);
+            }
+            if (motorCount > 0 && motorCount < motorisedCount) {
+                coverageProblems.push(`${motorisedCount} motorised blinds but only ${motorCount} motor${motorCount === 1 ? '' : 's'} found in sundries`);
+            }
+            if (coverageProblems.length > 0) {
+                data.motorValidation = { global: `Motor Alert: ${coverageProblems.join('; ')}.` };
             }
             
             motorizedBlinds.forEach(blind => {
@@ -2401,9 +2446,15 @@ ${feedbackExamples}
                 }
 
                 const checkListItem = (orderedItems, requiredItemsString) => {
-                    const requiredItems = (requiredItemsString || '').toLowerCase().split(',').map(s => s.trim()).filter(s => s);
+                    // Normalise British "adaptor" spelling onto "adapter" so config-side and
+                    // sundry-side strings compare correctly regardless of which spelling is used.
+                    const normalise = s => s.toLowerCase().replace(/adaptor/g, 'adapter');
+                    const requiredItems = (requiredItemsString || '').split(',').map(s => normalise(s.trim())).filter(s => s);
                     if (requiredItems.length === 0) return { pass: true };
-                    const foundItem = [...orderedItems].find(ordered => requiredItems.some(req => ordered.toLowerCase().includes(req)));
+                    const foundItem = [...orderedItems].find(ordered => {
+                        const normalised = normalise(ordered);
+                        return requiredItems.some(req => normalised.includes(req));
+                    });
                     return { pass: !!foundItem, found: foundItem };
                 };
 

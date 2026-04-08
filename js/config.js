@@ -9,5 +9,5 @@ export const firebaseConfig = {
 };
 
 export const PROXY_API_URL = 'https://gemini-secure-proxy-51064902388.africa-south1.run.app';
-export const PROMPT_VERSION = 'v2.0';
+export const PROMPT_VERSION = 'v2.1';
 export const EXTRACTION_MODEL = 'gemini-3.1-pro-preview';

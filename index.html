@@ -896,7 +896,8 @@ Respond only with a JSON object containing a lineItems array.
                 Promise.all(blindIQFiles.map(fileToB64))
             ]);
 
-            const parts = [];
+            // Prompt inline with files — see note in Pass 1.
+            const parts = [{ text: focusedPrompt }];
             for (const f of customerB64Files) {
                 parts.push({ text: `\n--- START CUSTOMER FILE: ${f.name} ---` });
                 parts.push({ inlineData: { mimeType: f.type, data: f.data } });
@@ -938,7 +939,6 @@ Respond only with a JSON object containing a lineItems array.
 
             try {
                 const geminiPayload = {
-                    systemInstruction: { parts: [{ text: focusedPrompt }] },
                     contents: [{ role: "user", parts: parts }],
                     generationConfig: {
                         temperature: 0.2,
@@ -1118,8 +1118,14 @@ ${guidelines}
 ${feedbackExamples}
             `;
 
-            const parts = [];
-            
+            // IMPORTANT: Prepend the prompt into the same user-turn parts array as the
+            // document images. Hoisting the prompt into `systemInstruction` was tried in
+            // commit 09371e8 ("higher instruction priority") and measurably degraded
+            // extraction quality on novel customer formats — the model attends less
+            // rigorously to detached instructions than to instructions sitting directly
+            // next to the images. Keep this inline.
+            const parts = [{ text: systemPrompt }];
+
             _t.firebaseFetched = performance.now();
 
             const customerFilePromises = customerFiles.map(fileToB64);
@@ -1194,7 +1200,6 @@ ${feedbackExamples}
             };
 
             const geminiPayload = {
-                systemInstruction: { parts: [{ text: systemPrompt }] },
                 contents: [{ role: "user", parts: parts }],
                 generationConfig: {
                     temperature: 0.1, // Ultra-rigid deterministic extraction

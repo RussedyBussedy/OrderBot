@@ -943,8 +943,7 @@ Respond only with a JSON object containing a lineItems array.
                     generationConfig: {
                         temperature: 0.2,
                         responseMimeType: "application/json",
-                        responseSchema: focusedSchema,
-                        thinkingConfig: { thinkingBudget: 512 }
+                        responseSchema: focusedSchema
                     }
                 };
                 const response = await fetch(PROXY_API_URL, {
@@ -1204,8 +1203,7 @@ ${feedbackExamples}
                 generationConfig: {
                     temperature: 0.1, // Ultra-rigid deterministic extraction
                     responseMimeType: "application/json",
-                    responseSchema: schema,
-                    thinkingConfig: { thinkingBudget: 512 }
+                    responseSchema: schema
                 }
             };
             const proxyPayload = { model: EXTRACTION_MODEL, payload: geminiPayload };

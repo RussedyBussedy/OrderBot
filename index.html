@@ -1343,7 +1343,7 @@ ${feedbackExamples}
                             ${data._reasoningFlags && data._reasoningFlags.length > 0 ? `
                             <div class="px-4 py-2 bg-amber-50 border-t border-amber-200 text-sm text-amber-800 flex items-start gap-2">
                                 <span class="font-semibold shrink-0">AI flagged:</span>
-                                <span>${data._reasoningFlags.map(f => `Item ${f.item} — ${f.pattern}`).join(' &bull; ')}</span>
+                                <span>${data._reasoningFlags.map(f => f.item === 'DOC' ? f.pattern : `Item ${f.item} — ${f.pattern}`).join(' &bull; ')}</span>
                             </div>` : ''}
                             <div class="summary-item-details p-4 border-t border-slate-200">
                                 <!-- Detailed report will be injected here -->
@@ -2183,8 +2183,12 @@ ${feedbackExamples}
                 { name: 'Control column confusion', regex: /control.*(?:shift|wrong|swap|mix)/i },
                 { name: 'Phantom row detected', regex: /(?:blank|empty|spacer|separator).*row/i },
                 { name: 'Handwriting unclear', regex: /(?:unclear|illegible|hard to read|handwrit|ambiguous)/i },
-                { name: 'Dimension uncertainty', regex: /(?:width|drop).*(?:could be|or |unclear|unsure)/i },
+                // Tightened: require uncertainty word to directly follow width/drop, not match "width or drop" comparisons
+                { name: 'Dimension uncertainty', regex: /(?:width|drop)\s+(?:could be|is unclear|is unsure|might be|is ambiguous)/i },
             ];
+            const COLLAPSIBLE = new Set(['Dimension uncertainty', 'Handwriting unclear']);
+            const COLLAPSE_THRESHOLD = 3;
+
             const issues = [];
             (lineItems || []).forEach(item => {
                 if (!item.reasoning) return;
@@ -2194,6 +2198,15 @@ ${feedbackExamples}
                     }
                 });
             });
+
+            // Collapse pervasive uncertainty (handwriting, low-confidence docs) into one document-level flag
+            const collapsibleIssues = issues.filter(i => COLLAPSIBLE.has(i.pattern));
+            if (collapsibleIssues.length >= COLLAPSE_THRESHOLD) {
+                const kept = issues.filter(i => !COLLAPSIBLE.has(i.pattern));
+                kept.push({ item: 'DOC', pattern: `Handwritten or low-confidence document — ${collapsibleIssues.length} items need manual verification` });
+                return kept;
+            }
+
             return issues;
         }
 

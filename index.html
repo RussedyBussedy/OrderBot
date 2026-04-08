@@ -420,7 +420,7 @@
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, addDoc, getDocs, query, where, orderBy, limit, startAfter, deleteDoc, doc, writeBatch, getDoc, setDoc, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-        import { firebaseConfig, PROXY_API_URL, PROMPT_VERSION } from './js/config.js';
+        import { firebaseConfig, PROXY_API_URL, PROMPT_VERSION, EXTRACTION_MODEL } from './js/config.js';
         import { BLIND_TYPE_EXCLUSIONS_FOR_COLOUR_CHECK, BLIND_TYPES_REQUIRING_CONTROL_VALIDATION, BLIND_TYPES_REQUIRING_DUAL_CONTROL, CACHE_TTL_MS } from './js/constants.js';
 
         // firebaseConfig, PROXY_API_URL, PROMPT_VERSION imported from ./js/config.js
@@ -940,12 +940,17 @@ Respond only with a JSON object containing a lineItems array.
                 const geminiPayload = {
                     systemInstruction: { parts: [{ text: focusedPrompt }] },
                     contents: [{ role: "user", parts: parts }],
-                    generationConfig: { temperature: 0.2, responseMimeType: "application/json", responseSchema: focusedSchema }
+                    generationConfig: {
+                        temperature: 0.2,
+                        responseMimeType: "application/json",
+                        responseSchema: focusedSchema,
+                        thinkingConfig: { thinkingBudget: 512 }
+                    }
                 };
                 const response = await fetch(PROXY_API_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ model: 'gemini-2.5-pro', payload: geminiPayload })
+                    body: JSON.stringify({ model: EXTRACTION_MODEL, payload: geminiPayload })
                 });
 
                 if (!response.ok) {
@@ -1194,10 +1199,11 @@ ${feedbackExamples}
                 generationConfig: {
                     temperature: 0.1, // Ultra-rigid deterministic extraction
                     responseMimeType: "application/json",
-                    responseSchema: schema
+                    responseSchema: schema,
+                    thinkingConfig: { thinkingBudget: 512 }
                 }
             };
-            const proxyPayload = { model: 'gemini-2.5-pro', payload: geminiPayload };
+            const proxyPayload = { model: EXTRACTION_MODEL, payload: geminiPayload };
             
             // --- CIRCUIT BREAKER / RETRY LOGIC ---
             let response;

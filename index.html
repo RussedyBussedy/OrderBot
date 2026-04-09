@@ -1102,11 +1102,11 @@ Extract every mandatory field for every line item, even when the customer docume
 ### 4. Express uncertainty via confidence scores, not hedging words
 - Assign every field a confidence score 0.0–1.0.
 - 0.9+ for clearly legible, unambiguous values.
-- 0.5–0.8 for inferred or slightly unclear values.
+- 0.5–0.8 for inferred values.
 - 0.2–0.4 for best-guess interpretations on handwritten sketches.
-- 0.1 for truly illegible (still return an empty string).
-- Do NOT hedge in the reasoning text with phrases like "could be", "or", "unclear", "unsure". State your best interpretation directly; let the confidence score carry the uncertainty.
-- If the customer document is a handwritten sketch, prepend the reasoning field with "[HANDWRITTEN]" so the frontend can aggregate uncertainty at the document level.
+- 0.1 for truly illegible (still return your best guess as the value — never an empty string unless you genuinely cannot see any mark on the page).
+- Do NOT use hedging words in the reasoning field. No "unclear", "illegible", "ambiguous", "hard to read", "could be", "unsure". State your single best interpretation as fact; the confidence score carries the uncertainty.
+- Handwritten documents MUST receive the same complete extraction as typed documents. Interpret every mark on the page. A low-confidence best guess is always more useful than a blank field.
 
 ### 5. Format-specific rules live in guidelines, not here
 The user maintains a collection of guidelines and per-cell corrections below that teach you about specific dealer formats, recurring mistakes, and domain conventions. Consult them. If a guideline contradicts these principles, the guideline wins.
@@ -2196,11 +2196,10 @@ ${feedbackExamples}
             const PATTERNS = [
                 { name: 'Control column confusion', regex: /control.*(?:shift|wrong|swap|mix)/i },
                 { name: 'Phantom row detected', regex: /(?:blank|empty|spacer|separator).*row/i },
-                { name: 'Handwriting unclear', regex: /(?:unclear|illegible|hard to read|handwrit|ambiguous)/i },
                 // Tightened: require uncertainty word to directly follow width/drop, not match "width or drop" comparisons
                 { name: 'Dimension uncertainty', regex: /(?:width|drop)\s+(?:could be|is unclear|is unsure|might be|is ambiguous)/i },
             ];
-            const COLLAPSIBLE = new Set(['Dimension uncertainty', 'Handwriting unclear']);
+            const COLLAPSIBLE = new Set(['Dimension uncertainty']);
             const COLLAPSE_THRESHOLD = 3;
 
             const issues = [];
@@ -2213,7 +2212,7 @@ ${feedbackExamples}
                 });
             });
 
-            // Collapse pervasive uncertainty (handwriting, low-confidence docs) into one document-level flag
+            // Collapse pervasive dimension uncertainty into one document-level flag
             const collapsibleIssues = issues.filter(i => COLLAPSIBLE.has(i.pattern));
             if (collapsibleIssues.length >= COLLAPSE_THRESHOLD) {
                 const kept = issues.filter(i => !COLLAPSIBLE.has(i.pattern));

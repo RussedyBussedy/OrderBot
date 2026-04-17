@@ -702,18 +702,14 @@
             try {
                 const termLower = raw.toLowerCase();
                 const col = collection(db, 'orderbot_comparisons');
-                const [bdoSnap, custSnap] = await Promise.all([
+                const [bdoSnap, custSnap, legacySnap] = await Promise.all([
                     getDocs(query(col, where('bdoOrderNumberLower', '==', termLower))),
                     getDocs(query(col, where('customerOrderNumberLower', '==', termLower))),
+                    getDocs(query(col, where('bdoOrderNumber', '==', raw.toUpperCase()))),
                 ]);
 
                 const byId = new Map();
-                for (const d of [...bdoSnap.docs, ...custSnap.docs]) byId.set(d.id, { id: d.id, ...d.data() });
-
-                if (byId.size === 0) {
-                    const legacySnap = await getDocs(query(col, where('bdoOrderNumber', '==', raw.toUpperCase())));
-                    for (const d of legacySnap.docs) byId.set(d.id, { id: d.id, ...d.data() });
-                }
+                for (const d of [...bdoSnap.docs, ...custSnap.docs, ...legacySnap.docs]) byId.set(d.id, { id: d.id, ...d.data() });
 
                 const matches = [...byId.values()].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
 

@@ -690,37 +690,37 @@
         }
 
         async function findHistory() {
-            const searchTerm = allDomElements.historySearchInput.value.trim().toLowerCase();
-            if (!searchTerm) { showToast("Please enter an order number to search.", 'warning'); return; }
+            const raw = allDomElements.historySearchInput.value.trim();
+            if (!raw) { showToast("Please enter an order number to search.", 'warning'); return; }
             if (!db) { showToast("History feature is unavailable. Database not connected.", 'error'); return; }
 
             lastHistoryDoc = null;
             historyDataCache = [];
-            allDomElements.historyResults.innerHTML = `<div class="flex items-center gap-2 text-slate-600"><div class="loader !w-6 !h-6"></div>Searching for history...</div>`;
+            allDomElements.historyResults.innerHTML = `<div class="flex items-center gap-2 text-slate-600"><div class="loader !w-6 !h-6"></div>Searching history...</div>`;
             allDomElements.historyLoadMoreContainer.classList.add('hidden');
 
             try {
-                const RECENT_WINDOW = 300;
-                const historyQuery = query(
-                    collection(db, 'orderbot_comparisons'),
-                    orderBy('timestamp', 'desc'),
-                    limit(RECENT_WINDOW)
-                );
-                const querySnapshot = await getDocs(historyQuery);
-                const allDocs = querySnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+                const termLower = raw.toLowerCase();
+                const col = collection(db, 'orderbot_comparisons');
+                const [bdoSnap, custSnap] = await Promise.all([
+                    getDocs(query(col, where('bdoOrderNumberLower', '==', termLower))),
+                    getDocs(query(col, where('customerOrderNumberLower', '==', termLower))),
+                ]);
 
-                const matches = allDocs.filter(doc => {
-                    const bdo = (doc.bdoOrderNumberLower || (doc.bdoOrderNumber || '').toLowerCase());
-                    const custLower = (doc.customerOrderNumberLower || '').toLowerCase();
-                    const custFromObj = (doc.customerOrderNumber?.customerValue || doc.customerOrderNumber?.blindIQValue || '').toLowerCase();
-                    return bdo.includes(searchTerm) || custLower.includes(searchTerm) || custFromObj.includes(searchTerm);
-                });
+                const byId = new Map();
+                for (const d of [...bdoSnap.docs, ...custSnap.docs]) byId.set(d.id, { id: d.id, ...d.data() });
 
-                allDomElements.historyLoadMoreContainer.classList.add('hidden');
+                if (byId.size === 0) {
+                    const legacySnap = await getDocs(query(col, where('bdoOrderNumber', '==', raw.toUpperCase())));
+                    for (const d of legacySnap.docs) byId.set(d.id, { id: d.id, ...d.data() });
+                }
+
+                const matches = [...byId.values()].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
                 allDomElements.historyResults.innerHTML = '';
 
                 if (matches.length === 0) {
-                    allDomElements.historyResults.innerHTML = `<p class="text-slate-500">No history found for: <strong>${searchTerm}</strong>. (Searched the most recent ${RECENT_WINDOW} comparisons.)</p>`;
+                    allDomElements.historyResults.innerHTML = `<p class="text-slate-500">No comparison found for: <strong>${raw}</strong>. (Checked the full history — this order has not been processed by OrderBot.)</p>`;
                     allDomElements.clearHistoryBtn.classList.remove('hidden');
                     return;
                 }

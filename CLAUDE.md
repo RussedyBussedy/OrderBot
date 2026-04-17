@@ -1,4 +1,6 @@
-# OrderBot — CLAUDE.md
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## What This Is
 
@@ -7,23 +9,69 @@ OrderBot is an AI-powered document comparison tool for Blind Designs (blind/shut
 ## Architecture
 
 ```
-Frontend (index.html, ~2400 lines)     →    Backend proxy (index.js, ~103 lines)
+Frontend (index.html + js/)             →    Backend proxy (index.js)
 Hosted on GitHub Pages / SharePoint         Hosted on Google Cloud Run (africa-south1)
                                                 ↓
                                         Google Gemini API (2.5-Pro / 3-Flash)
 Firebase Firestore (6 collections) ←————— Firebase SDK (client-side, anonymous auth)
 ```
 
-All business logic lives in `index.html`. The backend is intentionally minimal.
+All business logic lives in `index.html`. The backend is intentionally minimal — a stateless proxy that injects the Gemini API key from Secret Manager and forwards requests. It caches nothing except the API key in memory.
+
+## Development Commands
+
+```bash
+# Install dependencies (backend only — frontend has no npm deps)
+npm install
+
+# Start backend locally
+npm start                    # Runs on port 8080
+
+# Test backend health
+curl -X POST http://localhost:8080 \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gemini-2.5-pro","payload":{"contents":[]}}'
+
+# Deploy backend to Cloud Run
+gcloud run deploy gemini-secure-proxy \
+  --source . \
+  --region africa-south1 \
+  --project orderbot-2b212
+```
+
+There are no tests, linters, or build steps. The frontend is served as static files — open `index.html` directly or push to `main` for GitHub Pages.
 
 ## Files
 
 | File | Purpose |
 |------|---------|
 | `index.html` | Single-page app — all HTML, CSS, and JS |
-| `index.js` | Express proxy server — forwards requests to Gemini API via Secret Manager |
-| `package.json` | Only 2 dependencies: `express` and `@google-cloud/secret-manager` |
-| `Dockerfile` | Cloud Run deployment (node:20-slim) |
+| `index.js` | Express proxy — forwards requests to Gemini API via Secret Manager |
+| `js/config.js` | Firebase config, `PROXY_API_URL`, `PROMPT_VERSION` |
+| `js/constants.js` | Validation constants: blind type exclusion lists, `CACHE_TTL_MS` |
+| `package.json` | 2 dependencies: `express` and `@google-cloud/secret-manager` |
+| `Dockerfile` | Cloud Run deployment (node:20-slim, port 8080) |
+
+## Frontend Module Pattern
+
+The frontend uses browser-native ES modules (`<script type="module">`). No build tools.
+
+```javascript
+// CDN imports
+import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+// Local module imports
+import { firebaseConfig, PROXY_API_URL, PROMPT_VERSION } from './js/config.js';
+import { BLIND_TYPE_EXCLUSIONS_FOR_COLOUR_CHECK, ... } from './js/constants.js';
+```
+
+When extracting more modules to `js/`, follow this pattern: named exports only (`export const`), no default exports, no CommonJS.
+
+## Backend Details
+
+- **Secret Manager path:** `projects/orderbot-2b212/secrets/gemini-api-key/versions/latest`
+- **JSON body limit:** 10MB (to handle base64-encoded document images)
+- **Safety settings:** All 4 Gemini safety categories set to `BLOCK_NONE` server-side
+- **CORS origins:** `russedybussedy.github.io`, `app.lab-pa.googleapis.com`, `blinddesignscoza.sharepoint.com`
 
 ## Firebase Collections
 
@@ -40,11 +88,10 @@ All business logic lives in `index.html`. The backend is intentionally minimal.
 
 - **Frontend:** Push `index.html` to the `main` branch on GitHub. It is served from GitHub Pages at `https://russedybussedy.github.io` and embedded in SharePoint.
 - **Backend:** Deploy via `gcloud run deploy` or Cloud Run build trigger. The image is built from `Dockerfile`.
-- **Allowed CORS origins:** `russedybussedy.github.io`, `app.lab-pa.googleapis.com`, `blinddesignscoza.sharepoint.com`
 
 ## AI Models
 
-- `gemini-2.5-pro` — main document comparison (high accuracy, lower speed)
+- `gemini-2.5-pro` — main document comparison (configured via `EXTRACTION_MODEL` in `js/config.js`)
 - `gemini-3-flash-preview` — guideline consolidation and feedback enhancement (fast, lower cost)
 
 ## Critical Rules for Future Changes
@@ -59,20 +106,20 @@ Never mix frontend and backend changes in the same commit. Never add a new depen
 The frontend uses browser-native ES module imports (`<script type="module">`). No webpack, vite, or rollup. Keep it that way until a proper build pipeline is established and tested.
 
 ### 4. Extract, don't rewrite
-When modularizing the frontend (Phase 4 in the improvement plan), move working functions into separate `.js` files — don't redesign them. Pure functions with no DOM dependencies are the safest to extract first.
+When modularizing the frontend, move working functions into separate `.js` files — don't redesign them. Pure functions with no DOM dependencies are the safest to extract first.
 
 ### 5. Test before proceeding
 Each change must be deployed and manually verified before the next change begins. The app must work end-to-end: upload → compare → view results → history search.
 
 ### 6. Firebase config exposure is intentional
-The Firebase `apiKey` in `index.html` is a client-side API key (standard Firebase practice). It is restricted by Firebase security rules and allowed origins. Do not panic about it appearing in the source.
+The Firebase `apiKey` is a client-side API key (standard Firebase practice). It is restricted by Firebase security rules and allowed origins.
 
 ## Post-AI Validation Logic
 
 After Gemini returns results, the frontend runs these validations locally:
 
 1. **Fabric validation** — checks blind width/drop against fabric width; handles "can turn" and "out of warranty" cases
-2. **Colour validation** — required for most blind types (exclusion list: element double roller, curtain glide curtain ripple, curtain somfy, curtain motion)
+2. **Colour validation** — required for most blind types (exclusion list in `js/constants.js`)
 3. **Control validation** — specific blind types require chain/motor/dual keywords
 4. **Dual control validation** — some blind types require both Control 1 and Control 2 populated
 5. **Motor torque validation** — calculates required torque from dimensions + fabric weight + bar weight; validates against motor specs
@@ -80,7 +127,7 @@ After Gemini returns results, the frontend runs these validations locally:
 ## Improvement Phases (Planned)
 
 See the planning document. Phases in priority order:
-0. Foundation (toasts, accessibility, docs) ← **DONE**
+0. Foundation (toasts, accessibility, docs) — **DONE**
 1. Export & Reporting (print, CSV export)
 2. History & Search (Firestore query optimization, date filter, pagination)
 3. UI/UX Polish (responsive grid, skeleton loaders, file management)

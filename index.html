@@ -791,6 +791,7 @@
                     result = applyConfidenceThresholds(result);
                     const reasoningFlags = analyzeReasoningPatterns(result.lineItems);
                     if (reasoningFlags.length > 0) result._reasoningFlags = reasoningFlags;
+                    await persistComparison(result); // save AFTER validations so history keeps the flags
                     summaryResultsCache[index] = { status: 'success', data: result };
                 } catch (error) {
                     console.error(`Failed comparison for pair ${index}:`, error);
@@ -820,6 +821,7 @@
                         result = applyConfidenceThresholds(result);
                         const reasoningFlags = analyzeReasoningPatterns(result.lineItems);
                         if (reasoningFlags.length > 0) result._reasoningFlags = reasoningFlags;
+                        await persistComparison(result); // save AFTER validations so history keeps the flags
                         summaryResultsCache[failedPairs[i].originalIndex] = { status: 'success', data: result };
                     } catch (error) {
                         console.error(`Retry failed for pair ${failedPairs[i].originalIndex}:`, error);
@@ -1272,26 +1274,37 @@ ${feedbackExamples}
             // Inject Model Type into data for display
             data.modelUsed = result.modelVersion || proxyPayload.model;
 
-            if (db) {
-                const bdoNum = (data.bdoOrderNumber || '').trim();
-                const customerNum = (data.customerOrderNumber?.customerValue || data.customerOrderNumber?.blindIQValue || '').trim();
-                const fallbackId = bdoNum || (customerNum ? `UNKNOWN-${customerNum}` : `UNKNOWN-${Date.now()}`);
-
-                if (!bdoNum) {
-                    showToast(`BDO order number missing — saved as "${fallbackId}". Search by customer ref to find it.`, 'warning');
-                }
-
-                await addDoc(collection(db, `orderbot_comparisons`), {
-                    ...data,
-                    timestamp: new Date().toISOString(),
-                    userId: userId,
-                    bdoOrderNumber: fallbackId,
-                    bdoOrderNumberLower: fallbackId.toLowerCase(),
-                    customerOrderNumberLower: customerNum.toLowerCase(),
-                    promptVersion: PROMPT_VERSION
-                });
-            }
+            // NOTE: Persisting to Firestore is deliberately deferred to the caller
+            // (persistComparison), which runs AFTER Pass-2 re-extraction and the post-AI
+            // validations. Saving here would store the raw extraction only, so history
+            // would show none of the fabric/colour/control/torque/min-width flags or
+            // confidence downgrades. Do not re-add a save in this function.
             return data;
+        }
+
+        // Persist a fully-processed comparison to history. Called AFTER Pass-2 and all
+        // post-AI validations so the saved record includes every flag and confidence
+        // adjustment shown in the live report (this is the fix for validation flags
+        // being absent from history search).
+        async function persistComparison(data) {
+            if (!db || !data) return;
+            const bdoNum = (data.bdoOrderNumber || '').trim();
+            const customerNum = (data.customerOrderNumber?.customerValue || data.customerOrderNumber?.blindIQValue || '').trim();
+            const fallbackId = bdoNum || (customerNum ? `UNKNOWN-${customerNum}` : `UNKNOWN-${Date.now()}`);
+
+            if (!bdoNum) {
+                showToast(`BDO order number missing — saved as "${fallbackId}". Search by customer ref to find it.`, 'warning');
+            }
+
+            await addDoc(collection(db, `orderbot_comparisons`), {
+                ...data,
+                timestamp: new Date().toISOString(),
+                userId: userId,
+                bdoOrderNumber: fallbackId,
+                bdoOrderNumberLower: fallbackId.toLowerCase(),
+                customerOrderNumberLower: customerNum.toLowerCase(),
+                promptVersion: PROMPT_VERSION
+            });
         }
 
         function renderSummaryReport(results) {

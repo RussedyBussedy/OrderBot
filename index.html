@@ -1569,12 +1569,16 @@ ${feedbackExamples}
                     const alertClass = 'bg-red-100 text-red-800';
                     validationHtml += `<div class="p-2 text-sm font-semibold ${alertClass} flex items-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.21 3.03-1.742 3.03H4.42c-1.532 0-2.492-1.696-1.742-3.03l5.58-9.92zM10 13a1 1 0 110-2 1 1 0 010 2zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" /></svg> ${lineItem.controlValidation.message}</div>`;
                 }
+                 if (lineItem.blindWeight || lineItem.requiredTorque) {
+                    const infoClass = 'bg-blue-100 text-blue-800';
+                    const infoParts = [];
+                    if (lineItem.blindWeight) infoParts.push(`Weight: ${lineItem.blindWeight} kg`);
+                    if (lineItem.requiredTorque) infoParts.push(`RQD Torque: ${lineItem.requiredTorque} Nm${lineItem.requiredTorqueSafety ? ` (+20% safety: ${lineItem.requiredTorqueSafety} Nm)` : ''}`);
+                    validationHtml += `<div class="p-2 text-sm font-semibold ${infoClass} flex items-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" /></svg> ${infoParts.join(' · ')}</div>`;
+                }
                  if (lineItem.torqueValidation) {
                     const alertClass = 'bg-red-100 text-red-800';
                     validationHtml += `<div class="p-2 text-sm font-semibold ${alertClass} flex items-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.21 3.03-1.742 3.03H4.42c-1.532 0-2.492-1.696-1.742-3.03l5.58-9.92zM10 13a1 1 0 110-2 1 1 0 010 2zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" /></svg> ${lineItem.torqueValidation.message}</div>`;
-                } else if (lineItem.requiredTorque) {
-                    const infoClass = 'bg-blue-100 text-blue-800';
-                    validationHtml += `<div class="p-2 text-sm font-semibold ${infoClass} flex items-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" /></svg> RQD Torque: ${lineItem.requiredTorque} Nm${lineItem.requiredTorqueSafety ? ` (+20% safety: ${lineItem.requiredTorqueSafety} Nm)` : ''}</div>`;
                 }
                  if (lineItem.minWidthValidation) {
                     const alertClass = 'bg-red-100 text-red-800';
@@ -2245,6 +2249,26 @@ ${feedbackExamples}
         
             if (comparisonData.lineItems) {
                 comparisonData.lineItems.forEach(item => {
+                    // --- 0. Per-blind weight & required torque (single source of truth) ---
+                    // Computed once here for every tube-based blind (has both fabric and tube data),
+                    // then reused by the chain-ratio check, the motor torque check, and the preview
+                    // display. Bottom bar at 0.28 kg/m (Alu rate). Non-tube blinds are skipped.
+                    if (fabricProperties && fabricProperties.size > 0 && tubeProperties) {
+                        const wtFabric = fabricProperties.get(item.range?.blindIQValue?.toLowerCase().trim());
+                        const wtTube = tubeProperties.get(item.blindType?.blindIQValue?.toLowerCase().trim());
+                        const wMatch = (item.width?.blindIQValue || '').match(/\d+/);
+                        const dMatch = (item.drop?.blindIQValue || '').match(/\d+/);
+                        const wMm = wMatch ? parseInt(wMatch[0], 10) : NaN;
+                        const dMm = dMatch ? parseInt(dMatch[0], 10) : NaN;
+                        if (wtFabric && wtTube && wtTube.tubeDiameter && !isNaN(wMm) && !isNaN(dMm)) {
+                            const totalWeight = (wMm / 1000) * (dMm / 1000) * wtFabric.fabricWeight + (wMm / 1000) * 0.280;
+                            const baseTorque = totalWeight * 9.81 * ((wtTube.tubeDiameter / 1000) / 2);
+                            item.blindWeight = totalWeight.toFixed(2);
+                            item.requiredTorque = baseTorque.toFixed(2);
+                            item.requiredTorqueSafety = (baseTorque * 1.2).toFixed(2);
+                        }
+                    }
+
                     // --- 1. Fabric Width & Drop Validation ---
                     if (fabricProperties && fabricProperties.size > 0) {
                         const fabricName = item.range?.blindIQValue?.toLowerCase().trim();
@@ -2328,26 +2352,18 @@ ${feedbackExamples}
                     }
 
                     // --- 3b. Chain control ratio (Roller System Selector parity) ---
-                    // Roller blinds on a manual/chain control: total blind weight drives the chain
-                    // ratio. 4–8kg needs a heavy-duty 1.5:1 chain; >8kg is too heavy for a chain
-                    // (System 55 + Easi-Lift spring, or motorise). <=4kg = standard 1:1 (no flag).
+                    // Roller blinds on a manual/chain control: total blind weight (computed once in
+                    // section 0) drives the chain ratio. 4–8kg needs a heavy-duty 1.5:1 chain; >8kg
+                    // is too heavy for a chain (System 55 + Easi-Lift, or motorise); <=4kg = 1:1.
                     const isChainControl = combinedControlValue.includes('chain');
                     const isRollerBlind = !!(blindType && blindType.includes('roller'));
-                    if (isChainControl && isRollerBlind && fabricProperties && fabricProperties.size > 0) {
-                        const chainFabric = fabricProperties.get(item.range?.blindIQValue?.toLowerCase().trim());
-                        const cwMatch = (item.width?.blindIQValue || '').match(/\d+/);
-                        const cdMatch = (item.drop?.blindIQValue || '').match(/\d+/);
-                        const cwMm = cwMatch ? parseInt(cwMatch[0], 10) : NaN;
-                        const cdMm = cdMatch ? parseInt(cdMatch[0], 10) : NaN;
-                        if (chainFabric && !isNaN(cwMm) && !isNaN(cdMm)) {
-                            // Bottom bar at 0.28 kg/m (Alu rate; bar type is not captured by OrderBot).
-                            const chainWeight = (cwMm / 1000) * (cdMm / 1000) * chainFabric.fabricWeight + (cwMm / 1000) * 0.280;
-                            const already15 = combinedControlValue.includes('1.5') || JSON.stringify(item.specifications || '').includes('1.5');
-                            if (chainWeight > 8) {
-                                item.chainValidation = { type: 'error', message: `Chain Alert: Blind weight (${chainWeight.toFixed(1)}kg) exceeds 8kg — too heavy for a chain. Use System 55 with an Easi-Lift spring, or motorise.` };
-                            } else if (chainWeight > 4 && !already15) {
-                                item.chainValidation = { type: 'warning', message: `Chain Alert: Blind weight (${chainWeight.toFixed(1)}kg) is in the 4–8kg range — a heavy-duty 1.5:1 chain is required (standard 1:1 is not sufficient).` };
-                            }
+                    if (isChainControl && isRollerBlind && item.blindWeight != null) {
+                        const chainWeight = parseFloat(item.blindWeight);
+                        const already15 = combinedControlValue.includes('1.5') || JSON.stringify(item.specifications || '').includes('1.5');
+                        if (chainWeight > 8) {
+                            item.chainValidation = { type: 'error', message: `Chain Alert: Blind weight (${chainWeight.toFixed(1)}kg) exceeds 8kg — too heavy for a chain. Use System 55 with an Easi-Lift spring, or motorise.` };
+                        } else if (chainWeight > 4 && !already15) {
+                            item.chainValidation = { type: 'warning', message: `Chain Alert: Blind weight (${chainWeight.toFixed(1)}kg) is in the 4–8kg range — a heavy-duty 1.5:1 chain is required (standard 1:1 is not sufficient).` };
                         }
                     }
                 });
@@ -2463,31 +2479,13 @@ ${feedbackExamples}
                     return;
                 }
 
-                // Torque Calculation
-                const fabric = fabricProperties.get(blind.range.blindIQValue.toLowerCase().trim());
-                const tube = tubeProperties.get(blind.blindType.blindIQValue.toLowerCase().trim());
-
-                if (fabric && tube) {
-                    const blindWidthM = parseInt(blind.width.blindIQValue) / 1000;
-                    const blindDropM = parseInt(blind.drop.blindIQValue) / 1000;
-                    
-                    const fabricWeight = blindWidthM * blindDropM * fabric.fabricWeight;
-                    const bottomBarWeight = blindWidthM * 0.280; // 280g per meter
-                    const totalWeightKg = fabricWeight + bottomBarWeight;
-                    
-                    const tubeRadiusM = (tube.tubeDiameter / 1000) / 2;
-                    const baseTorque = totalWeightKg * 9.81 * tubeRadiusM;
-                    // Apply the 20% safety factor used by the Roller System Selector: a motor
-                    // must meet the calculated torque PLUS 20%, not just the bare figure.
-                    const requiredTorqueSafety = baseTorque * 1.2;
-                    const requiredTorque = baseTorque.toFixed(2);
-
-                    blind.requiredTorque = requiredTorque;
-                    blind.requiredTorqueSafety = requiredTorqueSafety.toFixed(2);
-
-                    // Numeric comparison (baseTorque/requiredTorqueSafety are numbers, motorProp.torque is a number).
-                    if (motorProp.torque < requiredTorqueSafety) {
-                         blind.torqueValidation = { message: `Torque Alert: Motor torque (${motorProp.torque} Nm) is below the required ${requiredTorqueSafety.toFixed(2)} Nm (calculated ${requiredTorque} Nm + 20% safety) for this blind.` };
+                // Motor power check — reuse the required torque computed once per blind in
+                // runPostAIValidations section 0 (already includes the 20% safety factor). Flag
+                // when the motor's torque is below it. No weight/torque recomputation here.
+                if (blind.requiredTorqueSafety != null) {
+                    const requiredSafety = parseFloat(blind.requiredTorqueSafety);
+                    if (!isNaN(requiredSafety) && motorProp.torque < requiredSafety) {
+                         blind.torqueValidation = { message: `Torque Alert: Motor torque (${motorProp.torque} Nm) is below the required ${blind.requiredTorqueSafety} Nm (calculated ${blind.requiredTorque} Nm + 20% safety) for this blind.` };
                     }
                 }
 

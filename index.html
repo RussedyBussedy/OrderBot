@@ -2250,22 +2250,44 @@ ${feedbackExamples}
             if (comparisonData.lineItems) {
                 comparisonData.lineItems.forEach(item => {
                     // --- 0. Per-blind weight & required torque (single source of truth) ---
-                    // Computed once here for every tube-based blind (has both fabric and tube data),
-                    // then reused by the chain-ratio check, the motor torque check, and the preview
-                    // display. Bottom bar at 0.28 kg/m (Alu rate). Non-tube blinds are skipped.
-                    if (fabricProperties && fabricProperties.size > 0 && tubeProperties) {
+                    // Computed once here, then reused by the chain-ratio check, the motor torque
+                    // check, and the preview display. WEIGHT needs only fabric (area + 0.28 kg/m Alu
+                    // bottom bar); REQUIRED TORQUE additionally needs the tube. Stored for roller
+                    // blinds and for any blind whose tube resolves (so motor checks work on all types).
+                    if (fabricProperties && fabricProperties.size > 0) {
+                        const bt = item.blindType?.blindIQValue?.toLowerCase().trim() || '';
+                        const isRoller = bt.includes('roller');
                         const wtFabric = fabricProperties.get(item.range?.blindIQValue?.toLowerCase().trim());
-                        const wtTube = tubeProperties.get(item.blindType?.blindIQValue?.toLowerCase().trim());
                         const wMatch = (item.width?.blindIQValue || '').match(/\d+/);
                         const dMatch = (item.drop?.blindIQValue || '').match(/\d+/);
                         const wMm = wMatch ? parseInt(wMatch[0], 10) : NaN;
                         const dMm = dMatch ? parseInt(dMatch[0], 10) : NaN;
-                        if (wtFabric && wtTube && wtTube.tubeDiameter && !isNaN(wMm) && !isNaN(dMm)) {
+                        // Resolve tube: exact key first, else the longest tube-table key contained in
+                        // the blind type (handles "Element Roller Sys 40" -> "Element Roller"), with a
+                        // 40/55 guard so a Sys-55 blind never picks up a 40mm tube by accident.
+                        let wtTube = null;
+                        if (tubeProperties && tubeProperties.size > 0 && bt) {
+                            wtTube = tubeProperties.get(bt) || null;
+                            if (!wtTube) {
+                                const sysNum = (bt.match(/\b(40|55)\b/) || [])[1];
+                                let best = '';
+                                for (const key of tubeProperties.keys()) {
+                                    if (!bt.includes(key)) continue;
+                                    const cand = tubeProperties.get(key);
+                                    if (sysNum && cand && cand.tubeDiameter && String(cand.tubeDiameter) !== sysNum) continue;
+                                    if (key.length > best.length) best = key;
+                                }
+                                if (best) wtTube = tubeProperties.get(best);
+                            }
+                        }
+                        if (wtFabric && !isNaN(wMm) && !isNaN(dMm) && (isRoller || (wtTube && wtTube.tubeDiameter))) {
                             const totalWeight = (wMm / 1000) * (dMm / 1000) * wtFabric.fabricWeight + (wMm / 1000) * 0.280;
-                            const baseTorque = totalWeight * 9.81 * ((wtTube.tubeDiameter / 1000) / 2);
                             item.blindWeight = totalWeight.toFixed(2);
-                            item.requiredTorque = baseTorque.toFixed(2);
-                            item.requiredTorqueSafety = (baseTorque * 1.2).toFixed(2);
+                            if (wtTube && wtTube.tubeDiameter) {
+                                const baseTorque = totalWeight * 9.81 * ((wtTube.tubeDiameter / 1000) / 2);
+                                item.requiredTorque = baseTorque.toFixed(2);
+                                item.requiredTorqueSafety = (baseTorque * 1.2).toFixed(2);
+                            }
                         }
                     }
 

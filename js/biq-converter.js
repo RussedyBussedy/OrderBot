@@ -1,0 +1,1015 @@
+// =============================================================================
+// biq-converter.js — BlindIQ XML Converter core (pure module, no DOM/network)
+// Parses customer order documents (Blind Guys xlsx rows, Mathéo PDF text,
+// BD fillable-form fields, or AI-extracted JSON) into a common order model,
+// resolves names -> BlindIQ IDs via a mappings object, emits BlindIQExport_CO
+// XML, and bridges orders into OrderBot's comparison shape so
+// runPostAIValidations() / validateMotorDependencies() can check them.
+// All exports are named (repo convention). No default exports. No CommonJS.
+// =============================================================================
+
+// ---------- tiny helpers ----------
+export const biqNorm = s => String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+export const biqLc = s => biqNorm(s).toLowerCase();
+const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+export const isOff = v => v == null || v === '' || v === '/Off' || v === 'Off';
+const cleanVal = v => { const x = biqNorm(v); return /^(no|none|n\/a|na|off|-)$/i.test(x) ? '' : x; };
+
+// ---------- seed mappings (learned from real BlindIQ exports 116888 / 20112) ----------
+export const BIQ_SEED_MAPPINGS = {
+    blindTypes: { 'element roller sys 40': 25, 'system 40': 25, 'roller blinds': 25, 'roller blind': 25, 'element wood': 24, 'wood venetian': 24, 'curtain ripple': 18, 'double roller blinds': 28, 'double roller': 28 },
+    ranges: { 'edge block': 993, 'urban filter': 1023, '3 screen': 754, 'classic': 408, 'hand drawn': 327 },
+    colours: { 'edge block|alabaster': 35, 'urban filter|melody': 2854, '3 screen|ice': 517, 'classic|snow': 686 },
+    fixes: { 'reveal': 1, 'face': 2, 'none': -1 },
+    control1: { 'lh chain': 9, 'lh pin': 11, 'left': 1, 'none': -1 },
+    control2: { 'rh chain': 10, 'rh pin': 18, 'grouped': 7, 'stack centre split': 47, 'none': -1 },
+    deliveryMethods: { 'courier triton': 3, 'courier': 3 },
+    packingTypes: { 'boxed': 2 },
+    customers: { 'total blind designs': { customer: 7051, address: 7050, operator: 954 } },
+    fabricSplits: {}, rangesScoped: {}, rangeFormulas: {}, sundries: {}, sundryTypes: {}, variantTemplates: {}
+};
+export const BIQ_MAPPING_CATEGORIES = {
+    blindTypes: { label: 'Blind types', xml: 'COI_BlindType_Link' },
+    ranges: { label: 'Fabric ranges', xml: 'COI_BlindRange_Link' },
+    colours: { label: 'Colours (key: range|colour)', xml: 'COI_Colour_Link' },
+    fixes: { label: 'Fix types', xml: 'COI_Fix_Link' },
+    control1: { label: 'Controls — left / primary', xml: 'COI_Control1_Link' },
+    control2: { label: 'Controls — right / secondary', xml: 'COI_Control2_Link' },
+    deliveryMethods: { label: 'Delivery methods', xml: 'CO_DeliveryMethod_Link' },
+    packingTypes: { label: 'Packing types', xml: 'CO_PackingType_Link' },
+    customers: { label: 'Customers', xml: 'CO_Customer_Link + address + operator' },
+    fabricSplits: { label: 'Fabric splits (combined fabric -> range + colour)', xml: '—' },
+    rangesScoped: { label: 'Ranges (scoped: blindTypeId|range)', xml: 'COI_BlindRange_Link' },
+    rangeFormulas: { label: 'Control drop formulas (rangeId -> formula)', xml: 'COI_ControlDrop' },
+    sundries: { label: 'Sundries (name/code -> {sundry, type})', xml: 'COS_Sundry_Link + COS_SundryType_Link' },
+    sundryTypes: { label: 'Sundry types', xml: 'COS_SundryType_Link' },
+    variantTemplates: { label: 'Variant option templates (blindTypeId -> options)', xml: 'COI_VariantOptions' }
+};
+
+// ---------- mapping resolution ----------
+export function biqResolve(mappings, cat, name) {
+    const key = biqLc(name);
+    if (!key) return { id: null, known: false, empty: true };
+    if (mappings[cat] && mappings[cat][key] != null) return { id: mappings[cat][key], known: true };
+    return { id: null, known: false };
+}
+export function biqResolveColour(mappings, range, colour) {
+    const k1 = biqLc(range) + '|' + biqLc(colour), k2 = '|' + biqLc(colour);
+    if (mappings.colours[k1] != null) return { id: mappings.colours[k1], known: true };
+    if (mappings.colours[k2] != null) return { id: mappings.colours[k2], known: true };
+    if (!biqLc(colour)) return { id: null, known: false, empty: true };
+    return { id: null, known: false };
+}
+
+// ---------- order model ----------
+// Range lookup, blind-type-scoped: BlindIQ range names repeat across blind types
+// ("Sheerweave 4500" exists 12x), so try '<blindTypeId>|<range>' first, then the
+// flat map (which only contains globally-unique names).
+export function biqResolveRange(mappings, blindTypeName, rangeName) {
+    const key = biqLc(rangeName);
+    if (!key) return { id: null, known: false, empty: true };
+    const bt = biqResolve(mappings, 'blindTypes', blindTypeName);
+    if (bt.known && mappings.rangesScoped && mappings.rangesScoped[bt.id + '|' + key] != null)
+        return { id: mappings.rangesScoped[bt.id + '|' + key], known: true, scoped: true };
+    if (mappings.ranges[key] != null) return { id: mappings.ranges[key], known: true };
+    return { id: null, known: false };
+}
+// Candidate range names for fabric-splitting, narrowed to the blind type when known.
+export function biqRangeNamesFor(mappings, blindTypeName) {
+    const names = new Set(Object.keys(mappings.ranges));
+    const bt = biqResolve(mappings, 'blindTypes', blindTypeName);
+    for (const k of Object.keys(mappings.rangesScoped || {})) {
+        const i = k.indexOf('|');
+        if (!bt.known || k.slice(0, i) === String(bt.id)) names.add(k.slice(i + 1));
+    }
+    return [...names].sort((a, b) => b.length - a.length);
+}
+// Control drop from the range's real BlindIQ formula ("[drop]*0.75", "[drop]*0.66",
+// "400", "0", "[drop]-0"); falls back to the 75% heuristic when the range is unknown.
+export function biqComputeControlDropV2(mappings, raw, drop, blindTypeName, rangeName) {
+    const r = biqNorm(raw);
+    if (/^\d+(\.\d+)?$/.test(r)) return String(Math.round(+r));
+    const d = parseFloat(drop);
+    if (!d && d !== 0) return '';
+    if (r && !/std|standard|75/i.test(r)) return '';
+    const rr = biqResolveRange(mappings, blindTypeName, rangeName);
+    if (rr.known) {
+        const entry = (mappings.rangeFormulas || {})[String(rr.id)];
+        if (entry === undefined) return String(Math.floor(d * 0.75)); // range known, formula not in DB -> heuristic
+        const f = String(entry).trim();
+        if (!f || f === '0') return '0';                              // DB says no control drop (curtains etc.)
+        let m = f.match(/^\[drop\]\s*\*\s*([\d.]+)$/i);   if (m) return String(Math.floor(d * parseFloat(m[1])));
+        m = f.match(/^\[drop\]\s*-\s*([\d.]+)$/i);          if (m) return String(Math.round(d - parseFloat(m[1])));
+        m = f.match(/^[\d.]+$/);                                if (m) return String(Math.round(parseFloat(f)));
+        return String(Math.floor(d * 0.75));
+    }
+    return String(Math.floor(d * 0.75));
+}
+// Exact-name (or stock-code) sundry lookup -> {sundry, type} or null.
+export function biqResolveSundry(mappings, text) {
+    const e = (mappings.sundries || {})[biqLc(text)];
+    return e ? { sundry: e.sundry, type: e.type } : null;
+}
+// Fuzzy sundry match: exact key first, else every word of the text must appear in
+// the key; a single hit resolves, several hits stay unresolved (operator picks —
+// e.g. adapter kits that come in colour variants).
+export function biqFuzzySundry(mappings, text) {
+    const exact = biqResolveSundry(mappings, text);
+    if (exact) return Object.assign({ desc: biqLc(text), exact: true }, exact);
+    const stop = new Set(['for', 'the', 'and', 'with', 'x']);
+    const tokens = biqLc(text).split(/[^a-z0-9.:]+/).filter(t => t.length > 1 && !stop.has(t));
+    if (!tokens.length) return null;
+    const hits = Object.keys(mappings.sundries || {}).filter(k => tokens.every(t => k.includes(t)));
+    if (hits.length === 1) { const e = mappings.sundries[hits[0]]; return { sundry: e.sundry, type: e.type, desc: hits[0], exact: false }; }
+    if (hits.length > 1) return { ambiguous: hits.length };
+    // second pass: gentle spelling synonyms (li-ion <-> lithium ion, "2.0nm" <-> "2nm")
+    const canon = str => str.replace(/li-ion/g, 'lithiumion').replace(/lithium\s+ion/g, 'lithiumion').replace(/(\d)\.0\s*nm/g, '$1nm').replace(/\s+nm/g, 'nm');
+    const ctokens = canon(biqLc(text)).split(/[^a-z0-9.:]+/).filter(t => t.length > 1 && !stop.has(t));
+    const chits = Object.keys(mappings.sundries || {}).filter(k => { const ck = canon(k); return ctokens.every(t => ck.includes(t)); });
+    if (chits.length === 1) { const e = mappings.sundries[chits[0]]; return { sundry: e.sundry, type: e.type, desc: chits[0], exact: false }; }
+    if (chits.length > 1) return { ambiguous: chits.length };
+    return null;
+}
+// Turn motorisation text (motor / remote / adapter) into an order sundry line,
+// aggregating duplicates by description.
+export function biqAddMotorSundry(mappings, order, text, qty) {
+    const t = biqNorm(text); if (!t) return;
+    const existing = order.sundries.find(su => biqLc(su.notes) === biqLc(t) || (su._src && biqLc(su._src) === biqLc(t)));
+    if (existing) { existing.qty = String((+existing.qty || 0) + (+qty || 1)); return; }
+    const hit = biqFuzzySundry(mappings, t);
+    const su = { code: '', qty: String(+qty || 1), type: '', sundry: '', notes: t, _src: t };
+    if (hit && hit.sundry != null) { su.type = String(hit.type); su.sundry = String(hit.sundry); if (!hit.exact) su.notes = t; }
+    order.sundries.push(su);
+}
+// Recompute auto-filled control drops once mappings/blind types resolve.
+export function biqRecomputeControlDrops(mappings, order) {
+    (order ? order.items : []).forEach(it => {
+        if (it._cdAuto || !biqNorm(it.controlDrop)) {
+            const v = biqComputeControlDropV2(mappings, '', it.drop, it.blindType, it.range);
+            if (v !== '') { it.controlDrop = v; it._cdAuto = true; }
+        }
+    });
+}
+
+export function biqBlankOrder() {
+    return {
+        source: 'manual', sourceDesc: 'Manual entry',
+        customer: '', orderNumber: '', client: '', orderDate: '', requiredDate: '',
+        deliveryMethod: '', packingType: '', address: '', notes: '', orderId: '0',
+        items: [], sundries: []
+    };
+}
+export function biqBlankItem(code) {
+    return {
+        code: code || '', qty: '1', location: '', blindType: '', range: '', colour: '',
+        width: '', drop: '', fix: '', control1: '', control2: '', controlDrop: '',
+        variants: [], notes: ''
+    };
+}
+
+// ---------- date parsing ----------
+const MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+export function biqParseDate(s) {
+    s = biqNorm(s); if (!s) return '';
+    let m = s.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
+    if (m) return `${m[1]}-${String(m[2]).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}`;
+    m = s.match(/(\d{1,2})\s+([A-Za-z]{3,})\.?\s+(\d{2,4})/);
+    if (m) { const mo = MONTHS[m[2].slice(0, 3).toLowerCase()]; if (mo) { let y = +m[3]; if (y < 100) y += 2000; return `${y}-${String(mo).padStart(2, '0')}-${String(m[1]).padStart(2, '0')}`; } }
+    m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+    if (m) { let y = +m[3]; if (y < 100) y += 2000; return `${y}-${String(m[2]).padStart(2, '0')}-${String(m[1]).padStart(2, '0')}`; }
+    return '';
+}
+
+// ---------- control drop: "Std" = 75% of drop, floored (matches BlindIQ portal) ----------
+export function biqComputeControlDrop(raw, drop) {
+    const r = biqNorm(raw);
+    if (/^\d+(\.\d+)?$/.test(r)) return String(Math.round(+r));
+    const d = parseFloat(drop);
+    if (!d) return '';
+    if (!r || /std|standard|75/i.test(r)) return String(Math.floor(d * 0.75));
+    return '';
+}
+
+// ---------- variant templates (exact key sets from real BlindIQ exports) ----------
+const VARIANT_TEMPLATES = {
+    roller: ['Mech Colour', 'Bottom Bar', 'Roll Type', 'Steel Ball Chain', 'Remove Bracket Covers', 'Plastic Bottom Bar', 'SmartRail', 'Intermediate Bracket', 'Coupled Bracket', 'System 40 1.5:1', 'System 32', 'Sys 40 70mm Cassette', 'Fabric Insert for 70mm Cassette', 'White PVC 70mm Cassette', 'Chain Tidy', 'Wire Side Guides', 'Fabric Only', 'Out of Warranty'],
+    venetian: ['Val Size', 'Val Returns', 'Mitre Val LH', 'Mitre Val RH', 'Ladder Tape', 'Ladder Tape Colour', 'Hold Downs Clip In', 'Hold Downs Magnetic', 'Cut Out LH', 'Cut Out RH', 'Mixed Slats', 'Out Of Warranty'],
+    defaults: { 'Steel Ball Chain': 'No', 'Remove Bracket Covers': 'No', 'Chain Tidy': 'No' }
+};
+export function biqTemplateFor(blindTypeName) {
+    const t = biqLc(blindTypeName);
+    if (/venetian|wood/.test(t)) return VARIANT_TEMPLATES.venetian.map(k => [k, '']);
+    if (/roller|element|system/.test(t)) return VARIANT_TEMPLATES.roller.map(k => [k, VARIANT_TEMPLATES.defaults[k] || '']);
+    return [];
+}
+// Variant option spec per blind type, harvested from the BlindIQ price matrices:
+// [{k, values[], def, req}] in the exact order the exports use. Null when unknown.
+export function biqVariantSpec(mappings, blindTypeName) {
+    const bt = biqResolve(mappings, 'blindTypes', blindTypeName);
+    if (!bt.known) return null;
+    const t = (mappings.variantTemplates || {})[String(bt.id)];
+    return (t && t.length) ? t : null;
+}
+// Template as [key, default] pairs — DB spec when available, legacy heuristics otherwise.
+export function biqTemplateFor2(mappings, blindTypeName) {
+    const spec = biqVariantSpec(mappings, blindTypeName);
+    if (spec) return spec.map(o => [o.k, o.def || '']);
+    return biqTemplateFor(blindTypeName);
+}
+// Add any template keys missing from an item's variants (keeps existing values + order).
+export function biqMergeTemplate(mappings, it) {
+    const spec = biqVariantSpec(mappings, it.blindType);
+    if (!spec) return;
+    const have = new Set(it.variants.map(v => biqLc(v[0])));
+    const merged = [];
+    spec.forEach(o => {
+        const i = it.variants.findIndex(v => biqLc(v[0]) === biqLc(o.k));
+        if (i >= 0) merged.push(it.variants[i]); else merged.push([o.k, o.def || '']);
+    });
+    it.variants.forEach(v => { if (!spec.some(o => biqLc(o.k) === biqLc(v[0]))) merged.push(v); });
+    it.variants = merged;
+}
+export function biqSetVar(variants, key, val) {
+    if (val === '' || val == null) return;
+    const i = variants.findIndex(v => biqLc(v[0]) === biqLc(key));
+    if (i >= 0) variants[i][1] = val; else variants.push([key, val]);
+}
+
+// ---------- fabric split ("5 Screen Charcoal Grey" -> range + colour) ----------
+export function biqSplitFabric(mappings, fabric, blindTypeName) {
+    const f = biqNorm(fabric); if (!f) return { range: '', colour: '' };
+    const saved = mappings.fabricSplits[biqLc(f)]; if (saved) return { range: saved.range, colour: saved.colour };
+    const ranges = biqRangeNamesFor(mappings, blindTypeName);
+    const fl = biqLc(f);
+    for (const r of ranges) {
+        if (fl.startsWith(r + ' ')) return { range: f.slice(0, r.length), colour: biqNorm(f.slice(r.length)) };
+        if (fl === r) return { range: f, colour: '' };
+    }
+    return { range: f, colour: '' };
+}
+export function biqNeedsSplit(mappings, it) {
+    return !!(it._origFabric && biqLc(it.range) === biqLc(it._origFabric)
+        && !biqResolveRange(mappings, it.blindType, it.range).known && biqLc(it._origFabric).split(' ').length > 1);
+}
+export function biqReSplitFabrics(mappings, order) {
+    (order ? order.items : []).forEach(it => {
+        if (it._origFabric && !biqResolveRange(mappings, it.blindType, it.range).known) {
+            const f = biqSplitFabric(mappings, it._origFabric, it.blindType);
+            if (biqResolveRange(mappings, it.blindType, f.range).known) { it.range = f.range; if (f.colour) it.colour = f.colour; }
+        }
+    });
+}
+
+// =============================================================================
+// PARSERS — deterministic fast-paths for known formats
+// =============================================================================
+
+// ---------- Blind Guys XLSX (rows = array-of-arrays from SheetJS, header:1) ----------
+export function biqParseBlindGuysRows(rows) {
+    const get = (r, c) => biqNorm(rows[r] && rows[r][c]);
+    let meta = { customerName: '', orderNumber: '', address: '', orderDate: '', company: '', product: '', rep: '' };
+    for (let r = 0; r < Math.min(rows.length, 8); r++) for (let c = 0; c < (rows[r] || []).length; c++) {
+        const v = biqLc(rows[r][c]);
+        if (v === 'customer name:') meta.customerName = get(r, c + 2) || get(r, c + 1);
+        if (v === 'orderno/ref:') meta.orderNumber = get(r, c + 2) || get(r, c + 1);
+        if (v === 'address:') meta.address = String(rows[r][c + 2] || rows[r][c + 1] || '').replace(/\r/g, '').trim();
+        if (v === 'order date:') meta.orderDate = get(r, c + 2) || get(r, c + 1);
+        if (v === 'company') meta.company = get(r, c + 1) || get(r, c + 2);
+        if (v === 'product') meta.product = get(r, c + 1) || get(r, c + 2);
+        if (v === 'sales rep') meta.rep = get(r, c + 1) || get(r, c + 2);
+    }
+    let hr = -1, headers = [];
+    for (let r = 0; r < Math.min(rows.length, 15); r++) {
+        const vals = (rows[r] || []).map(biqLc);
+        if (vals.includes('item #') && vals.includes('location')) { hr = r; headers = (rows[r] || []).map(biqNorm); break; }
+    }
+    if (hr < 0) return null;
+    const col = {}; headers.forEach((h, i) => { if (h) col[biqLc(h)] = i; });
+    const items = [];
+    for (let r = hr + 1; r < rows.length; r++) {
+        const code = get(r, col['item #']); if (!code) continue;
+        const raw = {}; headers.forEach((h, i) => { if (h) raw[h] = biqNorm(rows[r][i]); });
+        items.push(raw);
+    }
+    return { meta, items, doubleRoller: /double/i.test(meta.product) };
+}
+export function biqNormalizeBlindGuys(mappings, p) {
+    const o = biqBlankOrder();
+    o.source = 'blindguys'; o.sourceDesc = 'Blind Guys order sheet' + (p.doubleRoller ? ' (Double Roller)' : '');
+    o.customer = p.meta.company; o.orderNumber = p.meta.orderNumber; o.client = p.meta.customerName;
+    o.orderDate = biqParseDate(p.meta.orderDate); o.address = p.meta.address;
+    o.notes = p.meta.rep ? ('Sales rep: ' + p.meta.rep) : '';
+    let express = false;
+    p.items.forEach(raw => {
+        const it = biqBlankItem(raw['Item #'] || '');
+        it.qty = raw['Qty'] || '1'; it.location = raw['Location'] || '';
+        it.width = raw['Finished Width'] || ''; it.drop = raw['Finished Height'] || '';
+        it.fix = raw['Fixing'] || '';
+        it.blindType = p.doubleRoller ? (p.meta.product || 'Double Roller Blinds') : (raw['Type'] || p.meta.product || '');
+        const fabRaw = p.doubleRoller ? (raw['Front Blind Fabric'] || '') : (raw['Fabric'] || '');
+        { const f = biqSplitFabric(mappings, fabRaw, it.blindType); it.range = f.range; it.colour = f.colour; it._origFabric = fabRaw; }
+        it.control1 = raw['LH Control'] || ''; it.control2 = raw['RH Control'] || '';
+        { const cl = biqNorm(raw['Control Length'] || '');
+          it.controlDrop = biqComputeControlDropV2(mappings, cl, it.drop, it.blindType, it.range);
+          it._cdAuto = !/^\d/.test(cl); }
+        it.variants = biqTemplateFor2(mappings, p.doubleRoller ? (p.meta.product || 'Double Roller Blinds') : it.blindType);
+        const mapv = (src, key) => { const v = cleanVal(raw[src]); if (v) biqSetVar(it.variants, key, v); };
+        if (p.doubleRoller) {
+            // BlindIQ's Element Double Roller speaks Blockout/View; Blind Guys speaks Front/Back
+            const frontIsBlockout = /block/i.test(raw['Configuration Front Blind'] || '');
+            const front = cleanVal(raw['Front Blind Fabric']), back = cleanVal(raw['Back Blind Fabric']);
+            if (front) biqSetVar(it.variants, frontIsBlockout ? 'Blockout Fabric' : 'View Fabric', front);
+            if (back) biqSetVar(it.variants, frontIsBlockout ? 'View Fabric' : 'Blockout Fabric', back);
+            mapv('Bottom Bar Colour', 'Bottom Bar'); mapv('Cassette Colour', 'Cassette Colour');
+            mapv('Fabric Insert Cassette', 'Fabric Insert for 70mm Cassette');
+            mapv('Roll Type Front', 'Roll Type'); mapv('Roll Type Back', 'Roll Type Back');
+        } else {
+            mapv('Mechanism Colour', 'Mech Colour'); mapv('Bottom Bar Colour', 'Bottom Bar'); mapv('Roll', 'Roll Type');
+            mapv('Steel Ball Chain', 'Steel Ball Chain'); mapv('Remove Bracket Covers', 'Remove Bracket Covers');
+            mapv('Plastic Bottom Bar', 'Plastic Bottom Bar'); mapv('Chain Tidy', 'Chain Tidy');
+            mapv('Wired Side Guides', 'Wire Side Guides'); mapv('Fabric Only', 'Fabric Only');
+            mapv('Fabric Insert', 'Fabric Insert for 70mm Cassette');
+            const cass = cleanVal(raw['System 40 70mm Cassette'] || raw['Closed Cassette']); if (cass) biqSetVar(it.variants, 'Sys 40 70mm Cassette', cass);
+            const ty = biqLc(raw['Type']); if (ty.includes('system 32')) biqSetVar(it.variants, 'System 32', 'Yes');
+            if (ty.includes('1.5')) biqSetVar(it.variants, 'System 40 1.5:1', 'Yes');
+        }
+        // Motorisation lines belong in CustomerOrderSundries, not in the options string
+        const motorTxt = cleanVal(raw['Motor']), remoteTxt = cleanVal(raw['Remotes']),
+            accTxt = cleanVal(raw['Accessory']) || cleanVal(raw['Accessories']);
+        if (motorTxt) biqAddMotorSundry(mappings, o, motorTxt, +it.qty || 1);
+        if (remoteTxt) biqAddMotorSundry(mappings, o, remoteTxt, 1);
+        if (accTxt) biqAddMotorSundry(mappings, o, accTxt, +it.qty || 1);
+        if (!motorTxt && cleanVal(raw['Motor Type'])) it.notes = (it.notes ? it.notes + ' | ' : '') + 'Motor type: ' + cleanVal(raw['Motor Type']);
+        const skip = new Set(['Item #', 'Location', 'Finished Width', 'Finished Height', 'Qty', 'Type', 'LH Control', 'RH Control', 'Control Length', 'Mechanism Colour', 'Bottom Bar Colour', 'Fabric', 'Fixing', 'Roll', 'Line Notes', 'Express', 'Front Blind Fabric', 'Back Blind Fabric', 'Configuration Front Blind', 'Configuration Back Blind', 'Cassette Colour', 'Fabric Insert Cassette', 'Roll Type Front', 'Roll Type Back', 'Steel Ball Chain', 'Remove Bracket Covers', 'Plastic Bottom Bar', 'Chain Tidy', 'Wired Side Guides', 'Fabric Only', 'Fabric Insert', 'System 40 70mm Cassette', 'Closed Cassette', 'Motor', 'Motor Type', 'Remotes', 'Accessory', 'Accessories']);
+        for (const [k, v] of Object.entries(raw)) {
+            if (skip.has(k)) continue; const cv = cleanVal(v); if (cv) biqSetVar(it.variants, k, cv);
+        }
+        if (biqLc(raw['Express']) === 'yes') express = true;
+        if (raw['Line Notes']) it.notes = (it.notes ? it.notes + ' | ' : '') + raw['Line Notes'];
+        o.items.push(it);
+    });
+    if (express) o.notes = (o.notes ? o.notes + ' | ' : '') + 'EXPRESS (3 day delivery) +10%';
+    return o;
+}
+
+// ---------- Mathéo PDF (textItems = [{s,x,y}] from pdf.js getTextContent) ----------
+export function biqParseMatheoItems(textItems) {
+    const items = textItems.filter(i => i.s.trim());
+    const lineMap = {};
+    items.forEach(i => { const k = Math.round(i.y / 3) * 3; (lineMap[k] = lineMap[k] || []).push(i); });
+    const ys = Object.keys(lineMap).map(Number).sort((a, b) => b - a);
+    const lines = ys.map(y => ({ y, parts: lineMap[y].sort((a, b) => a.x - b.x) }));
+    const fullText = lines.map(l => l.parts.map(p => p.s).join(' ')).join('\n');
+    if (!/math.o|matheoblinds/i.test(fullText)) return null;
+    const meta = {};
+    let m = fullText.match(/PO#:\s*(\S+)/); if (m) meta.po = m[1];
+    m = fullText.match(/Quote #\s*:\s*(\S+)/); if (m) meta.quote = m[1];
+    m = fullText.match(/Job #\s*:\s*(\S+)/); if (m) meta.job = m[1];
+    m = fullText.match(/Date\s*:\s*([A-Za-z]*,?\s*\d{1,2}\s+[A-Za-z]+\s+\d{2,4})/); if (m) meta.orderDate = m[1].trim();
+    const compLine = fullText.split('\n').find(l => /math.o\s*blinds/i.test(l) && !/@|phone|e-mail/i.test(l));
+    if (compLine) meta.company = biqNorm(compLine);
+    m = fullText.match(/Name\s*:\s*([A-Za-zÀ-ž'\- ]+?)\s+Tel/i); if (m) meta.customerName = biqNorm(m[1]);
+    const hl = lines.find(l => { const t = l.parts.map(p => p.s.trim()); return t.includes('#') && t.some(s => /^Location$/i.test(s)) && t.some(s => /^Price$/i.test(s)); });
+    if (!hl) return null;
+    const cols = hl.parts.map(p => ({ name: biqNorm(p.s), x: p.x }));
+    const hi = lines.indexOf(hl);
+    for (let k = 1; k <= 3; k++) {
+        const l2 = lines[hi + k]; if (!l2) break;
+        if (l2.parts.some(p => /^\d+$/.test(p.s.trim())) && l2.parts[0].x < cols[1].x) break;
+        let used = false;
+        l2.parts.forEach(p => {
+            let best = null, bd = 1e9; cols.forEach(c => { const d = Math.abs(c.x - p.x); if (d < bd) { bd = d; best = c; } });
+            if (best && bd < 30) { best.name = biqNorm(best.name + ' ' + p.s); used = true; }
+        });
+        if (!used) break;
+    }
+    cols.forEach(c => { c.name = c.name.replace(/\s+([a-z])$/, '$1'); });
+    const rowsOut = []; let cur = null;
+    const assign = (row, p) => {
+        let best = -1, bd = 1e9; cols.forEach((c, ci) => { const d = p.x - c.x; if (d >= -12 && Math.abs(d) < bd) { bd = Math.abs(d); best = ci; } });
+        if (best < 0) best = 0; const key = cols[best].name;
+        const s = p.s.trim();
+        row[key] = row[key] ? (s.length <= 2 ? row[key] + s : row[key] + ' ' + s) : s;
+    };
+    for (let li = hi + 1; li < lines.length; li++) {
+        const l = lines[li]; const first = l.parts[0]; const joined = l.parts.map(p => p.s).join(' ');
+        if (/Sub Total|Grand Total|Discount|Vat\(|Rounding|Page \d/i.test(joined)) { if (/Sub Total|Grand Total/i.test(joined)) break; else continue; }
+        if (/^\d+$/.test(first.s.trim()) && first.x < cols[1].x) { cur = {}; rowsOut.push(cur); l.parts.forEach(p => assign(cur, p)); }
+        else if (cur) { l.parts.forEach(p => assign(cur, p)); }
+    }
+    return { meta, rows: rowsOut };
+}
+export function biqNormalizeMatheo(mappings, p) {
+    const o = biqBlankOrder();
+    o.source = 'matheo'; o.sourceDesc = 'Mathéo order sheet';
+    o.customer = p.meta.company || 'Mathéo Blinds & Awnings';
+    o.orderNumber = p.meta.po || p.meta.quote || ''; o.client = p.meta.customerName || '';
+    o.orderDate = biqParseDate(p.meta.orderDate);
+    o.notes = [p.meta.quote ? ('Quote ' + p.meta.quote) : '', p.meta.job ? ('Job ' + p.meta.job) : ''].filter(Boolean).join(' | ');
+    p.rows.forEach(raw => {
+        const it = biqBlankItem(raw['#'] || '');
+        it.qty = '1'; it.location = raw['Location'] || '';
+        it.width = raw['Width'] || ''; it.drop = raw['Height'] || '';
+        it.blindType = raw['Type'] || '';
+        let mat = biqNorm(raw['Material'] || '');
+        let rng = mat;
+        if (!biqResolveRange(mappings, it.blindType, rng).known) {
+            const stripped = mat.replace(/^bd\s*e\s*/i, '');
+            if (biqResolveRange(mappings, it.blindType, stripped).known) rng = stripped;
+        }
+        it.range = rng; it.colour = raw['Colour'] || '';
+        it.fix = raw['Fix'] || '';
+        const ctl = biqLc(raw['Controls'] || '');
+        if (ctl.includes('rh') && ctl.includes('chain')) { it.control1 = 'Lh Pin'; it.control2 = 'Rh Chain'; }
+        else if (ctl.includes('lh') && ctl.includes('chain')) { it.control1 = 'Lh Chain'; it.control2 = 'Rh Pin'; }
+        else if (ctl.includes('motor')) { it.control1 = raw['Controls']; it.control2 = ''; }
+        else { it.control1 = raw['Controls'] || ''; }
+        { const cd = biqNorm(raw['Control Drop'] || '');
+          it.controlDrop = biqComputeControlDropV2(mappings, /^\d/.test(cd) ? cd : '', it.drop, it.blindType, it.range);
+          it._cdAuto = !/^\d/.test(cd); }
+        it.variants = biqTemplateFor2(mappings, it.blindType || 'roller');
+        const mv = (src, key) => { const v = cleanVal(raw[src]); if (v) biqSetVar(it.variants, key, v); };
+        mv('H/ware Colour', 'Mech Colour');
+        mv('Bottom Bar', 'Bottom Bar');
+        mv('Roll Type', 'Roll Type');
+        if (/steel/i.test(raw['Chain'] || '')) biqSetVar(it.variants, 'Steel Ball Chain', 'Yes');
+        if (/yes/i.test(raw['Cord Tidy'] || '')) biqSetVar(it.variants, 'Chain Tidy', 'Yes');
+        mv('Cassette', 'Sys 40 70mm Cassette');
+        mv('Fabric Insert 70mm Cassette', 'Fabric Insert for 70mm Cassette');
+        mv('Side Channels', 'Side Channels');
+        if (cleanVal(raw['Bracket Covers'])) biqSetVar(it.variants, 'Remove Bracket Covers', cleanVal(raw['Bracket Covers']));
+        mv('System Change', 'System Change');
+        o.items.push(it);
+    });
+    return o;
+}
+
+// ---------- Blind Designs fillable form PDF (fields = {name: value} from pdf.js annotations) ----------
+export function biqParseBDFields(fields) {
+    if (!('Company Name' in fields) && !('Order Number' in fields)) return null;
+    const meta = {
+        customerName: biqNorm(fields['Company Name']), contact: biqNorm(fields['Contact Name']),
+        orderNumber: biqNorm(fields['Order Number']), orderDate: biqNorm(fields['Date']),
+        requiredDate: biqNorm(fields['Required Date']), deliveryMethod: biqNorm(fields['Delivery Method']),
+        deliveryAddress: String(fields['Delivery Address'] || '').replace(/\r\n?/g, '\n').trim(),
+        phone: biqNorm(fields['Phone']), email: biqNorm(fields['Email']), notes: biqNorm(fields['Order Notes']),
+        express: !isOff(fields['Express'])
+    };
+    const bases = ['Blind Type', 'Control Drop', 'Valance Return', 'Valance Size', 'Val Type', 'Cut Left', 'Cut Right', 'Wire Guides', 'Quantity', 'Location', 'Range', 'Colour', 'Width', 'Drop', 'Control', 'Fixing', 'Hardware'];
+    const rows = {};
+    for (const [name, val] of Object.entries(fields)) {
+        if (isOff(val)) continue;
+        if (/^Option\s+[A-O]\d+$/.test(name)) continue; // handled via the decoded option grid
+        for (const b of bases) {
+            if (name === b || name.startsWith(b)) {
+                let rest = name.slice(b.length).replace(/\s+/g, ' ').trim();
+                if (b === 'Control' && /^Drop/.test(rest)) continue;
+                const mm = rest.match(/^([A-O])?\s*(\d+)?$/); if (!mm) break;
+                const rowKey = mm[2] ? mm[2] : (mm[1] || 'A');
+                (rows[rowKey] = rows[rowKey] || {})[b] = biqNorm(val);
+                break;
+            }
+        }
+    }
+    const ordered = Object.keys(rows).sort((a, b) => {
+        const an = /^\d+$/.test(a), bn = /^\d+$/.test(b);
+        if (an && bn) return a - b; if (an) return 1; if (bn) return -1; return a.localeCompare(b);
+    });
+    const items = [];
+    ordered.forEach(k => {
+        const r = rows[k];
+        if (r['Width'] || r['Drop'] || r['Range'] || r['Colour'] || r['Location'] || r['Quantity']) items.push(Object.assign({ row: k }, r));
+    });
+    return { meta, items };
+}
+const BD_ROW_SEQUENCE = ['A','B','C','D','E','F','G','8','9','10','11','12','13','14','15'];
+export function biqNormalizeBDForm(mappings, p, gridByRow) {
+    const o = biqBlankOrder();
+    o.source = 'bdform'; o.sourceDesc = 'Blind Designs order form';
+    o.customer = p.meta.customerName; o.orderNumber = p.meta.orderNumber;
+    o.client = p.meta.contact ? (p.meta.contact + (p.meta.phone ? ' ' + p.meta.phone : '')) : '';
+    o.orderDate = biqParseDate(p.meta.orderDate); o.requiredDate = biqParseDate(p.meta.requiredDate);
+    o.deliveryMethod = p.meta.deliveryMethod; o.address = p.meta.deliveryAddress; o.notes = p.meta.notes;
+    if (p.meta.express) o.notes = (o.notes ? o.notes + ' | ' : '') + 'EXPRESS (3 day delivery) +10%';
+    let idx = 0;
+    p.items.forEach(raw => {
+        const it = biqBlankItem(String.fromCharCode(97 + (idx++)));
+        it.qty = raw['Quantity'] || '1'; it.location = raw['Location'] || '';
+        it.blindType = raw['Blind Type'] || ''; it.range = raw['Range'] || ''; it.colour = raw['Colour'] || '';
+        it.width = raw['Width'] || ''; it.drop = raw['Drop'] || '';
+        it.fix = raw['Fixing'] || '';
+        const side = biqLc(raw['Control'] || '');
+        const isVen = /venetian|wood|cellular/.test(biqLc(it.blindType));
+        if (isVen) { it.control1 = raw['Control'] || ''; }
+        else if (side === 'left') { it.control1 = 'Lh Chain'; it.control2 = 'Rh Pin'; }
+        else if (side === 'right') { it.control1 = 'Lh Pin'; it.control2 = 'Rh Chain'; }
+        else { it.control1 = raw['Control'] || ''; }
+        { const cd = biqNorm(raw['Control Drop'] || '');
+          it.controlDrop = biqComputeControlDropV2(mappings, /^\d/.test(cd) ? cd : '', it.drop, it.blindType, it.range);
+          it._cdAuto = !/^\d/.test(cd); }
+        it.variants = biqTemplateFor2(mappings, it.blindType);
+        if (cleanVal(raw['Hardware'])) biqSetVar(it.variants, isVen ? 'Hardware' : 'Mech Colour', cleanVal(raw['Hardware']));
+        if (cleanVal(raw['Valance Size'])) biqSetVar(it.variants, 'Val Size', cleanVal(raw['Valance Size']));
+        if (cleanVal(raw['Valance Return'])) biqSetVar(it.variants, 'Val Returns', cleanVal(raw['Valance Return']));
+        if (cleanVal(raw['Val Type'])) biqSetVar(it.variants, 'Val Type', cleanVal(raw['Val Type']));
+        if (cleanVal(raw['Cut Left'])) biqSetVar(it.variants, 'Cut Out LH', cleanVal(raw['Cut Left']));
+        if (cleanVal(raw['Cut Right'])) biqSetVar(it.variants, 'Cut Out RH', cleanVal(raw['Cut Right']));
+        if (cleanVal(raw['Wire Guides'])) biqSetVar(it.variants, 'Wire Side Guides', cleanVal(raw['Wire Guides']));
+        (raw.options || []).forEach(opt => { const [k, v] = opt.split('='); biqSetVar(it.variants, k, v || 'Yes'); });
+        if (gridByRow) {
+            const pos = BD_ROW_SEQUENCE.indexOf(String(raw.row));
+            const letter = pos >= 0 ? 'ABCDEFGHIJKLMNO'[pos] : String(raw.row);
+            (gridByRow[letter] || []).forEach(([k, v]) => biqSetVar(it.variants, k, v));
+        }
+        o.items.push(it);
+    });
+    return o;
+}
+
+// =============================================================================
+// AI EXTRACTION — universal path for any document type (via the Gemini proxy)
+// =============================================================================
+
+// Gemini responseSchema: a single customer order extracted from one document.
+export const BIQ_EXTRACTION_SCHEMA = {
+    type: "OBJECT",
+    properties: {
+        "customerCompany": { type: "STRING", description: "The dealer/company placing the order (the document's letterhead/system owner), not the end client." },
+        "orderNumber": { type: "STRING", description: "The order number / PO number / reference." },
+        "endClient": { type: "STRING", description: "End client or job name if shown, else empty." },
+        "orderDate": { type: "STRING", description: "Order date as printed." },
+        "requiredDate": { type: "STRING", description: "Required/delivery date if shown, else empty." },
+        "deliveryMethod": { type: "STRING" },
+        "deliveryAddress": { type: "STRING", description: "Multi-line delivery address if shown." },
+        "orderNotes": { type: "STRING" },
+        "lineItems": {
+            type: "ARRAY",
+            items: {
+                type: "OBJECT",
+                properties: {
+                    "itemCode": { type: "STRING", description: "Line identifier (a, b, 1, 2, 0001...)" },
+                    "qty": { type: "STRING" },
+                    "location": { type: "STRING", description: "Room / window location" },
+                    "blindType": { type: "STRING", description: "Product/blind type as written (e.g. Roller Blind, System 40, Element Wood)" },
+                    "range": { type: "STRING", description: "Fabric range/collection name ONLY (not the colour)" },
+                    "colour": { type: "STRING", description: "Colour name ONLY" },
+                    "width": { type: "STRING", description: "Finished width in mm, digits only" },
+                    "drop": { type: "STRING", description: "Finished drop/height in mm, digits only" },
+                    "fix": { type: "STRING", description: "Face or Reveal" },
+                    "controlLeft": { type: "STRING", description: "Left-hand control (e.g. Lh Chain, Lh Pin, LH Motor). Empty if not stated." },
+                    "controlRight": { type: "STRING", description: "Right-hand control (e.g. Rh Chain, Rh Pin, RH Motor). Empty if not stated." },
+                    "controlDrop": { type: "STRING", description: "Control/chain drop in mm, or 'Std' if standard" },
+                    "options": {
+                        type: "ARRAY", description: "Every other specification as Key=Value (e.g. Mech Colour=White, Roll Type=Waterfall, Motor=One Touch 1.1nm)",
+                        items: { type: "STRING" }
+                    },
+                    "notes": { type: "STRING" }
+                },
+                required: ["itemCode", "qty", "location", "blindType", "range", "colour", "width", "drop", "fix", "controlLeft", "controlRight", "controlDrop", "options", "notes"]
+            }
+        },
+        "sundries": {
+            type: "ARRAY", description: "Standalone accessory/component lines (motors, remotes, brackets ordered as separate lines)",
+            items: {
+                type: "OBJECT",
+                properties: { "description": { type: "STRING" }, "qty": { type: "STRING" } },
+                required: ["description", "qty"]
+            }
+        }
+    },
+    required: ["customerCompany", "orderNumber", "lineItems"]
+};
+
+export function biqBuildExtractionPrompt(knownRanges, knownBlindTypes) {
+    return `You are extracting a window-blind customer order from the attached document(s) for import into Blind Designs' manufacturing system (BlindIQ).
+
+RULES:
+- Extract EVERY line item. One output line item per physical blind.
+- Measurements: millimetres, digits only. South African number formats. Width is horizontal, drop/height vertical.
+- "range" is the fabric collection name; "colour" is the colour name. NEVER combine them: if the document shows "5 Screen Charcoal Grey", range="5 Screen", colour="Charcoal Grey".${knownRanges && knownRanges.length ? `
+- Known fabric ranges (use EXACTLY these spellings when the document matches one): ${knownRanges.join(', ')}.` : ''}${knownBlindTypes && knownBlindTypes.length ? `
+- Known blind types: ${knownBlindTypes.join(', ')}.` : ''}
+- Controls: chain/pin/motor and which side. A control written as just "Left" on a roller blind means chain on the left (controlLeft="Lh Chain", controlRight="Rh Pin"); "Right" means chain right (controlLeft="Lh Pin", controlRight="Rh Chain").
+- Put every other specification (mechanism/hardware colour, bottom bar, roll type, cassette, motor, remotes, valance, ladder tape, etc.) into "options" as "Key=Value" strings.
+- Handwriting: transcribe carefully; prefer plausible mm dimensions (300–4000). If a value is illegible, use an empty string — NEVER guess silently.
+- Do not invent line items for spacer/blank/total rows.`;
+}
+
+// Convert the AI's JSON into the converter order model.
+export function biqAiResultToOrder(mappings, ai) {
+    const o = biqBlankOrder();
+    o.source = 'ai'; o.sourceDesc = 'AI-extracted (verify against document)';
+    o.customer = biqNorm(ai.customerCompany); o.orderNumber = biqNorm(ai.orderNumber);
+    o.client = biqNorm(ai.endClient);
+    o.orderDate = biqParseDate(ai.orderDate); o.requiredDate = biqParseDate(ai.requiredDate);
+    o.deliveryMethod = biqNorm(ai.deliveryMethod); o.address = String(ai.deliveryAddress || '').trim();
+    o.notes = biqNorm(ai.orderNotes);
+    (ai.lineItems || []).forEach((li, idx) => {
+        const it = biqBlankItem(biqNorm(li.itemCode) || String.fromCharCode(97 + idx));
+        it.qty = biqNorm(li.qty) || '1'; it.location = biqNorm(li.location);
+        it.blindType = biqNorm(li.blindType);
+        it.range = biqNorm(li.range); it.colour = biqNorm(li.colour);
+        // safety: if AI left colour empty but range looks combined, run the splitter
+        if (!it.colour && it.range) { const f = biqSplitFabric(mappings, it.range, it.blindType); it.range = f.range; it.colour = f.colour; it._origFabric = biqNorm(li.range); }
+        it.width = (String(li.width || '').match(/\d+/) || [''])[0];
+        it.drop = (String(li.drop || '').match(/\d+/) || [''])[0];
+        it.fix = biqNorm(li.fix);
+        it.control1 = biqNorm(li.controlLeft); it.control2 = biqNorm(li.controlRight);
+        { const cd = biqNorm(li.controlDrop || '');
+          it.controlDrop = biqComputeControlDropV2(mappings, /^\d/.test(cd) ? cd : '', it.drop, it.blindType, it.range);
+          it._cdAuto = !/^\d/.test(cd); }
+        it.variants = biqTemplateFor2(mappings, it.blindType);
+        (li.options || []).forEach(opt => {
+            const i = String(opt).indexOf('=');
+            if (i > 0) biqSetVar(it.variants, biqNorm(opt.slice(0, i)), biqNorm(opt.slice(i + 1)));
+            else if (biqNorm(opt)) biqSetVar(it.variants, biqNorm(opt), 'Yes');
+        });
+        it.notes = biqNorm(li.notes);
+        o.items.push(it);
+    });
+    (ai.sundries || []).forEach(s => {
+        o.sundries.push({ code: '', qty: biqNorm(s.qty) || '1', type: '', sundry: '', notes: biqNorm(s.description) });
+    });
+    return o;
+}
+
+// =============================================================================
+// VALIDATION + XML GENERATION
+// =============================================================================
+// Customers: one name per account. Dealer phrasings are stored as pointer
+// aliases ({alias: canonicalKey}) and resolve to the canonical BlindIQ record;
+// the order's customer name is rewritten to the canonical name.
+export function biqResolveCustomer(mappings, name) {
+    const key = biqLc(name);
+    if (!key) return { known: false };
+    let entry = (mappings.customers || {})[key];
+    let canonicalKey = key;
+    if (entry && entry.alias) { canonicalKey = biqLc(entry.alias); entry = (mappings.customers || {})[canonicalKey]; }
+    if (!entry || entry.customer == null) return { known: false };
+    return { known: true, entry, canonicalKey };
+}
+export function biqCanonicalCustomerName(mappings, name) {
+    const r = biqResolveCustomer(mappings, name);
+    if (!r.known) return null;
+    return r.canonicalKey.replace(/\b[a-z]/g, ch => ch.toUpperCase()).replace(/\bT\/a\b/g, 'T/A');
+}
+
+// When the customer record carries default delivery method / packing type
+// (from BlindIQ's Customer Address table), fill empty header fields with them.
+export function biqApplyCustomerDefaults(mappings, order) {
+    const r = biqResolveCustomer(mappings, order.customer);
+    if (!r.known) return;
+    // alias -> rewrite to the one true BlindIQ account name before export
+    if (biqLc(order.customer) !== r.canonicalKey) order.customer = biqCanonicalCustomerName(mappings, order.customer);
+    const e = r.entry;
+    if (!order.deliveryMethod && e.dm) order.deliveryMethod = e.dm;
+    if (!order.packingType && e.pt) order.packingType = e.pt;
+}
+export function biqCollectProblems(mappings, order) {
+    const probs = [];
+    const custR = biqResolveCustomer(mappings, order.customer);
+    if (!order.customer) probs.push({ t: 'Customer (dealer) name is empty.' });
+    else if (!custR.known) probs.push({ t: 'Customer "' + order.customer + '" has no BlindIQ IDs (customer / address / operator).', cat: 'customers', name: order.customer });
+    else { const e = custR.entry;
+        // operator intentionally optional — BlindIQ doesn't use it on import; -1 is emitted when unset
+        if (e && (e.address === '' || e.address == null)) probs.push({ t: 'Customer "' + order.customer + '" has no delivery address ID.', cat: 'customers', name: order.customer });
+    }
+    // Required date intentionally optional — the operator sets it in BlindIQ after import.
+    if (!order.orderNumber) probs.push({ t: 'Customer order number / reference is empty.' });
+    const dm = biqResolve(mappings, 'deliveryMethods', order.deliveryMethod);
+    if (order.deliveryMethod && !dm.known) probs.push({ t: 'Delivery method "' + order.deliveryMethod + '" not mapped.', cat: 'deliveryMethods', name: order.deliveryMethod });
+    if (!order.deliveryMethod) probs.push({ t: 'Delivery method is empty (CO_DeliveryMethod_Link is mandatory).' });
+    const pk = biqResolve(mappings, 'packingTypes', order.packingType);
+    if (order.packingType && !pk.known) probs.push({ t: 'Packing type "' + order.packingType + '" not mapped.', cat: 'packingTypes', name: order.packingType });
+    if (!order.packingType) probs.push({ t: 'Packing type is empty — BlindIQ\'s importer needs a number here (e.g. Boxed / Standard).' });
+    if (!order.items.length && !order.sundries.length) probs.push({ t: 'Order has no items and no sundries.' });
+    order.items.forEach((it, i) => {
+        const w = 'Item ' + (it.code || i + 1) + ': ';
+        if (!biqResolve(mappings, 'blindTypes', it.blindType).known) probs.push({ t: w + 'blind type "' + (it.blindType || '?') + '" not mapped.', cat: 'blindTypes', name: it.blindType });
+        if (biqNeedsSplit(mappings, it)) probs.push({ t: w + 'fabric "' + it.range + '" needs splitting into range + colour.', split: i });
+        else if (!biqResolveRange(mappings, it.blindType, it.range).known) probs.push({ t: w + 'range "' + (it.range || '?') + '" not mapped' + (biqResolve(mappings, 'blindTypes', it.blindType).known ? ' for blind type "' + it.blindType + '"' : '') + '.', cat: 'ranges', name: it.range, blindType: it.blindType });
+        const rc = biqResolveColour(mappings, it.range, it.colour);
+        if (!rc.known && biqLc(it.colour)) probs.push({ t: w + 'colour "' + it.colour + '" (range ' + (it.range || '?') + ') not mapped.', cat: 'colours', name: it.range + '|' + it.colour });
+        if (!biqLc(it.colour) && !/curtain/i.test(it.blindType)) probs.push({ t: w + 'colour is empty.' });
+        if (!biqResolve(mappings, 'fixes', it.fix).known && biqLc(it.fix)) probs.push({ t: w + 'fix "' + it.fix + '" not mapped.', cat: 'fixes', name: it.fix });
+        if (!biqResolve(mappings, 'control1', it.control1).known && biqLc(it.control1)) probs.push({ t: w + 'control "' + it.control1 + '" not mapped.', cat: 'control1', name: it.control1 });
+        if (!biqResolve(mappings, 'control2', it.control2).known && biqLc(it.control2)) probs.push({ t: w + 'control "' + it.control2 + '" not mapped.', cat: 'control2', name: it.control2 });
+        const spec = biqVariantSpec(mappings, it.blindType);
+        if (spec) spec.forEach(o => {
+            if (o.req) { const f = it.variants.find(v => biqLc(v[0]) === biqLc(o.k));
+                if (!f || !biqNorm(f[1])) probs.push({ t: w + 'option "' + o.k + '" is required for ' + it.blindType + (o.values && o.values.length ? ' (' + o.values.slice(0, 4).join(' / ') + (o.values.length > 4 ? ' …' : '') + ')' : '') + '.' }); }
+        });
+        if (!(+it.width > 0)) probs.push({ t: w + 'width missing/invalid.' });
+        if (!(+it.drop > 0)) probs.push({ t: w + 'drop missing/invalid.' });
+        if (!(+it.qty > 0)) probs.push({ t: w + 'qty missing/invalid.' });
+    });
+    order.sundries.forEach((s, i) => {
+        const w = 'Sundry ' + (s.code || i + 1) + ': ';
+        if (!/^\d+$/.test(biqNorm(s.type))) probs.push({ t: w + 'SundryType_Link must be a number.' });
+        if (!/^\d+$/.test(biqNorm(s.sundry))) probs.push({ t: w + 'Sundry_Link must be a number.' });
+        if (!(+s.qty > 0)) probs.push({ t: w + 'qty missing/invalid.' });
+    });
+    return probs;
+}
+
+// Sundry lines need a line code (COS_ItemCode) — the real 20112 export codes its
+// sundries 'B' after item 'A'; BlindIQ's importer silently drops code-less lines.
+// Continue the item sequence: numeric items -> next numbers (0005…), else letters.
+export function biqAssignSundryCodes(order) {
+    const blanks = order.sundries.filter(su => !biqNorm(su.code));
+    if (!blanks.length) return;
+    const itemCodes = order.items.map(it => biqNorm(it.code)).filter(Boolean);
+    const numeric = itemCodes.length && itemCodes.every(c => /^\d+$/.test(c));
+    if (numeric) {
+        const width = Math.max(...itemCodes.map(c => c.length));
+        let n = Math.max(0, ...itemCodes.map(c => +c), ...order.sundries.map(su => +su.code || 0));
+        blanks.forEach(su => { n += 1; su.code = String(n).padStart(width, '0'); });
+    } else {
+        const used = new Set([...itemCodes, ...order.sundries.map(su => biqLc(su.code))].map(biqLc));
+        let i = 0;
+        blanks.forEach(su => {
+            while (i < 26 && used.has(String.fromCharCode(97 + i))) i++;
+            su.code = String.fromCharCode(97 + Math.min(i, 25)); used.add(su.code); i++;
+        });
+    }
+}
+
+const XSI = ' xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"';
+function tag(name, val, opts) {
+    opts = opts || {};
+    if (val == null || val === '') {
+        if (opts.nil) return '<' + name + ' xsi:nil="true" />';
+        return '<' + name + ' />';
+    }
+    return '<' + name + '>' + esc(val) + '</' + name + '>';
+}
+export function biqGenerateXML(mappings, order) {
+    biqAssignSundryCodes(order);
+    biqApplyCustomerDefaults(mappings, order);
+    const cust = biqResolveCustomer(mappings, order.customer);
+    const c = cust.known ? cust.entry : { customer: '', address: '', operator: '' };
+    const dm = biqResolve(mappings, 'deliveryMethods', order.deliveryMethod);
+    const pk = biqResolve(mappings, 'packingTypes', order.packingType);
+    const idOr = res => res.known ? res.id : '';
+    let x = '<BlindIQExport_CO>';
+    x += '<CustomerOrders' + XSI + '>';
+    x += tag('CustomerOrderID', order.orderId || '0');
+    x += tag('CO_Customer_Link', c.customer);
+    x += tag('CO_Customer_Order_Number', order.orderNumber);
+    x += tag('CO_Required_Date', order.requiredDate ? order.requiredDate + 'T00:00:00' : '');
+    x += tag('CO_DeliveryAddress_Link', c.address);
+    x += tag('CO_DeliveryMethod_Link', idOr(dm));
+    x += tag('CO_PackingType_Link', (order.packingType && pk.known) ? pk.id : '');  // empty -> caught by the import-safety scan
+    x += order.address ? '<CO_Delivery_Address>' + esc(order.address.replace(/\r\n?/g, '\n')) + '\n</CO_Delivery_Address>' : '<CO_Delivery_Address />';
+    x += tag('CO_Notes', order.notes);
+    x += tag('CO_CustomerOperator_Link', (c.operator === '' || c.operator == null) ? (cust.known ? -1 : '') : c.operator);
+    x += '</CustomerOrders>';
+    order.items.forEach(it => {
+        const rt = biqResolve(mappings, 'blindTypes', it.blindType), rr = biqResolveRange(mappings, it.blindType, it.range),
+            rc = biqResolveColour(mappings, it.range, it.colour), rf = biqResolve(mappings, 'fixes', it.fix),
+            r1 = biqResolve(mappings, 'control1', it.control1), r2 = biqResolve(mappings, 'control2', it.control2);
+        x += '<CustomerOrderItems' + XSI + '>';
+        x += tag('COI_ItemCode', it.code);
+        x += tag('COI_Qty', it.qty);
+        x += tag('COI_Location', it.location);
+        x += tag('COI_Supplier_Link', '1');
+        x += tag('COI_BlindType_Link', idOr(rt));
+        x += tag('COI_BlindRange_Link', idOr(rr));
+        x += tag('COI_Colour_Link', biqLc(it.colour) ? idOr(rc) : '-1');
+        x += tag('COI_Width', it.width);
+        x += tag('COI_Drop', it.drop);
+        x += tag('COI_Fix_Link', biqLc(it.fix) ? idOr(rf) : '-1');
+        x += tag('COI_Control1_Link', biqLc(it.control1) ? idOr(r1) : '-1');
+        x += tag('COI_Control2_Link', biqLc(it.control2) ? idOr(r2) : '-1');
+        x += tag('COI_ControlDrop', it.controlDrop || '0');
+        const clean = t => biqNorm(t).replace(/\|/g, '/');
+        const vs = it.variants.map(v => biqNorm(v[0]) ? clean(v[0]) + '=' + clean(v[1]) : '').filter(Boolean).join('|');
+        x += vs ? '<COI_VariantOptions>' + esc(vs + '|') + '</COI_VariantOptions>' : '<COI_VariantOptions />';
+        x += '<COI_VariantOptions_Display xsi:nil="true" />';
+        x += tag('COI_Order_Notes', it.notes);
+        x += '</CustomerOrderItems>';
+    });
+    order.sundries.forEach(s => {
+        x += '<CustomerOrderSundries' + XSI + '>';
+        x += tag('COS_ItemCode', s.code);
+        x += tag('COS_Qty', (+s.qty || 0).toFixed(3));
+        x += tag('COS_Supplier_Link', '1');
+        x += tag('COS_SundryType_Link', s.type);
+        x += tag('COS_Sundry_Link', s.sundry);
+        x += tag('COS_Sundry_Notes', s.notes);
+        x += '</CustomerOrderSundries>';
+    });
+    x += '</BlindIQExport_CO>';
+    return x;
+}
+// Scan generated XML for numeric fields BlindIQ's importer will CLng(): every
+// *_Link and CustomerOrderID node must contain digits. Returns offending tags.
+export function biqImportSafetyScan(xml) {
+    const bad = [];
+    const re = /<([A-Za-z0-9_]*_Link|CustomerOrderID)( xsi:nil="true")?\s*\/>|<([A-Za-z0-9_]*_Link|CustomerOrderID)>([^<]*)<\/\3>/g;
+    let m;
+    while ((m = re.exec(xml)) !== null) {
+        if (m[1] !== undefined) bad.push(m[1] + ' (empty/nil)');
+        else if (!/^-?\d+$/.test(String(m[4]).trim())) bad.push(m[3] + ' ("' + String(m[4]).trim() + '")');
+    }
+    return [...new Set(bad)];
+}
+export function biqPrettyXML(x) {
+    return x.replace(/></g, '>\n<').replace(/(<CustomerOrderItems |<CustomerOrderSundries |<\/BlindIQExport_CO)/g, '\n$1');
+}
+
+// =============================================================================
+// ORDERBOT BRIDGE — converted order -> comparison shape for runPostAIValidations
+// =============================================================================
+// Wraps each converter item as {field:{blindIQValue}} line items and synthesises
+// sundries from Motor / Remotes / Accessory variant options, so the existing
+// torque, fabric-width, colour, control, chain-ratio and motor-dependency checks
+// run unchanged on a converted (or AI-extracted) order.
+export function biqToComparisonShape(order) {
+    const wrap = v => ({ blindIQValue: String(v == null ? '' : v), customerValue: String(v == null ? '' : v), result: 'MATCH' });
+    const lineItems = order.items.map(it => {
+        const varGet = key => { const f = it.variants.find(v => biqLc(v[0]) === biqLc(key)); return f ? biqNorm(f[1]) : ''; };
+        return {
+            item: wrap(it.code), location: wrap(it.location), qty: wrap(it.qty),
+            blindType: wrap(it.blindType), range: wrap(it.range), colour: wrap(it.colour),
+            width: wrap(it.width), drop: wrap(it.drop), fix: wrap(it.fix),
+            control1: wrap(it.control1), control2: wrap(it.control2),
+            specifications: it.variants.filter(v => biqNorm(v[1])).map(v => ({ specName: v[0], specComparison: { blindIQValue: v[1], customerValue: v[1], result: 'MATCH', confidence: 1 } })),
+            _motorOption: varGet('Motor') || varGet('Motor Type'), _converterIndex: order.items.indexOf(it)
+        };
+    });
+    const sundries = [];
+    order.items.forEach(it => {
+        const varGet = key => { const f = it.variants.find(v => biqLc(v[0]) === biqLc(key)); return f ? biqNorm(f[1]) : ''; };
+        const motor = varGet('Motor'); const remotes = varGet('Remotes'); const accessory = varGet('Accessory') || varGet('Accessories');
+        if (motor) sundries.push({ item: { blindIQValue: 'Motor ' + motor, customerValue: motor, result: 'MATCH' }, quantity: +it.qty || 1 });
+        if (remotes) sundries.push({ item: { blindIQValue: 'Remote ' + remotes, customerValue: remotes, result: 'MATCH' }, quantity: 1 });
+        if (accessory) sundries.push({ item: { blindIQValue: accessory, customerValue: accessory, result: 'MATCH' }, quantity: +it.qty || 1 });
+    });
+    order.sundries.forEach(s => {
+        if (biqNorm(s.notes)) sundries.push({ item: { blindIQValue: s.notes, customerValue: s.notes, result: 'MATCH' }, quantity: +s.qty || 1 });
+    });
+    return { lineItems, sundries, bdoOrderNumber: order.orderNumber, customerOrderNumber: { customerValue: order.orderNumber, blindIQValue: order.orderNumber } };
+}
+
+// Pull validation flags computed by runPostAIValidations back onto converter items.
+export function biqExtractCheckResults(comparisonData) {
+    const out = [];
+    (comparisonData.lineItems || []).forEach(li => {
+        const flags = [];
+        ['fabricValidation', 'colourValidation', 'controlValidation', 'chainValidation', 'torqueValidation', 'minWidthValidation'].forEach(k => {
+            if (li[k]) flags.push({ kind: k, type: li[k].type || 'error', message: li[k].message });
+        });
+        if (Array.isArray(li.motorValidation)) li.motorValidation.forEach(m => flags.push({ kind: 'motorValidation', type: 'error', message: m }));
+        out.push({ index: li._converterIndex, blindWeight: li.blindWeight, requiredTorque: li.requiredTorque, requiredTorqueSafety: li.requiredTorqueSafety, flags });
+    });
+    return { items: out, global: comparisonData.motorValidation ? comparisonData.motorValidation.global : null };
+}
+
+// =============================================================================
+// AI DISCERNMENT (OrderBot only) — match a customer's product wording to the
+// BlindIQ catalogue. Pure helpers here build grounded candidate shortlists and
+// apply the AI's confidence-scored picks; the Gemini call itself lives in the UI.
+// Scope: product attributes ONLY (blind type / range / colour / control / fix).
+// The customer/dealer account is deliberately NOT AI-matched.
+// =============================================================================
+
+// token overlap score between a free name and a candidate key
+function biqTokenScore(query, cand) {
+    const qt = biqLc(query).split(/[^a-z0-9.]+/).filter(Boolean);
+    const ct = biqLc(cand).split(/[^a-z0-9.]+/).filter(Boolean);
+    if (!qt.length || !ct.length) return 0;
+    let hit = 0;
+    qt.forEach(t => { if (ct.some(c => c === t || c.startsWith(t) || t.startsWith(c))) hit++; });
+    let s = hit / qt.length;
+    if (biqLc(cand).startsWith(biqLc(query))) s += 0.3;
+    return s;
+}
+function biqShortlist(names, query, n) {
+    return names.map(nm => [nm, biqTokenScore(query, nm)])
+        .sort((a, b) => b[1] - a[1]).slice(0, n).map(x => x[0]);
+}
+
+// All candidate display names for a product field, scoped where it matters.
+export function biqCandidatesFor(mappings, field, ctx) {
+    ctx = ctx || {};
+    const title = s => String(s).replace(/\b[a-z]/g, c => c.toUpperCase());
+    if (field === 'blindType') return Object.keys(mappings.blindTypes || {}).map(title);
+    if (field === 'fix') return Object.keys(mappings.fixes || {}).filter(k => k !== 'none').map(title);
+    if (field === 'control1' || field === 'control2') return Object.keys(mappings[field] || {}).filter(k => k !== 'none').map(title);
+    if (field === 'range') return biqRangeNamesFor(mappings, ctx.blindType).map(title);
+    if (field === 'colour') return Object.keys(mappings.colours || {}).map(k => (k.startsWith('|') ? k.slice(1) : k.split('|').pop())).map(title);
+    return [];
+}
+
+// Collect every unresolved product slot in an order, each with a grounded shortlist.
+export function biqBuildDiscernment(mappings, order, shortlistN) {
+    const N = shortlistN || 12;
+    const slots = [];
+    order.items.forEach((it, i) => {
+        const add = (field, raw, ctx) => {
+            if (!biqLc(raw)) return;
+            const cands = biqShortlist(biqCandidatesFor(mappings, field, ctx), raw, N);
+            if (cands.length) slots.push({ id: 'i' + i + '.' + field, idx: i, field, raw: biqNorm(raw), candidates: cands });
+        };
+        if (!biqResolve(mappings, 'blindTypes', it.blindType).known) add('blindType', it.blindType);
+        if (!biqNeedsSplit(mappings, it) && !biqResolveRange(mappings, it.blindType, it.range).known) add('range', it.range, { blindType: it.blindType });
+        if (!biqResolveColour(mappings, it.range, it.colour).known) add('colour', it.colour, { range: it.range });
+        if (!biqResolve(mappings, 'control1', it.control1).known) add('control1', it.control1);
+        if (!biqResolve(mappings, 'control2', it.control2).known) add('control2', it.control2);
+        if (!biqResolve(mappings, 'fixes', it.fix).known) add('fix', it.fix);
+    });
+    return slots;
+}
+
+// Gemini responseSchema for the discernment call.
+export const BIQ_DISCERN_SCHEMA = {
+    type: 'OBJECT',
+    properties: {
+        matches: {
+            type: 'ARRAY',
+            items: {
+                type: 'OBJECT',
+                properties: {
+                    id: { type: 'STRING' },
+                    match: { type: 'STRING', description: 'EXACT text of the chosen candidate, or empty string if none fit' },
+                    confidence: { type: 'NUMBER', description: '0.0 to 1.0' }
+                },
+                required: ['id', 'match', 'confidence']
+            }
+        }
+    },
+    required: ['matches']
+};
+export function biqBuildDiscernPrompt(slots) {
+    const lines = slots.map(s =>
+        `- id "${s.id}" (${s.field}): customer wrote "${s.raw}". Candidates: ${s.candidates.map(c => '"' + c + '"').join(', ')}`);
+    return `You map a window-blind customer's wording to a manufacturer's catalogue.
+For each id below, choose the ONE candidate that means the same product attribute as what the customer wrote, or return an empty match if none genuinely fit.
+Rules:
+- "match" must be copied EXACTLY from that id's candidate list (or empty).
+- Judge by product meaning: e.g. "Roller Blind" = "Element Roller Sys 40"; "blockout"/"block" fabrics map to block ranges; abbreviations and word-order differences are fine.
+- confidence: 0.9+ only when you are sure; 0.6-0.9 if plausible; below 0.5 if guessing.
+- Never invent a candidate that is not listed.
+
+${lines.join('\n')}`;
+}
+
+// Apply AI matches by confidence. "both by confidence":
+//   >= autoAt  -> auto-apply (marked _ai='auto', amber, must be verified)
+//   >= suggestAt -> suggestion only (_ai='suggest', not applied)
+//   else        -> ignored (stays unresolved / red)
+// Returns a per-slot report for the UI.
+export function biqApplyDiscernment(mappings, order, matches, opts) {
+    opts = opts || {};
+    const autoAt = opts.autoAt != null ? opts.autoAt : 0.85;
+    const suggestAt = opts.suggestAt != null ? opts.suggestAt : 0.5;
+    const byId = {}; (matches || []).forEach(m => { byId[m.id] = m; });
+    const report = [];
+    order.items.forEach((it, i) => {
+        ['blindType', 'range', 'colour', 'control1', 'control2', 'fix'].forEach(field => {
+            const m = byId['i' + i + '.' + field];
+            if (!m || !biqNorm(m.match)) return;
+            const conf = +m.confidence || 0;
+            it._ai = it._ai || {};
+            if (conf >= autoAt) {
+                it._aiOrig = it._aiOrig || {};
+                if (it._aiOrig[field] === undefined) it._aiOrig[field] = it[field];
+                it[field] = biqNorm(m.match);
+                it._ai[field] = { mode: 'auto', from: it._aiOrig[field], to: biqNorm(m.match), confidence: conf };
+                report.push({ idx: i, field, mode: 'auto', raw: it._aiOrig[field], match: biqNorm(m.match), confidence: conf });
+            } else if (conf >= suggestAt) {
+                it._ai[field] = { mode: 'suggest', from: it[field], to: biqNorm(m.match), confidence: conf };
+                report.push({ idx: i, field, mode: 'suggest', raw: it[field], match: biqNorm(m.match), confidence: conf });
+            }
+        });
+    });
+    return report;
+}
+// Accept a pending suggestion (capturer clicked it).
+export function biqAcceptSuggestion(order, idx, field) {
+    const it = order.items[idx]; if (!it || !it._ai || !it._ai[field]) return;
+    it._aiOrig = it._aiOrig || {}; if (it._aiOrig[field] === undefined) it._aiOrig[field] = it[field];
+    it[field] = it._ai[field].to;
+    it._ai[field].mode = 'auto';
+}
+// Persist confirmed AI picks as learned aliases so they resolve deterministically next time.
+// Call on download (capturer endorsed the order). Returns [{cat,key,...}] saved.
+export function biqLearnFromAI(mappings, order) {
+    const learned = [];
+    order.items.forEach(it => {
+        if (!it._ai || !it._aiOrig) return;
+        const rec = (cat, key, id) => { if (id != null && mappings[cat] && mappings[cat][key] == null) { mappings[cat][key] = id; learned.push({ cat, key, id }); } };
+        Object.keys(it._ai).forEach(field => {
+            if (it._ai[field].mode !== 'auto') return;         // only confirmed/auto, not pending suggestions
+            const orig = it._aiOrig[field]; if (!biqLc(orig)) return;
+            if (field === 'blindType') { const r = biqResolve(mappings, 'blindTypes', it.blindType); rec('blindTypes', biqLc(orig), r.id); }
+            else if (field === 'fix') { const r = biqResolve(mappings, 'fixes', it.fix); rec('fixes', biqLc(orig), r.id); }
+            else if (field === 'control1') { const r = biqResolve(mappings, 'control1', it.control1); rec('control1', biqLc(orig), r.id); }
+            else if (field === 'control2') { const r = biqResolve(mappings, 'control2', it.control2); rec('control2', biqLc(orig), r.id); }
+            else if (field === 'range') { const r = biqResolveRange(mappings, it.blindType, it.range); if (r.known) { const bt = biqResolve(mappings, 'blindTypes', it.blindType); if (bt.known) { const k = bt.id + '|' + biqLc(orig); if (mappings.rangesScoped[k] == null) { mappings.rangesScoped[k] = r.id; learned.push({ cat: 'rangesScoped', key: k, id: r.id }); } } } }
+            else if (field === 'colour') { const r = biqResolveColour(mappings, it.range, it.colour); if (r.known) rec('colours', '|' + biqLc(orig), r.id); }
+        });
+    });
+    return learned;
+}

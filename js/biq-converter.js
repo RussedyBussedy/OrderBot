@@ -694,6 +694,8 @@ export function biqCollectProblems(mappings, order) {
         if (!biqResolve(mappings, 'fixes', it.fix).known && biqLc(it.fix)) probs.push({ t: w + 'fix "' + it.fix + '" not mapped.', cat: 'fixes', name: it.fix });
         if (!biqResolve(mappings, 'control1', it.control1).known && biqLc(it.control1)) probs.push({ t: w + 'control "' + it.control1 + '" not mapped.', cat: 'control1', name: it.control1 });
         if (!biqResolve(mappings, 'control2', it.control2).known && biqLc(it.control2)) probs.push({ t: w + 'control "' + it.control2 + '" not mapped.', cat: 'control2', name: it.control2 });
+        if (biqRequiresDualControl(mappings, it.blindType) && (!biqLc(it.control1) || !biqLc(it.control2)))
+            probs.push({ t: w + 'both control sides (Control L and Control R) must be set for ' + (it.blindType || 'this blind') + '.' });
         const spec = biqVariantSpec(mappings, it.blindType);
         if (spec) spec.forEach(o => {
             if (o.req) { const f = it.variants.find(v => biqLc(v[0]) === biqLc(o.k));
@@ -783,7 +785,10 @@ export function biqGenerateXML(mappings, order) {
         x += tag('COI_Control2_Link', biqLc(it.control2) ? idOr(r2) : '-1');
         x += tag('COI_ControlDrop', it.controlDrop || '0');
         const clean = t => biqNorm(t).replace(/\|/g, '/');
-        const vs = it.variants.map(v => biqNorm(v[0]) ? clean(v[0]) + '=' + clean(v[1]) : '').filter(Boolean).join('|');
+        // Only emit options that exist in BlindIQ for this blind type (never invent options).
+        const _spec = biqVariantSpec(mappings, it.blindType);
+        const _emit = _spec ? (() => { const keys = new Set(_spec.map(o => biqLc(o.k))); return it.variants.filter(v => keys.has(biqLc(v[0]))); })() : it.variants;
+        const vs = _emit.map(v => biqNorm(v[0]) ? clean(v[0]) + '=' + clean(v[1]) : '').filter(Boolean).join('|');
         x += vs ? '<COI_VariantOptions>' + esc(vs + '|') + '</COI_VariantOptions>' : '<COI_VariantOptions />';
         x += '<COI_VariantOptions_Display xsi:nil="true" />';
         x += tag('COI_Order_Notes', it.notes);
@@ -1012,4 +1017,153 @@ export function biqLearnFromAI(mappings, order) {
         });
     });
     return learned;
+}
+
+// =============================================================================
+// SHUTTER CONFIGURATION + OPTION DEFAULTS
+// Config string encodes panels (L=left hinge, R=right hinge) interleaved with
+// T-posts (T): "LTLTRTR" = 4 panels (L,L,R,R) split by T-posts. Adjacent same-
+// side letters (LL/RR, no T) = a double-hinge; adjacent different-side (LR/RL,
+// no T) = a fold; panels split by T = independent hinged panels.
+// =============================================================================
+const BIQ_SHUTTER_TYPES = new Set(['urban hinged shutter', 'altra hinged shutter', 'altra fold shutter']);
+
+export function biqDecodeShutterConfig(raw) {
+    const s = String(raw || '').toUpperCase().replace(/[^LRT]/g, '');
+    if (!s || !/[LR]/.test(s)) return null;
+    const panels = (s.match(/[LR]/g) || []).length;
+    const doubleHinge = /LL|RR/.test(s);
+    let fold = false;
+    for (let i = 0; i < s.length - 1; i++) {
+        const a = s[i], b = s[i + 1];
+        if (/[LR]/.test(a) && /[LR]/.test(b) && a !== b) fold = true;  // LR/RL adjacency, no T
+    }
+    const type = doubleHinge ? 'Double Hinged' : (fold ? 'Fold' : 'Hinged');
+    return { panels, type, doubleHinge, fold, raw: s };
+}
+
+// Pick the best BlindIQ range name for a decoded config under a given blind type,
+// trying the config's type first, then falling back to whatever that blind type
+// actually offers (Urban only has "N Panel Hinged", so a double-hinge there still
+// maps to the hinged range and keeps the double-hinge as a detail).
+export function biqShutterRangeFromConfig(mappings, blindType, d, tier) {
+    if (!d) return null;
+    const bt = biqResolve(mappings, 'blindTypes', blindType);
+    if (!bt.known) return null;
+    const suffix = tier ? ' Tier on Tier' : '';
+    const candidates = [
+        d.panels + ' Panel ' + d.type + suffix,
+        d.panels + ' Panel Hinged' + suffix,
+        d.panels + ' Panel ' + d.type,
+        d.panels + ' Panel Hinged',
+        d.panels + ' Panel Fold'
+    ];
+    // SCOPED-only: a range must exist under THIS blind type (Urban has no Double Hinged/Fold,
+    // so those names must NOT be borrowed from Altra via the global fallback).
+    for (const c of candidates) if ((mappings.rangesScoped || {})[bt.id + '|' + biqLc(c)] != null) return c;
+    return null;
+}
+
+// Auto-derive shutter range + layout details from a configuration string found in
+// the range field (e.g. "LTLTRTR") or a "Configuration" option.
+export function biqApplyShutterConfig(mappings, order) {
+    (order ? order.items : []).forEach(it => {
+        if (!BIQ_SHUTTER_TYPES.has(biqLc(it.blindType))) return;
+        let cfg = '';
+        const cv = it.variants.find(v => /^config/i.test(v[0]));
+        if (cv && biqNorm(cv[1])) cfg = cv[1];
+        else if (/^[lrt\s]+$/i.test(biqNorm(it.range)) && /[lr]/i.test(it.range)) cfg = it.range;
+        if (!cfg) return;
+        const d = biqDecodeShutterConfig(cfg);
+        if (!d) return;
+        const tier = /tier/i.test(it.notes || '') || it.variants.some(v => /tier on tier/i.test(v[0]) && /yes/i.test(v[1]));
+        const rn = biqShutterRangeFromConfig(mappings, it.blindType, d, tier);
+        if (rn) it.range = rn;                      // resolves; otherwise leave (flags for review)
+        // Layout detail is NOT a BlindIQ option — record it in the item notes (a valid free-text field).
+        const note = 'Config ' + d.raw + (d.doubleHinge ? ' (double hinge)' : (d.fold ? ' (fold)' : ''));
+        if (!biqLc(it.notes).includes('config ' + biqLc(d.raw))) it.notes = it.notes ? it.notes + ' | ' + note : note;
+        it._cfgPanels = d.panels;
+    });
+}
+
+// Fill omitted REQUIRED options with sensible defaults so they stop blocking:
+//  - matrix default if present;
+//  - Yes/No-type (or free-text like "Split Tier on Tier") -> "No";
+//  - genuine multi-choice with no default (Frame, Rail Size, Louvre, Closure) -> left to flag.
+export function biqApplyOptionDefaults(mappings, order) {
+    (order ? order.items : []).forEach(it => {
+        const spec = biqVariantSpec(mappings, it.blindType);
+        if (!spec) return;
+        spec.forEach(o => {
+            if (!o.req) return;
+            const f = it.variants.find(v => biqLc(v[0]) === biqLc(o.k));
+            if (f && biqNorm(f[1])) return;            // already set
+            let def = '';
+            const vals = (o.values || []).map(biqLc);
+            if (o.def && biqNorm(o.def)) def = o.def;
+            else if (vals.length === 0) def = 'No';     // free-text required (e.g. Split Tier on Tier) -> No
+            else if (vals.every(v => v === 'yes' || v === 'no') || (vals.length === 1 && vals[0] === 'yes')) def = 'No';
+            if (def) { biqSetVar(it.variants, o.k, def); it._optDefaulted = true; }
+        });
+    });
+}
+
+// Copy the set variant options from one line to chosen others. overwrite=false fills
+// only blanks on the targets; overwrite=true replaces. Returns count of values written.
+export function biqCopyOptions(order, srcIdx, targetIdxs, opts) {
+    opts = opts || {};
+    const src = order.items[srcIdx]; if (!src) return 0;
+    const srcVars = src.variants.filter(v => biqNorm(v[1]));
+    let n = 0;
+    (targetIdxs || []).forEach(ti => {
+        const t = order.items[ti]; if (!t || t === src) return;
+        srcVars.forEach(([k, val]) => {
+            const f = t.variants.find(v => biqLc(v[0]) === biqLc(k));
+            if (f) { if (opts.overwrite || !biqNorm(f[1])) { f[1] = val; n++; } }
+            else { t.variants.push([k, val]); n++; }
+        });
+    });
+    return n;
+}
+
+// =============================================================================
+// CONTROL INFERENCE + DUAL-CONTROL REQUIREMENT
+// Roller/vision-type blinds drive on one side and idle (pin) on the other. If the
+// order states one side's drive (chain/motor) and leaves the other blank, infer the
+// opposite side as a Pin — UNLESS the blind is coupled / has an intermediate bracket
+// (then the idle side is an intermediate, which the capturer must specify).
+// =============================================================================
+export function biqRequiresDualControl(mappings, blindType) {
+    const bt = biqResolve(mappings, 'blindTypes', blindType);
+    if (!bt.known) return /roller|vision/.test(biqLc(blindType)) && !/valance/.test(biqLc(blindType));
+    for (const [k, v] of Object.entries(mappings.blindTypes || {}))
+        if (v === bt.id && /roller|vision/.test(k) && !/valance/.test(k)) return true;
+    return false;
+}
+export function biqInferControls(mappings, order) {
+    (order ? order.items : []).forEach(it => {
+        if (!biqRequiresDualControl(mappings, it.blindType)) return;
+        const c1 = biqLc(it.control1), c2 = biqLc(it.control2);
+        if (/intermediate|coupled/.test(c1) || /intermediate|coupled/.test(c2)) return;   // already a coupled/intermediate config
+        const blocked = it.variants.some(v => /intermediate bracket|coupled bracket/i.test(v[0]) && /yes/i.test(biqNorm(v[1])));
+        if (blocked) return;
+        const drive = s => /chain|motor|crank|wand|cord|spring/.test(s);
+        if (drive(c2) && !c1) { it.control1 = 'Lh Pin'; it._ctlInferred = true; }
+        else if (drive(c1) && !c2) { it.control2 = 'Rh Pin'; it._ctlInferred = true; }
+    });
+}
+
+// BlindIQ mappings are the source of truth: once a field resolves to an ID, replace the
+// dealer's wording with BlindIQ's canonical name. Unresolved fields are left as-is so the
+// capturer still sees what was on the order. Idempotent.
+export function biqCanonicalize(mappings, order) {
+    const N = mappings;
+    (order ? order.items : []).forEach(it => {
+        const bt = biqResolve(N, 'blindTypes', it.blindType); if (bt.known && N.blindTypeNames && N.blindTypeNames[bt.id]) it.blindType = N.blindTypeNames[bt.id];
+        const rr = biqResolveRange(N, it.blindType, it.range); if (rr.known && N.rangeNames && N.rangeNames[rr.id]) it.range = N.rangeNames[rr.id];
+        const rc = biqResolveColour(N, it.range, it.colour); if (rc.known && N.colourNames && N.colourNames[rc.id]) it.colour = N.colourNames[rc.id];
+        const r1 = biqResolve(N, 'control1', it.control1); if (r1.known && r1.id != null && N.controlNames && N.controlNames[r1.id]) it.control1 = N.controlNames[r1.id];
+        const r2 = biqResolve(N, 'control2', it.control2); if (r2.known && r2.id != null && N.controlNames && N.controlNames[r2.id]) it.control2 = N.controlNames[r2.id];
+        const rf = biqResolve(N, 'fixes', it.fix); if (rf.known && rf.id != null && N.fixNames && N.fixNames[rf.id]) it.fix = N.fixNames[rf.id];
+    });
 }

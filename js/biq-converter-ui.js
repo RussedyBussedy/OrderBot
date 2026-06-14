@@ -11,6 +11,7 @@ import {
     biqSplitFabric, biqNeedsSplit, biqReSplitFabrics,
     biqResolveRange, biqRangeNamesFor, biqComputeControlDropV2, biqResolveSundry, biqRecomputeControlDrops, biqApplyCustomerDefaults, biqVariantSpec, biqMergeTemplate, biqTemplateFor2, biqAssignSundryCodes, biqResolveCustomer, biqCanonicalCustomerName,
     biqBuildDiscernment, BIQ_DISCERN_SCHEMA, biqBuildDiscernPrompt, biqApplyDiscernment, biqAcceptSuggestion, biqLearnFromAI,
+    biqApplyShutterConfig, biqApplyOptionDefaults, biqCopyOptions, biqInferControls, biqCanonicalize,
     biqParseBlindGuysRows, biqNormalizeBlindGuys,
     biqParseMatheoItems, biqNormalizeMatheo,
     biqParseBDFields, biqNormalizeBDForm,
@@ -91,7 +92,7 @@ async function importMappingsFile(file) {
     try {
         const m = JSON.parse(await file.text());
         for (const k in m) {
-            if (!BIQ_MAPPING_CATEGORIES[k]) continue;
+            if (!m[k] || typeof m[k] !== 'object') continue;
             MAPS[k] = Object.assign(MAPS[k] || {}, m[k]);
             await saveCategory(k);
         }
@@ -266,6 +267,10 @@ function refresh() {
     biqRecomputeControlDrops(MAPS, order);
     biqAssignSundryCodes(order);
     biqApplyCustomerDefaults(MAPS, order); renderHeaderValuesOnly();
+    biqApplyShutterConfig(MAPS, order);
+    biqApplyOptionDefaults(MAPS, order);
+    biqInferControls(MAPS, order);
+    biqCanonicalize(MAPS, order);
     renderCustomerTag();
     renderItems();
     renderProblems();
@@ -350,6 +355,7 @@ function renderItems() {
                     + `<button class="biq-btn-sm biq-btn-danger" data-biq-delvar="${i}:${vi}">✕</button></div>`;
             });
             html += `<button class="biq-btn-sm" data-biq-addvar="${i}">+ option</button>`
+                + (order.items.length > 1 ? ` <button class="biq-btn-sm" data-biq-copyopts="${i}" title="Copy these options to other lines">⧉ Copy options to other lines</button>` : '')
                 + ` <input class="biq-in" style="margin-left:10px;width:280px" placeholder="Item notes (COI_Order_Notes)" value="${escH(it.notes)}" data-biq-item="${i}" data-biq-field="notes">`
                 + `</div></td></tr>`;
         }
@@ -586,6 +592,31 @@ function renderStaticDatalists() {
 }
 
 // ---------------------------------------------------------------- assign / split / mappings modals
+let copySrc = null;
+function openCopyOptions(srcIdx) {
+    copySrc = srcIdx;
+    const src = order.items[srcIdx];
+    const setOpts = src.variants.filter(v => biqNorm(v[1]));
+    const srcBt = biqLc(src.blindType);
+    const rows = order.items.map((it, i) => i === srcIdx ? '' :
+        `<label class="flex items-center gap-2 py-1 text-sm ${biqLc(it.blindType) !== srcBt ? 'text-amber-700' : ''}">
+            <input type="checkbox" value="${i}" ${biqLc(it.blindType) === srcBt ? 'checked' : ''}>
+            <b>${escH(it.code || (i + 1))}</b> — ${escH(it.blindType || '?')}${it.location ? ' — ' + escH(it.location) : ''}${biqLc(it.blindType) !== srcBt ? ' (different blind type)' : ''}
+        </label>`).join('');
+    $('biq-copy-note').innerHTML = `Copy the <b>${setOpts.length}</b> set option(s) from line <b>${escH(src.code || (srcIdx + 1))}</b> (${escH(src.blindType || '?')}) to:`;
+    $('biq-copy-targets').innerHTML = rows || '<div class="text-slate-400 text-sm">No other lines.</div>';
+    $('biq-copy-overwrite').checked = false;
+    show('biq-copymodal');
+}
+function applyCopyOptions() {
+    const targets = [...document.querySelectorAll('#biq-copy-targets input[type=checkbox]:checked')].map(cb => +cb.value);
+    if (!targets.length) { D.showToast('Pick at least one line to copy to.', 'error'); return; }
+    const overwrite = $('biq-copy-overwrite').checked;
+    const n = biqCopyOptions(order, copySrc, targets, { overwrite });
+    hide('biq-copymodal');
+    refresh();
+    D.showToast('Copied options to ' + targets.length + ' line(s) (' + n + ' value' + (n === 1 ? '' : 's') + ' set).', 'success');
+}
 // Per-field catalogue search: find the correct product and APPLY it to this line
 // (sets the field value, resolves to the ID, and learns the customer's wording).
 function openProductPicker(idx, field) {
@@ -833,11 +864,16 @@ function bindEvents() {
         else if (t.dataset.biqVar) { const [i, vi, w] = t.dataset.biqVar.split(':'); order.items[+i].variants[+vi][+w] = t.value; scheduleRefresh(); }
     });
     document.addEventListener('click', e => {
-        const t = e.target.closest('[data-biq-assign],[data-biq-pickval],[data-biq-sundrysearch],[data-biq-split],[data-biq-togglevars],[data-biq-delitem],[data-biq-addvar],[data-biq-delvar],[data-biq-delsundry],[data-biq-fscut],[data-biq-maptab],[data-biq-delmap],[data-biq-acceptai],[data-biq-revertai],[data-biq-prodsearch],[data-biq-prodrevert],#biq-addmap,#biq-addcust,#biq-bulkbtn');
+        const t = e.target.closest('[data-biq-assign],[data-biq-pickval],[data-biq-sundrysearch],[data-biq-split],[data-biq-togglevars],[data-biq-delitem],[data-biq-addvar],[data-biq-delvar],[data-biq-delsundry],[data-biq-fscut],[data-biq-maptab],[data-biq-delmap],[data-biq-acceptai],[data-biq-revertai],[data-biq-prodsearch],[data-biq-prodrevert],[data-biq-copyopts],#biq-addmap,#biq-addcust,#biq-bulkbtn,#biq-copy-apply,#biq-copy-cancel,#biq-copy-all,#biq-copy-same');
         if (!t) return;
         if (t.dataset.biqAssign) { const [c, n, bt] = JSON.parse(t.dataset.biqAssign); openAssign(c, n, bt); }
         else if (t.dataset.biqPickval != null) { if (assignCtx && assignCtx.product) applyProductPick(t.dataset.biqPickval); else applyPick(t.dataset.biqPickval); }
         else if (t.dataset.biqSundrysearch != null) { const i = +t.dataset.biqSundrysearch; openAssign('sundries', order.sundries[i].notes || '', null, i); }
+        else if (t.dataset.biqCopyopts != null) openCopyOptions(+t.dataset.biqCopyopts);
+        else if (t.id === 'biq-copy-cancel') hide('biq-copymodal');
+        else if (t.id === 'biq-copy-all') document.querySelectorAll('#biq-copy-targets input[type=checkbox]').forEach(cb => cb.checked = true);
+        else if (t.id === 'biq-copy-same') { const bt = biqLc(order.items[copySrc] ? order.items[copySrc].blindType : ''); document.querySelectorAll('#biq-copy-targets input[type=checkbox]').forEach(cb => cb.checked = biqLc(order.items[+cb.value].blindType) === bt); }
+        else if (t.id === 'biq-copy-apply') applyCopyOptions();
         else if (t.dataset.biqProdsearch) { const [i, f] = t.dataset.biqProdsearch.split(':'); openProductPicker(+i, f); }
         else if (t.dataset.biqProdrevert) { const [i, f] = t.dataset.biqProdrevert.split(':'); const it = order.items[+i]; if (it._ai && it._ai[f]) { if (it._aiOrig && it._aiOrig[f] !== undefined) it[f] = it._aiOrig[f]; delete it._ai[f]; delete it._aiOrig[f]; } hide('biq-assignmodal'); assignCtx = null; $('biq-as-save').style.display = ''; refresh(); }
         else if (t.dataset.biqAcceptai) { const [i, f] = t.dataset.biqAcceptai.split(':'); biqAcceptSuggestion(order, +i, f); refresh(); }
@@ -1022,6 +1058,20 @@ function injectMarkup() {
           </div>
           <div id="biq-mtabs" class="flex flex-wrap gap-1 mb-3"></div>
           <div id="biq-mapbody"></div>
+        </div>
+      </div>
+    </div>
+    <div id="biq-copymodal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden items-center justify-center p-4 modal-backdrop" role="dialog" aria-modal="true">
+      <div class="modal-content bg-white rounded-lg shadow-xl w-full max-w-md">
+        <div class="p-5 border-b"><h3 class="text-lg font-semibold text-slate-800">Copy options to other lines</h3><p id="biq-copy-note" class="text-sm text-slate-500 mt-1"></p></div>
+        <div class="p-5">
+          <div class="flex gap-2 mb-2"><button id="biq-copy-same" class="biq-btn-sm">Same blind type</button><button id="biq-copy-all" class="biq-btn-sm">Select all</button></div>
+          <div id="biq-copy-targets" class="max-h-56 overflow-auto border border-slate-200 rounded-md p-2 mb-3"></div>
+          <label class="flex items-center gap-2 text-sm"><input type="checkbox" id="biq-copy-overwrite"> Overwrite values already set on the target lines (otherwise only fill blanks)</label>
+        </div>
+        <div class="px-5 py-3 bg-slate-50 rounded-b-lg flex justify-end gap-2">
+          <button id="biq-copy-cancel" class="biq-btn-sm">Cancel</button>
+          <button id="biq-copy-apply" class="bg-indigo-600 text-white font-bold py-1.5 px-4 rounded-md hover:bg-indigo-700 text-sm">Copy</button>
         </div>
       </div>
     </div>`);

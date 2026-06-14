@@ -1086,6 +1086,39 @@ export function biqApplyShutterConfig(mappings, order) {
     });
 }
 
+// Some dealers spell the same physical option differently. Fold those synonyms onto
+// BlindIQ's canonical option key BEFORE defaults run, so the customer's explicit value
+// (e.g. Hardware Colour = Grey) populates the real option (Mech Colour) and wins over the
+// template default (White). The duplicate alias row is removed. Explicit value always wins:
+// an explicitly-set canonical value is kept; otherwise the alias value fills it.
+const BIQ_OPTION_SYNONYMS = [
+    { canon: 'Mech Colour', aliases: ['hardware colour', 'hardware color', 'h/ware colour', 'hware colour', 'hardware col', 'mechanism colour', 'mechanism color', 'mech color', 'hardware'] }
+];
+export function biqFoldOptionSynonyms(mappings, order) {
+    (order ? order.items : []).forEach(it => {
+        const spec = biqVariantSpec(mappings, it.blindType);
+        const specKeys = spec ? new Set(spec.map(o => biqLc(o.k))) : null;
+        BIQ_OPTION_SYNONYMS.forEach(syn => {
+            const canonLc = biqLc(syn.canon);
+            // only fold when the canonical option genuinely exists for this blind type
+            if (specKeys && !specKeys.has(canonLc)) return;
+            const canonKey = spec ? (spec.find(o => biqLc(o.k) === canonLc) || {}).k || syn.canon : syn.canon;
+            let canonVar = it.variants.find(v => biqLc(v[0]) === canonLc);
+            syn.aliases.forEach(a => {
+                const idx = it.variants.findIndex(v => biqLc(v[0]) === a);
+                if (idx < 0) return;
+                const aliasVal = biqNorm(it.variants[idx][1]);
+                if (aliasVal) {
+                    if (!canonVar) { it.variants.push([canonKey, it.variants[idx][1]]); canonVar = it.variants[it.variants.length - 1]; }
+                    else if (!biqNorm(canonVar[1])) { canonVar[1] = it.variants[idx][1]; }
+                    // if canonVar already has an explicit value, it wins — leave it
+                }
+                it.variants.splice(idx, 1); // drop the duplicate alias row
+            });
+        });
+    });
+}
+
 // Fill omitted REQUIRED options with sensible defaults so they stop blocking:
 //  - matrix default if present;
 //  - Yes/No-type (or free-text like "Split Tier on Tier") -> "No";

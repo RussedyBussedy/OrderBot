@@ -11,7 +11,7 @@ import {
     biqSplitFabric, biqNeedsSplit, biqReSplitFabrics,
     biqResolveRange, biqRangeNamesFor, biqComputeControlDropV2, biqResolveSundry, biqRecomputeControlDrops, biqApplyCustomerDefaults, biqVariantSpec, biqMergeTemplate, biqTemplateFor2, biqAssignSundryCodes, biqResolveCustomer, biqCanonicalCustomerName,
     biqBuildDiscernment, BIQ_DISCERN_SCHEMA, biqBuildDiscernPrompt, biqApplyDiscernment, biqAcceptSuggestion, biqLearnFromAI,
-    biqApplyShutterConfig, biqApplyOptionDefaults, biqCopyOptions, biqInferControls, biqCanonicalize,
+    biqApplyShutterConfig, biqApplyOptionDefaults, biqFoldOptionSynonyms, biqCopyOptions, biqInferControls, biqCanonicalize,
     biqParseBlindGuysRows, biqNormalizeBlindGuys,
     biqParseMatheoItems, biqNormalizeMatheo,
     biqParseBDFields, biqNormalizeBDForm,
@@ -268,6 +268,7 @@ function refresh() {
     biqAssignSundryCodes(order);
     biqApplyCustomerDefaults(MAPS, order); renderHeaderValuesOnly();
     biqApplyShutterConfig(MAPS, order);
+    biqFoldOptionSynonyms(MAPS, order);
     biqApplyOptionDefaults(MAPS, order);
     biqInferControls(MAPS, order);
     biqCanonicalize(MAPS, order);

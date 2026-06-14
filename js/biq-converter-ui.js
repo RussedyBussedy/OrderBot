@@ -193,7 +193,7 @@ async function aiExtract(files) {
 
 // ---------------------------------------------------------------- state/render
 let aiBusy = false;
-function setOrder(o) { order = o; checkResults = null; $('biq-editor').classList.remove('hidden'); renderHeader(); refresh(); setStatus(''); maybeAiDiscern(); }
+function setOrder(o) { order = o; checkResults = null; $('biq-editor').classList.remove('hidden'); renderHeader(); refresh(); setStatus(''); fitCollapsible(); maybeAiDiscern(); }
 
 // Run AI discernment over any unresolved PRODUCT names (not the customer account).
 async function aiDiscern(manual) {
@@ -222,7 +222,15 @@ async function aiDiscern(manual) {
 function maybeAiDiscern() {
     if (order && order.source !== 'manual' && biqBuildDiscernment(MAPS, order).length) aiDiscern(false);
 }
-function setStatus(t) { $('biq-status').textContent = t; }
+function setStatus(t) { $('biq-status').textContent = t; fitCollapsible(); }
+// OrderBot's collapsible freezes max-height on expand + overflow:hidden, which clips our
+// dynamically-growing editor. While the section is open, let it grow naturally so the page
+// can scroll to all of it.
+function fitCollapsible() {
+    const hdr = document.getElementById('biq-converter-header');
+    const c = document.getElementById('biq-converter-content');
+    if (hdr && c && hdr.classList.contains('open')) { c.style.maxHeight = 'none'; c.style.overflow = 'visible'; }
+}
 function newBlankOrder() { const o = biqBlankOrder(); o.orderDate = new Date().toISOString().slice(0, 10); o.items.push(biqBlankItem('a')); setOrder(o); }
 function hv(id, v) { $(id).value = v == null ? '' : v; }
 function val(id) { return biqNorm($(id).value); }
@@ -264,6 +272,7 @@ function refresh() {
     renderChecks();
     renderPreview();
     $('biq-xmlout').textContent = biqPrettyXML(biqGenerateXML(MAPS, order));
+    fitCollapsible();
 }
 let refTimer = null;
 function scheduleRefresh() { clearTimeout(refTimer); refTimer = setTimeout(refresh, 350); }
@@ -789,8 +798,8 @@ function bindEvents() {
     $('biq-addsundry').addEventListener('click', () => { if (!order) return; order.sundries.push({ code: '', qty: '1', type: '', sundry: '', notes: '' }); refresh(); });
     $('biq-runchecks').addEventListener('click', runChecks);
     $('biq-aimatch').addEventListener('click', () => aiDiscern(true));
-    $('biq-help').addEventListener('click', () => $('biq-helppanel').classList.toggle('hidden'));
-    $('biq-helpclose').addEventListener('click', () => $('biq-helppanel').classList.add('hidden'));
+    $('biq-help').addEventListener('click', () => { $('biq-helppanel').classList.toggle('hidden'); fitCollapsible(); });
+    $('biq-helpclose').addEventListener('click', () => { $('biq-helppanel').classList.add('hidden'); fitCollapsible(); });
     $('biq-download').addEventListener('click', downloadXML);
     $('biq-copyxml').addEventListener('click', () => { navigator.clipboard.writeText(biqGenerateXML(MAPS, order)).then(() => D.showToast('XML copied.', 'success')); });
     $('biq-reqplus').addEventListener('click', () => { const base = val('biq-h-orderdate') || new Date().toISOString().slice(0, 10); const d = new Date(base); d.setDate(d.getDate() + 14); $('biq-h-reqdate').value = d.toISOString().slice(0, 10); refresh(); });

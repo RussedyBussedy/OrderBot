@@ -715,6 +715,7 @@ export function biqCollectProblems(mappings, order) {
         if (!biqResolve(mappings, 'control2', it.control2).known && biqLc(it.control2)) probs.push({ t: w + 'control "' + it.control2 + '" not mapped.', cat: 'control2', name: it.control2 });
         if (biqRequiresDualControl(mappings, it.blindType) && (!biqLc(it.control1) || !biqLc(it.control2)))
             probs.push({ t: w + 'both control sides (Control L and Control R) must be set for ' + (it.blindType || 'this blind') + '.' });
+        if (it._bracketOdd) probs.push({ t: w + 'flagged as ' + it._bracketOdd + ' bracket but has no matching pair — couple it with its partner line (or clear the flag).' });
         const spec = biqVariantSpec(mappings, it.blindType);
         if (spec) spec.forEach(o => {
             if (o.req) { const f = it.variants.find(v => biqLc(v[0]) === biqLc(o.k));
@@ -1116,8 +1117,9 @@ export function biqApplyShutterConfig(mappings, order) {
 // catalogue's allowed list (e.g. a seeded "No" on a Yes-only toggle), but never override a valid explicit value.
 const BIQ_OPTION_REMAPS = [
     { aliases: ['hardware colour', 'hardware color', 'h/ware colour', 'hware colour', 'hardware col', 'mechanism colour', 'mechanism color', 'mech color', 'hardware'], to: 'Mech Colour' },
-    { aliases: ['chain type'], to: 'Steel Ball Chain', value: 'Yes', whenValue: /steel\s*ball/i },
-    { aliases: ['centre bracket', 'center bracket', 'centre brackets', 'center brackets', 'middle bracket', 'mid bracket'], to: 'Intermediate Bracket', value: 'Yes', fromNotes: true }
+    { aliases: ['chain type'], to: 'Steel Ball Chain', value: 'Yes', whenValue: /steel\s*ball/i }
+    // NOTE: centre/intermediate/coupled brackets are handled by biqApplyBracketPairs (they pair two
+    // lines and set controls + Yes/No), not as a per-line option remap.
 ];
 export function biqFoldOptionSynonyms(mappings, order) {
     (order ? order.items : []).forEach(it => {
@@ -1232,6 +1234,101 @@ export function biqInferControls(mappings, order) {
         if (drive(c2) && !c1) { it.control1 = 'Lh Pin'; it._ctlInferred = true; }
         else if (drive(c1) && !c2) { it.control2 = 'Rh Pin'; it._ctlInferred = true; }
     });
+}
+
+// ---------- shared brackets (intermediate / coupled) ----------
+// Which side carries the drive (chain/motor/etc.): 'L', 'R', 'B' (both) or null (none).
+function biqDriveSide(it) {
+    const drive = s => /chain|motor|crank|wand|cord|spring/i.test(biqLc(s));
+    const l = drive(it.control1), r = drive(it.control2);
+    if (r && !l) return 'R';
+    if (l && !r) return 'L';
+    if (l && r) return 'B';
+    return null;
+}
+// Re-label a control onto a given side, preserving the drive type (Chain, Motor, …).
+function biqReSide(ctrlText, side) {
+    const t = biqNorm(ctrlText).replace(/^(lh|rh)\s+/i, '').trim() || 'Chain';
+    return (side === 'L' ? 'Lh ' : 'Rh ') + t;
+}
+// INTERMEDIATE bracket: two blinds share a bracket but operate independently (two drives).
+// Each blind keeps its own drive; its non-drive (inner/shared) side becomes "[side] Intermediate".
+// Bracket is costed once: Intermediate Bracket = Yes on the first line, No on the second.
+export function biqApplyIntermediatePair(order, i, j) {
+    [i, j].forEach(idx => {
+        const it = order.items[idx]; if (!it) return;
+        const s = biqDriveSide(it);
+        if (s === 'R') it.control1 = 'Lh Intermediate';            // drive right -> left is shared
+        else if (s === 'L') it.control2 = 'Rh Intermediate';       // drive left  -> right is shared
+        else if (s === 'B') { /* two drives, no free side — leave for the capturer */ }
+        else if (/pin/i.test(it.control1)) it.control1 = 'Lh Intermediate';
+        else if (/pin/i.test(it.control2)) it.control2 = 'Rh Intermediate';
+        else it.control1 = 'Lh Intermediate';
+    });
+    biqSetVar(order.items[i].variants, 'Intermediate Bracket', 'Yes');
+    biqSetVar(order.items[j].variants, 'Intermediate Bracket', 'No');
+    order.items[i]._bracketRole = 'intermediate-1'; order.items[j]._bracketRole = 'intermediate-2';
+}
+// COUPLED bracket: two blinds joined, operated by ONE drive on one outer end. The two inner sides
+// are "Coupled"; the operating blind's outer side keeps its drive (chain/motor); the partner's
+// outer side is a Pin. i = first/left line, j = second/right line. Coupled Bracket Yes on i, No on j.
+export function biqApplyCoupledPair(order, i, j) {
+    const a = order.items[i], b = order.items[j]; if (!a || !b) return;
+    const sa = biqDriveSide(a), sb = biqDriveSide(b);
+    let opIsA = (sa && sa !== 'B');
+    if (!(sa && sa !== 'B') && (sb && sb !== 'B')) opIsA = false;
+    const driveOf = (it, s) => (s === 'L') ? it.control1 : (s === 'R') ? it.control2
+        : (/chain|motor/i.test(biqLc(it.control1)) ? it.control1 : it.control2);
+    a.control2 = 'Rh Coupled';                                     // a inner (right)
+    b.control1 = 'Lh Coupled';                                     // b inner (left)
+    if (opIsA) {
+        a.control1 = biqReSide(driveOf(a, sa) || 'Chain', 'L');    // a outer left = drive
+        b.control2 = 'Rh Pin';                                     // b outer right = pin
+    } else {
+        b.control2 = biqReSide(driveOf(b, sb) || 'Chain', 'R');    // b outer right = drive
+        a.control1 = 'Lh Pin';                                     // a outer left = pin
+    }
+    biqSetVar(a.variants, 'Coupled Bracket', 'Yes');
+    biqSetVar(b.variants, 'Coupled Bracket', 'No');
+    a._bracketRole = 'coupled-1'; b._bracketRole = 'coupled-2';
+}
+// Detect/apply shared brackets across the order. Manual "couple with next line" (it._bracketWith)
+// wins; otherwise consecutive lines flagged (notes or an explicit Yes) are paired two-by-two.
+// A flagged line with no pair is marked (_bracketOdd) so collectProblems can surface it.
+export function biqApplyBracketPairs(mappings, order) {
+    const items = (order && order.items) || [];
+    items.forEach(it => { delete it._bracketOdd; delete it._bracketRole; });
+    const consumed = new Set();
+    const flag = it => {
+        const optYes = key => it.variants.some(v => biqLc(v[0]) === key && biqLc(v[1]) === 'yes');
+        const note = biqNorm(it.notes);
+        if (/\bcoupl/i.test(note) || optYes('coupled bracket')) return 'coupled';
+        if (/\b(centre|center|middle|intermediate)\s+brackets?\b/i.test(note) || optYes('intermediate bracket')
+            || it.variants.some(v => /\b(centre|center|middle)\s+brackets?\b/i.test(biqLc(v[0])))) return 'intermediate';
+        return null;
+    };
+    for (let i = 0; i < items.length; i++) {                       // manual: couple with next line
+        const m = items[i]._bracketWith;
+        if (m && i + 1 < items.length && !consumed.has(i) && !consumed.has(i + 1)) {
+            if (m === 'coupled') biqApplyCoupledPair(order, i, i + 1); else biqApplyIntermediatePair(order, i, i + 1);
+            consumed.add(i); consumed.add(i + 1);
+        }
+    }
+    let i = 0;                                                     // auto: pair consecutive flagged lines
+    while (i < items.length) {
+        if (consumed.has(i) || !flag(items[i])) { i++; continue; }
+        const f = flag(items[i]); const run = []; let j = i;
+        while (j < items.length && !consumed.has(j) && flag(items[j]) === f) { run.push(j); j++; }
+        let k = 0;
+        for (; k + 1 < run.length; k += 2) {
+            if (f === 'coupled') biqApplyCoupledPair(order, run[k], run[k + 1]); else biqApplyIntermediatePair(order, run[k], run[k + 1]);
+            consumed.add(run[k]); consumed.add(run[k + 1]);
+        }
+        if (k < run.length) { items[run[k]]._bracketOdd = f; consumed.add(run[k]); }
+        i = j;
+    }
+    // signal now lives in controls + the Intermediate/Coupled Bracket options — drop any phantom key
+    items.forEach(it => { it.variants = it.variants.filter(v => !/\b(centre|center|middle)\s+brackets?\b/i.test(biqLc(v[0]))); });
 }
 
 // BlindIQ mappings are the source of truth: once a field resolves to an ID, replace the

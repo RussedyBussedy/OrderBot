@@ -11,7 +11,7 @@ import {
     biqSplitFabric, biqNeedsSplit, biqReSplitFabrics,
     biqResolveRange, biqRangeNamesFor, biqComputeControlDropV2, biqResolveSundry, biqRecomputeControlDrops, biqApplyCustomerDefaults, biqVariantSpec, biqMergeTemplate, biqTemplateFor2, biqAssignSundryCodes, biqResolveCustomer, biqCanonicalCustomerName,
     biqBuildDiscernment, BIQ_DISCERN_SCHEMA, biqBuildDiscernPrompt, biqApplyDiscernment, biqAcceptSuggestion, biqLearnFromAI,
-    biqApplyShutterConfig, biqApplyOptionDefaults, biqFoldOptionSynonyms, biqEmittedVariants, biqCopyOptions, biqInferControls, biqCanonicalize,
+    biqApplyShutterConfig, biqApplyOptionDefaults, biqFoldOptionSynonyms, biqApplyBracketPairs, biqEmittedVariants, biqCopyOptions, biqInferControls, biqCanonicalize,
     biqParseBlindGuysRows, biqNormalizeBlindGuys,
     biqParseMatheoItems, biqNormalizeMatheo,
     biqParseBDFields, biqNormalizeBDForm,
@@ -269,6 +269,7 @@ function refresh() {
     biqApplyCustomerDefaults(MAPS, order); renderHeaderValuesOnly();
     biqApplyShutterConfig(MAPS, order);
     biqFoldOptionSynonyms(MAPS, order);
+    biqApplyBracketPairs(MAPS, order);
     biqApplyOptionDefaults(MAPS, order);
     biqInferControls(MAPS, order);
     biqCanonicalize(MAPS, order);
@@ -357,6 +358,7 @@ function renderItems() {
             });
             html += `<button class="biq-btn-sm" data-biq-addvar="${i}">+ option</button>`
                 + (order.items.length > 1 ? ` <button class="biq-btn-sm" data-biq-copyopts="${i}" title="Copy these options to other lines">⧉ Copy options to other lines</button>` : '')
+                + (i + 1 < order.items.length ? ` <label class="text-slate-500" style="margin-left:10px;font-size:11px" title="Share a bracket with the next line (sets controls + Yes/No automatically)">⚯ Bracket w/ next: <select class="biq-in" style="width:auto;padding:2px 4px" data-biq-bracket="${i}"><option value=""${!it._bracketWith ? ' selected' : ''}>none</option><option value="intermediate"${it._bracketWith === 'intermediate' ? ' selected' : ''}>Intermediate</option><option value="coupled"${it._bracketWith === 'coupled' ? ' selected' : ''}>Coupled</option></select></label>` : '')
                 + ` <input class="biq-in" style="margin-left:10px;width:280px" placeholder="Item notes (COI_Order_Notes)" value="${escH(it.notes)}" data-biq-item="${i}" data-biq-field="notes">`
                 + `</div></td></tr>`;
         }
@@ -863,6 +865,7 @@ function bindEvents() {
             refresh();
         }
         else if (t.dataset.biqVar) { const [i, vi, w] = t.dataset.biqVar.split(':'); order.items[+i].variants[+vi][+w] = t.value; scheduleRefresh(); }
+        else if (t.dataset.biqBracket != null) { const it = order.items[+t.dataset.biqBracket]; if (t.value) it._bracketWith = t.value; else delete it._bracketWith; refresh(); }
     });
     document.addEventListener('click', e => {
         const t = e.target.closest('[data-biq-assign],[data-biq-pickval],[data-biq-sundrysearch],[data-biq-split],[data-biq-togglevars],[data-biq-delitem],[data-biq-addvar],[data-biq-delvar],[data-biq-delsundry],[data-biq-fscut],[data-biq-maptab],[data-biq-delmap],[data-biq-acceptai],[data-biq-revertai],[data-biq-prodsearch],[data-biq-prodrevert],[data-biq-copyopts],#biq-addmap,#biq-addcust,#biq-bulkbtn,#biq-copy-apply,#biq-copy-cancel,#biq-copy-all,#biq-copy-same');

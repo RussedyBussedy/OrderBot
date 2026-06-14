@@ -785,10 +785,21 @@ export function biqGenerateXML(mappings, order) {
         x += tag('COI_Control2_Link', biqLc(it.control2) ? idOr(r2) : '-1');
         x += tag('COI_ControlDrop', it.controlDrop || '0');
         const clean = t => biqNorm(t).replace(/\|/g, '/');
-        // Only emit options that exist in BlindIQ for this blind type (never invent options).
+        // Emit only real BlindIQ options with real values: key must exist in the spec, value must be
+        // non-empty and (when a value list is known) one of the allowed values, and optional options
+        // sitting at their default are dropped (absence = default in BlindIQ). Required options always emit.
         const _spec = biqVariantSpec(mappings, it.blindType);
-        const _emit = _spec ? (() => { const keys = new Set(_spec.map(o => biqLc(o.k))); return it.variants.filter(v => keys.has(biqLc(v[0]))); })() : it.variants;
-        const vs = _emit.map(v => biqNorm(v[0]) ? clean(v[0]) + '=' + clean(v[1]) : '').filter(Boolean).join('|');
+        const _emit = _spec ? it.variants.filter(v => {
+            const o = _spec.find(s => biqLc(s.k) === biqLc(v[0]));
+            if (!o) return false;                                   // not a real option for this blind type
+            const val = biqNorm(v[1]);
+            if (!val) return false;                                 // empty -> nothing to emit
+            const allowed = (o.values || []).map(biqLc);
+            if (allowed.length && !allowed.includes(biqLc(val))) return false;   // value not in catalogue
+            if (!o.req && o.def != null && biqNorm(o.def) && biqLc(val) === biqLc(o.def)) return false; // optional @ default
+            return true;
+        }) : it.variants.filter(v => biqNorm(v[0]) && biqNorm(v[1]));
+        const vs = _emit.map(v => clean(v[0]) + '=' + clean(v[1])).filter(Boolean).join('|');
         x += vs ? '<COI_VariantOptions>' + esc(vs + '|') + '</COI_VariantOptions>' : '<COI_VariantOptions />';
         x += '<COI_VariantOptions_Display xsi:nil="true" />';
         x += tag('COI_Order_Notes', it.notes);
@@ -1091,52 +1102,82 @@ export function biqApplyShutterConfig(mappings, order) {
 // (e.g. Hardware Colour = Grey) populates the real option (Mech Colour) and wins over the
 // template default (White). The duplicate alias row is removed. Explicit value always wins:
 // an explicitly-set canonical value is kept; otherwise the alias value fills it.
-const BIQ_OPTION_SYNONYMS = [
-    { canon: 'Mech Colour', aliases: ['hardware colour', 'hardware color', 'h/ware colour', 'hware colour', 'hardware col', 'mechanism colour', 'mechanism color', 'mech color', 'hardware'] }
+// Map dealer wording onto BlindIQ's real option keys before defaults run. Two rule kinds:
+//   • rename  ({aliases,to})            — alias key folds onto canonical key, value preserved, explicit canonical wins.
+//   • value-coded ({aliases,to,value}) — alias asserts a fixed canonical value (e.g. a "centre bracket"
+//                                         note means Intermediate Bracket = Yes). Optional whenValue gates on
+//                                         the alias's own value; fromNotes also scans the item notes.
+// Value-coded rules fill the canonical option when it is empty OR currently holds a value that isn't in the
+// catalogue's allowed list (e.g. a seeded "No" on a Yes-only toggle), but never override a valid explicit value.
+const BIQ_OPTION_REMAPS = [
+    { aliases: ['hardware colour', 'hardware color', 'h/ware colour', 'hware colour', 'hardware col', 'mechanism colour', 'mechanism color', 'mech color', 'hardware'], to: 'Mech Colour' },
+    { aliases: ['chain type'], to: 'Steel Ball Chain', value: 'Yes', whenValue: /steel\s*ball/i },
+    { aliases: ['centre bracket', 'center bracket', 'centre brackets', 'center brackets', 'middle bracket', 'mid bracket'], to: 'Intermediate Bracket', value: 'Yes', fromNotes: true }
 ];
 export function biqFoldOptionSynonyms(mappings, order) {
     (order ? order.items : []).forEach(it => {
         const spec = biqVariantSpec(mappings, it.blindType);
         const specKeys = spec ? new Set(spec.map(o => biqLc(o.k))) : null;
-        BIQ_OPTION_SYNONYMS.forEach(syn => {
-            const canonLc = biqLc(syn.canon);
-            // only fold when the canonical option genuinely exists for this blind type
-            if (specKeys && !specKeys.has(canonLc)) return;
-            const canonKey = spec ? (spec.find(o => biqLc(o.k) === canonLc) || {}).k || syn.canon : syn.canon;
-            let canonVar = it.variants.find(v => biqLc(v[0]) === canonLc);
-            syn.aliases.forEach(a => {
-                const idx = it.variants.findIndex(v => biqLc(v[0]) === a);
-                if (idx < 0) return;
+        BIQ_OPTION_REMAPS.forEach(rule => {
+            const toLc = biqLc(rule.to);
+            const canonValid = !specKeys || specKeys.has(toLc);     // canonical is a real option here
+            const specOpt = spec ? spec.find(o => biqLc(o.k) === toLc) : null;
+            const canonKey = specOpt ? specOpt.k : rule.to;
+            const allowed = specOpt && specOpt.values ? specOpt.values.map(biqLc) : null;
+            const setCanon = val => {
+                if (!canonValid) return;
+                const cv = it.variants.find(v => biqLc(v[0]) === toLc);
+                if (!cv) { it.variants.push([canonKey, val]); return; }
+                const cur = biqNorm(cv[1]);
+                const curValid = !cur ? false : (!allowed || allowed.length === 0 || allowed.includes(biqLc(cur)));
+                if (!cur || !curValid) cv[1] = val;                  // fill blank or replace an invalid seed; valid explicit wins
+            };
+            // alias option rows
+            for (let idx = it.variants.length - 1; idx >= 0; idx--) {
+                if (!rule.aliases.includes(biqLc(it.variants[idx][0]))) continue;
                 const aliasVal = biqNorm(it.variants[idx][1]);
-                if (aliasVal) {
-                    if (!canonVar) { it.variants.push([canonKey, it.variants[idx][1]]); canonVar = it.variants[it.variants.length - 1]; }
-                    else if (!biqNorm(canonVar[1])) { canonVar[1] = it.variants[idx][1]; }
-                    // if canonVar already has an explicit value, it wins — leave it
+                if (rule.value) {
+                    if (!rule.whenValue || rule.whenValue.test(aliasVal)) setCanon(rule.value);
+                } else if (aliasVal && canonValid) {                  // rename, preserve value, explicit wins
+                    const cv = it.variants.find(v => biqLc(v[0]) === toLc);
+                    if (!cv) it.variants.push([canonKey, it.variants[idx][1]]);
+                    else if (!biqNorm(cv[1])) cv[1] = it.variants[idx][1];
                 }
-                it.variants.splice(idx, 1); // drop the duplicate alias row
-            });
+                it.variants.splice(idx, 1);                           // always drop the alias/phantom row
+            }
+            // notes-derived enable (value-coded only)
+            if (rule.fromNotes && rule.value && biqNorm(it.notes)) {
+                const nl = biqLc(it.notes);
+                if (rule.aliases.some(a => nl.includes(a))) setCanon(rule.value);
+            }
         });
     });
 }
 
-// Fill omitted REQUIRED options with sensible defaults so they stop blocking:
-//  - matrix default if present;
-//  - Yes/No-type (or free-text like "Split Tier on Tier") -> "No";
-//  - genuine multi-choice with no default (Frame, Rail Size, Louvre, Closure) -> left to flag.
+// Fill omitted options with sensible defaults so the capturer sees the real standard:
+//  - REQUIRED: matrix default if present; Yes/No-type (or free-text like "Split Tier on Tier") -> "No";
+//              genuine multi-choice with no default (Frame, Rail Size, Louvre, Closure) -> left to flag.
+//  - OPTIONAL Yes/No toggles (Steel Ball Chain, SmartRail, Intermediate Bracket, ...): default "No"
+//    unless stipulated. (On export, "No" toggles collapse to nothing — absence = No in BlindIQ.)
 export function biqApplyOptionDefaults(mappings, order) {
     (order ? order.items : []).forEach(it => {
         const spec = biqVariantSpec(mappings, it.blindType);
         if (!spec) return;
         spec.forEach(o => {
-            if (!o.req) return;
             const f = it.variants.find(v => biqLc(v[0]) === biqLc(o.k));
             if (f && biqNorm(f[1])) return;            // already set
-            let def = '';
             const vals = (o.values || []).map(biqLc);
-            if (o.def && biqNorm(o.def)) def = o.def;
-            else if (vals.length === 0) def = 'No';     // free-text required (e.g. Split Tier on Tier) -> No
-            else if (vals.every(v => v === 'yes' || v === 'no') || (vals.length === 1 && vals[0] === 'yes')) def = 'No';
-            if (def) { biqSetVar(it.variants, o.k, def); it._optDefaulted = true; }
+            const isToggle = vals.length > 0 && vals.every(v => v === 'yes' || v === 'no');
+            if (o.req) {
+                let def = '';
+                if (o.def && biqNorm(o.def)) def = o.def;
+                else if (vals.length === 0) def = 'No';     // free-text required (e.g. Split Tier on Tier) -> No
+                else if (isToggle) def = 'No';
+                if (def) { biqSetVar(it.variants, o.k, def); it._optDefaulted = true; }
+            } else if (isToggle) {
+                biqSetVar(it.variants, o.k, 'No');         // optional toggle, not stipulated -> No
+                it._optDefaulted = true;
+            }
         });
     });
 }

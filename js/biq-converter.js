@@ -234,6 +234,24 @@ export function biqSetVar(variants, key, val) {
     const i = variants.findIndex(v => biqLc(v[0]) === biqLc(key));
     if (i >= 0) variants[i][1] = val; else variants.push([key, val]);
 }
+// The variant options that will actually reach BlindIQ for an item — the single source of truth for
+// both the XML and the import preview. Key must exist in the spec, value must be non-empty and (when a
+// value list is known) a real catalogue value; optional options sitting at their default are dropped
+// (absence = default in BlindIQ); required options always emit. Unknown blind type -> all non-empty.
+export function biqEmittedVariants(mappings, it) {
+    const spec = biqVariantSpec(mappings, it.blindType);
+    if (!spec) return it.variants.filter(v => biqNorm(v[0]) && biqNorm(v[1]));
+    return it.variants.filter(v => {
+        const o = spec.find(s => biqLc(s.k) === biqLc(v[0]));
+        if (!o) return false;
+        const val = biqNorm(v[1]);
+        if (!val) return false;
+        const allowed = (o.values || []).map(biqLc);
+        if (allowed.length && !allowed.includes(biqLc(val))) return false;
+        if (!o.req && o.def != null && biqNorm(o.def) && biqLc(val) === biqLc(o.def)) return false;
+        return true;
+    });
+}
 
 // ---------- fabric split ("5 Screen Charcoal Grey" -> range + colour) ----------
 export function biqSplitFabric(mappings, fabric, blindTypeName) {
@@ -591,6 +609,7 @@ RULES:
 - Known blind types: ${knownBlindTypes.join(', ')}.` : ''}
 - Controls: chain/pin/motor and which side. A control written as just "Left" on a roller blind means chain on the left (controlLeft="Lh Chain", controlRight="Rh Pin"); "Right" means chain right (controlLeft="Lh Pin", controlRight="Rh Chain").
 - Put every other specification (mechanism/hardware colour, bottom bar, roll type, cassette, motor, remotes, valance, ladder tape, etc.) into "options" as "Key=Value" strings.
+- The "Hardware Colour" (a.k.a. Mechanism/Mech Colour) column is the colour of the blind's mechanism/brackets (e.g. White, Black, Grey, Beige, Anthracite) — read it from its own column and output it as "Mech Colour=<value>". Do NOT confuse it with the fabric "colour". Never default it to White: if it is blank or illegible leave it out entirely rather than guessing.
 - Handwriting: transcribe carefully; prefer plausible mm dimensions (300–4000). If a value is illegible, use an empty string — NEVER guess silently.
 - Do not invent line items for spacer/blank/total rows.`;
 }
@@ -785,21 +804,7 @@ export function biqGenerateXML(mappings, order) {
         x += tag('COI_Control2_Link', biqLc(it.control2) ? idOr(r2) : '-1');
         x += tag('COI_ControlDrop', it.controlDrop || '0');
         const clean = t => biqNorm(t).replace(/\|/g, '/');
-        // Emit only real BlindIQ options with real values: key must exist in the spec, value must be
-        // non-empty and (when a value list is known) one of the allowed values, and optional options
-        // sitting at their default are dropped (absence = default in BlindIQ). Required options always emit.
-        const _spec = biqVariantSpec(mappings, it.blindType);
-        const _emit = _spec ? it.variants.filter(v => {
-            const o = _spec.find(s => biqLc(s.k) === biqLc(v[0]));
-            if (!o) return false;                                   // not a real option for this blind type
-            const val = biqNorm(v[1]);
-            if (!val) return false;                                 // empty -> nothing to emit
-            const allowed = (o.values || []).map(biqLc);
-            if (allowed.length && !allowed.includes(biqLc(val))) return false;   // value not in catalogue
-            if (!o.req && o.def != null && biqNorm(o.def) && biqLc(val) === biqLc(o.def)) return false; // optional @ default
-            return true;
-        }) : it.variants.filter(v => biqNorm(v[0]) && biqNorm(v[1]));
-        const vs = _emit.map(v => clean(v[0]) + '=' + clean(v[1])).filter(Boolean).join('|');
+        const vs = biqEmittedVariants(mappings, it).map(v => clean(v[0]) + '=' + clean(v[1])).filter(Boolean).join('|');
         x += vs ? '<COI_VariantOptions>' + esc(vs + '|') + '</COI_VariantOptions>' : '<COI_VariantOptions />';
         x += '<COI_VariantOptions_Display xsi:nil="true" />';
         x += tag('COI_Order_Notes', it.notes);
@@ -1168,7 +1173,9 @@ export function biqApplyOptionDefaults(mappings, order) {
             if (f && biqNorm(f[1])) return;            // already set
             const vals = (o.values || []).map(biqLc);
             const isToggle = vals.length > 0 && vals.every(v => v === 'yes' || v === 'no');
+            const isColour = /colou?r/i.test(o.k);     // colour is order-specific — never silently default it
             if (o.req) {
+                if (isColour) return;                  // leave blank so collectProblems flags it for the capturer
                 let def = '';
                 if (o.def && biqNorm(o.def)) def = o.def;
                 else if (vals.length === 0) def = 'No';     // free-text required (e.g. Split Tier on Tier) -> No

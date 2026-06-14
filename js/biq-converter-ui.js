@@ -11,7 +11,7 @@ import {
     biqSplitFabric, biqNeedsSplit, biqReSplitFabrics,
     biqResolveRange, biqRangeNamesFor, biqComputeControlDropV2, biqResolveSundry, biqRecomputeControlDrops, biqApplyCustomerDefaults, biqVariantSpec, biqMergeTemplate, biqTemplateFor2, biqAssignSundryCodes, biqResolveCustomer, biqCanonicalCustomerName,
     biqBuildDiscernment, BIQ_DISCERN_SCHEMA, biqBuildDiscernPrompt, biqApplyDiscernment, biqAcceptSuggestion, biqLearnFromAI,
-    biqApplyShutterConfig, biqApplyOptionDefaults, biqFoldOptionSynonyms, biqCopyOptions, biqInferControls, biqCanonicalize,
+    biqApplyShutterConfig, biqApplyOptionDefaults, biqFoldOptionSynonyms, biqEmittedVariants, biqCopyOptions, biqInferControls, biqCanonicalize,
     biqParseBlindGuysRows, biqNormalizeBlindGuys,
     biqParseMatheoItems, biqNormalizeMatheo,
     biqParseBDFields, biqNormalizeBDForm,
@@ -463,7 +463,7 @@ function renderPreview() {
           <td class="px-1">${escH(it.colour)}${(!biqLc(it.colour) || rc.known) ? '' : ' <span class="text-red-600 font-bold">⚠</span>'}</td>
           <td class="px-1">${escH(it.width)}</td><td class="px-1">${escH(it.drop)}</td><td class="px-1">${escH(it.controlDrop)}</td>
           <td class="px-1">${escH(it.control1)}${warn('control1', it.control1)}</td><td class="px-1">${escH(it.control2)}${warn('control2', it.control2)}</td><td class="px-1">${escH(it.fix)}${warn('fixes', it.fix)}</td></tr>`;
-        const vs = it.variants.filter(v => biqNorm(v[1])).map(v => escH(v[0]) + '=' + escH(v[1])).join(' | ');
+        const vs = biqEmittedVariants(MAPS, it).map(v => escH(v[0]) + '=' + escH(v[1])).join(' | ');
         if (vs || it.notes) h += `<tr class="bg-slate-50"><td></td><td colspan="11" class="px-1 pb-1 text-slate-500" style="font-size:10.5px">${vs}${it.notes ? ' <i>— ' + escH(it.notes) + '</i>' : ''}</td></tr>`;
     });
     h += '</table>';

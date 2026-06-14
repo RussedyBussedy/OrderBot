@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>OrderBot - Document Comparison with Learning</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- BlindIQ XML Converter: spreadsheet + PDF parsing libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         body {
@@ -329,6 +332,14 @@
                 </div>
             </div>
 
+            <div id="biq-converter-section" class="mb-8 bg-white rounded-lg shadow-sm overflow-hidden">
+                <div id="biq-converter-header" class="flex justify-between items-center p-4 cursor-pointer">
+                    <h3 class="font-bold text-lg text-slate-800">BlindIQ XML Converter <span class="text-sm font-normal text-slate-400">— customer order → import-ready XML, with torque & spec checks</span></h3>
+                    <svg class="chevron-icon w-6 h-6 text-slate-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg>
+                </div>
+                <div id="biq-converter-content" class="collapsible-content"></div>
+            </div>
+
             <div id="upload-section">
                 <div id="upload-pairs-container" class="space-y-6">
                 </div>
@@ -419,9 +430,10 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, addDoc, getDocs, query, where, orderBy, limit, startAfter, deleteDoc, doc, writeBatch, getDoc, setDoc, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, collection, addDoc, getDocs, query, where, orderBy, limit, startAfter, deleteDoc, doc, writeBatch, getDoc, setDoc, updateDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { firebaseConfig, PROXY_API_URL, PROMPT_VERSION, EXTRACTION_MODEL } from './js/config.js';
         import { BLIND_TYPE_EXCLUSIONS_FOR_COLOUR_CHECK, BLIND_TYPES_REQUIRING_CONTROL_VALIDATION, BLIND_TYPES_REQUIRING_DUAL_CONTROL, CACHE_TTL_MS } from './js/constants.js';
+        import { initBiqConverter } from './js/biq-converter-ui.js';
 
         // firebaseConfig, PROXY_API_URL, PROMPT_VERSION imported from ./js/config.js
 
@@ -2981,6 +2993,16 @@ ${feedbackExamples}
         setupCollapsible(allDomElements.fabricPropertiesHeader, allDomElements.fabricPropertiesContent, 'ob_fabric_open');
         setupCollapsible(allDomElements.motorPropertiesHeader, allDomElements.motorPropertiesContent, 'ob_motor_open');
         setupCollapsible(allDomElements.tubePropertiesHeader, allDomElements.tubePropertiesContent, 'ob_tube_open');
+
+        // --- BlindIQ XML Converter (self-contained section; see js/biq-converter-ui.js) ---
+        if (typeof pdfjsLib !== 'undefined') pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        setupCollapsible(document.getElementById('biq-converter-header'), document.getElementById('biq-converter-content'), 'ob_biq_open');
+        initBiqConverter({
+            db, collection, doc, getDocs, setDoc, onSnapshot,
+            PROXY_API_URL, EXTRACTION_MODEL,
+            getFabricProperties, getMotorProperties, getTubeProperties,
+            runPostAIValidations, showToast, showConfirmModal
+        });
         setupFabricDropZone();
         setupMotorDropZone();
         setupTubeDropZone();

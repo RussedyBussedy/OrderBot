@@ -204,7 +204,7 @@ async function aiDiscern(manual) {
     if (!D.PROXY_API_URL) { if (manual) D.showToast('AI matching needs the Gemini connection (OrderBot only).', 'error'); return; }
     aiBusy = true; setStatus('AI is matching ' + slots.length + ' product name(s) to the BlindIQ catalogue...');
     try {
-        const payload = { model: D.EXTRACTION_MODEL, payload: { contents: [{ role: 'user', parts: [{ text: biqBuildDiscernPrompt(slots) }] }], generationConfig: { temperature: 0, responseMimeType: 'application/json', responseSchema: BIQ_DISCERN_SCHEMA } } };
+        const payload = { model: D.COMPARISON_MODEL || D.EXTRACTION_MODEL, payload: { contents: [{ role: 'user', parts: [{ text: biqBuildDiscernPrompt(slots) }] }], generationConfig: { temperature: 0, responseMimeType: 'application/json', responseSchema: BIQ_DISCERN_SCHEMA } } };
         let txt, resp;
         for (let a = 1; a <= 3; a++) {
             try { resp = await fetch(D.PROXY_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); txt = await resp.text(); if (resp.ok) break; if (a === 3) throw new Error('API ' + resp.status); } catch (e) { if (a === 3) throw e; }

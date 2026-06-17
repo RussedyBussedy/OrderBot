@@ -431,7 +431,7 @@
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, addDoc, getDocs, query, where, orderBy, limit, startAfter, deleteDoc, doc, writeBatch, getDoc, setDoc, updateDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-        import { firebaseConfig, PROXY_API_URL, PROMPT_VERSION, EXTRACTION_MODEL } from './js/config.js';
+        import { firebaseConfig, PROXY_API_URL, PROMPT_VERSION, EXTRACTION_MODEL, COMPARISON_MODEL } from './js/config.js';
         import { BLIND_TYPE_EXCLUSIONS_FOR_COLOUR_CHECK, BLIND_TYPES_REQUIRING_CONTROL_VALIDATION, BLIND_TYPES_REQUIRING_DUAL_CONTROL, CACHE_TTL_MS } from './js/constants.js';
         import { initBiqConverter } from './js/biq-converter-ui.js';
 
@@ -959,7 +959,7 @@ Respond only with a JSON object containing a lineItems array.
                 const response = await fetch(PROXY_API_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ model: EXTRACTION_MODEL, payload: geminiPayload })
+                    body: JSON.stringify({ model: COMPARISON_MODEL, payload: geminiPayload })
                 });
 
                 if (!response.ok) {
@@ -1216,7 +1216,7 @@ ${feedbackExamples}
                     responseSchema: schema
                 }
             };
-            const proxyPayload = { model: EXTRACTION_MODEL, payload: geminiPayload };
+            const proxyPayload = { model: COMPARISON_MODEL, payload: geminiPayload };
             
             // --- CIRCUIT BREAKER / RETRY LOGIC ---
             let response;
@@ -2999,7 +2999,7 @@ ${feedbackExamples}
         setupCollapsible(document.getElementById('biq-converter-header'), document.getElementById('biq-converter-content'), 'ob_biq_open');
         initBiqConverter({
             db, collection, doc, getDocs, setDoc, onSnapshot,
-            PROXY_API_URL, EXTRACTION_MODEL,
+            PROXY_API_URL, EXTRACTION_MODEL, COMPARISON_MODEL,
             getFabricProperties, getMotorProperties, getTubeProperties,
             runPostAIValidations, showToast, showConfirmModal
         });

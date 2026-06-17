@@ -47,10 +47,36 @@ export const BIQ_MAPPING_CATEGORIES = {
 };
 
 // ---------- mapping resolution ----------
+// Code-based aliases for dealer wording that isn't a catalogue key. Kept in code (not data) so both
+// OrderBot and the offline tool get them without a Firestore re-import. Values are catalogue keys.
+const BIQ_ALIASES = {
+    blindTypes: {
+        'bd element roller 40': 'element roller sys 40', 'element roller 40': 'element roller sys 40',
+        'bd element vision': 'element vision', 'element vision blind': 'element vision',
+        'bd element wood alloy': 'element wood', 'element wood alloy': 'element wood', 'bd element wood': 'element wood',
+        'bd outdoor blinds - free hang': 'outdoor free hang', 'outdoor blinds - free hang': 'outdoor free hang', 'bd outdoor free hang': 'outdoor free hang',
+        'bd cellular skylight': 'cellular skylight lantern', 'cellular skylight': 'cellular skylight lantern'
+    },
+    fixes: {
+        'f/f': 'face', 'ff': 'face', 'face fix': 'face',
+        'i/r': 'reveal', 'ir': 'reveal', 'inside reveal': 'reveal',
+        'rev': 'reveal', 'rev l': 'reveal', 'rev r': 'reveal', 'reveal l': 'reveal', 'reveal r': 'reveal'
+    }
+};
 export function biqResolve(mappings, cat, name) {
     const key = biqLc(name);
     if (!key) return { id: null, known: false, empty: true };
     if (mappings[cat] && mappings[cat][key] != null) return { id: mappings[cat][key], known: true };
+    const al = BIQ_ALIASES[cat];
+    if (al && mappings[cat]) {
+        let aliasKey = al[key];
+        if (aliasKey == null && cat === 'blindTypes' && key.startsWith('bd ')) {            // generic "BD " prefix strip
+            const k2 = key.slice(3);
+            if (mappings[cat][k2] != null) return { id: mappings[cat][k2], known: true, alias: true };
+            aliasKey = al[k2];
+        }
+        if (aliasKey != null && mappings[cat][biqLc(aliasKey)] != null) return { id: mappings[cat][biqLc(aliasKey)], known: true, alias: true };
+    }
     return { id: null, known: false };
 }
 export function biqResolveColour(mappings, range, colour) {
@@ -72,6 +98,12 @@ export function biqResolveRange(mappings, blindTypeName, rangeName) {
     if (bt.known && mappings.rangesScoped && mappings.rangesScoped[bt.id + '|' + key] != null)
         return { id: mappings.rangesScoped[bt.id + '|' + key], known: true, scoped: true };
     if (mappings.ranges[key] != null) return { id: mappings.ranges[key], known: true };
+    const stripped = key.replace(/\s*\d+$/, '').trim();          // "Duo Screen40" -> "Duo Screen" (Windovert suffixes)
+    if (stripped && stripped !== key) {
+        if (bt.known && mappings.rangesScoped && mappings.rangesScoped[bt.id + '|' + stripped] != null)
+            return { id: mappings.rangesScoped[bt.id + '|' + stripped], known: true, scoped: true };
+        if (mappings.ranges[stripped] != null) return { id: mappings.ranges[stripped], known: true };
+    }
     return { id: null, known: false };
 }
 // Candidate range names for fabric-splitting, narrowed to the blind type when known.
@@ -611,7 +643,12 @@ RULES:
 - Put every other specification (mechanism/hardware colour, bottom bar, roll type, cassette, motor, remotes, valance, ladder tape, etc.) into "options" as "Key=Value" strings.
 - The "Hardware Colour" (a.k.a. Mechanism/Mech Colour) column is the colour of the blind's mechanism/brackets (e.g. White, Black, Grey, Beige, Anthracite) — read it from its own column and output it as "Mech Colour=<value>". Do NOT confuse it with the fabric "colour". Never default it to White: if it is blank or illegible leave it out entirely rather than guessing.
 - Handwriting: transcribe carefully; prefer plausible mm dimensions (300–4000). If a value is illegible, use an empty string — NEVER guess silently.
-- Do not invent line items for spacer/blank/total rows.`;
+- Do not invent line items for spacer/blank/total rows.
+- CUSTOMER vs SUPPLIER: some orders (e.g. Windovert) print the dealer/branch under the order title and a "Supplier" field naming the manufacturer ("Blind Design" / "Blind Designs"). The customerCompany is the DEALER/BRANCH (e.g. "Windovert Johannesburg"), NEVER the Supplier. The "Rep" is the dealer's salesperson, not a control or operator.
+- Product names may be prefixed "BD " (e.g. "BD Element Roller 40", "BD Element Vision", "BD Element Wood Alloy", "BD Outdoor Blinds - Free Hang", "BD Cellular Skylight"); use the product name as the blindType (the "BD " prefix is just the manufacturer tag).
+- "Mk" is the item/mark number; the "No." column is the quantity. "Fab / Slat" is the fabric range; map it to "range".
+- Fix abbreviations: "F/F" = Face; "I/R" = Reveal. "Rev L" / "Rev R" = Reveal with the control on the Left / Right respectively — set fix="Reveal" AND, if controls aren't otherwise stated, set the control side from L/R ("Left" → controlLeft="Lh Chain", controlRight="Rh Pin"; "Right" → controlLeft="Lh Pin", controlRight="Rh Chain"; for crank/motor products use the matching side, e.g. LH Crank / RH Crank).
+- Map the dealer's column wording to BlindIQ options in "options": Comp / Comp Col → Mech Colour; Bott Bar Col → Bottom Bar; Cass Col → the cassette colour option; Steel Chain=Yes or Chain Type=Steel → Steel Ball Chain=Yes; Roll → Roll Type; Int Bracket → Intermediate Bracket; Tilt Cord → the tilt control side; Cord Ht / Chain Height → controlDrop; Br col → Bracket Colour; Alum col → Powder Coat Colour; Add H/D → Hold Downs; Twist Lock Pole / Skylight Pole → the pole option; Crank + Crank length + Crank col → the crank handle/control. Put true accessories (motor Type, Charger, Remote, crank handle as a separate part) into "sundries" when they are charged components.`;
 }
 
 // Convert the AI's JSON into the converter order model.
@@ -1116,8 +1153,11 @@ export function biqApplyShutterConfig(mappings, order) {
 // Value-coded rules fill the canonical option when it is empty OR currently holds a value that isn't in the
 // catalogue's allowed list (e.g. a seeded "No" on a Yes-only toggle), but never override a valid explicit value.
 const BIQ_OPTION_REMAPS = [
-    { aliases: ['hardware colour', 'hardware color', 'h/ware colour', 'hware colour', 'hardware col', 'mechanism colour', 'mechanism color', 'mech color', 'hardware'], to: 'Mech Colour' },
-    { aliases: ['chain type'], to: 'Steel Ball Chain', value: 'Yes', whenValue: /steel\s*ball/i }
+    { aliases: ['hardware colour', 'hardware color', 'h/ware colour', 'hware colour', 'hardware col', 'mechanism colour', 'mechanism color', 'mech color', 'hardware', 'comp', 'comp col', 'comp colour', 'component colour'], to: 'Mech Colour' },
+    { aliases: ['bott bar col', 'bottom bar col', 'bottom bar colour', 'bott bar colour'], to: 'Bottom Bar' },
+    { aliases: ['roll'], to: 'Roll Type' },
+    { aliases: ['int bracket'], to: 'Intermediate Bracket' },
+    { aliases: ['chain type', 'steel chain'], to: 'Steel Ball Chain', value: 'Yes', whenValue: /steel|yes/i }
     // NOTE: centre/intermediate/coupled brackets are handled by biqApplyBracketPairs (they pair two
     // lines and set controls + Yes/No), not as a per-line option remap.
 ];

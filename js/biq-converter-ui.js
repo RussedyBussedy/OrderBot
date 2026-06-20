@@ -12,6 +12,7 @@ import {
     biqResolveRange, biqRangeNamesFor, biqComputeControlDropV2, biqResolveSundry, biqRecomputeControlDrops, biqApplyCustomerDefaults, biqVariantSpec, biqMergeTemplate, biqTemplateFor2, biqAssignSundryCodes, biqResolveCustomer, biqCanonicalCustomerName,
     biqBuildDiscernment, BIQ_DISCERN_SCHEMA, biqBuildDiscernPrompt, biqApplyDiscernment, biqAcceptSuggestion, biqLearnFromAI,
     biqApplyShutterConfig, biqApplyOptionDefaults, biqFoldOptionSynonyms, biqApplyBracketPairs, biqEmittedVariants, biqCopyOptions, biqInferControls, biqCanonicalize,
+    biqStampOriginals, biqApplyFormatProfile, biqLearnFormat,
     biqParseBlindGuysRows, biqNormalizeBlindGuys,
     biqParseMatheoItems, biqNormalizeMatheo,
     biqParseBDFields, biqNormalizeBDForm,
@@ -31,6 +32,25 @@ const escH = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g
 
 // ---------------------------------------------------------------- mappings io
 const MAPPINGS_COLLECTION = 'orderbot_biq_mappings';
+const FORMATS_COLLECTION = 'orderbot_customer_formats';
+let FORMATS = {};        // per-customer learned format profiles (keyed by canonical customer)
+async function loadFormats() {
+    FORMATS = {};
+    if (!D.db) return;
+    try {
+        const ref = D.doc(D.db, FORMATS_COLLECTION, 'all');
+        const snap = await D.getDocs(D.collection(D.db, FORMATS_COLLECTION));
+        snap.forEach(d => { if (d.id === 'all' && d.data() && d.data().json) { try { FORMATS = JSON.parse(d.data().json); } catch (e) { } } });
+        D.onSnapshot(D.collection(D.db, FORMATS_COLLECTION), snap2 => {
+            snap2.docChanges().forEach(ch => { if (ch.doc.id === 'all' && ch.doc.data() && ch.doc.data().json) { try { FORMATS = JSON.parse(ch.doc.data().json); } catch (e) { } } });
+        });
+    } catch (e) { console.error('biq formats load failed', e); }
+}
+async function saveFormats() {
+    if (!D.db) return;
+    try { await D.setDoc(D.doc(D.db, FORMATS_COLLECTION, 'all'), { json: JSON.stringify(FORMATS), updatedAt: new Date().toISOString() }); }
+    catch (e) { console.error('biq formats save failed', e); }
+}
 function freshSeeds() { return JSON.parse(JSON.stringify(BIQ_SEED_MAPPINGS)); }
 async function loadMappings() {
     MAPS = freshSeeds();
@@ -263,6 +283,7 @@ function idTag(res, cat, name) {
 function refresh() {
     if (!order) return;
     readHeader();
+    biqStampOriginals(order);
     biqReSplitFabrics(MAPS, order);
     biqRecomputeControlDrops(MAPS, order);
     biqAssignSundryCodes(order);
@@ -272,6 +293,7 @@ function refresh() {
     biqApplyBracketPairs(MAPS, order);
     biqApplyOptionDefaults(MAPS, order);
     biqInferControls(MAPS, order);
+    biqApplyFormatProfile(MAPS, FORMATS, order);   // fill unresolved fields from this customer's learned format
     biqCanonicalize(MAPS, order);
     renderCustomerTag();
     renderItems();
@@ -491,6 +513,13 @@ function downloadXML() {
             const cats = [...new Set(learned.map(l => l.cat))];
             cats.forEach(c => saveCategory(c));
             D.showToast('Learned ' + learned.length + ' AI match(es) - future orders with this wording resolve automatically.', 'success');
+        }
+        // learn this customer's format (dealer wording the catalogue doesn't cover, + their defaults)
+        const fr = biqLearnFormat(MAPS, FORMATS, order);
+        if (fr) {
+            saveFormats();
+            if (fr.learned.length) D.showToast('Format profile updated for "' + order.customer + '" — learned ' + fr.learned.length + ' term(s); their next orders convert more accurately.', 'success');
+            if (fr.drift) D.showToast('Heads-up: this order\'s format differs from "' + order.customer + '"\'s usual one — worth a closer check.', 'info');
         }
         const blob = new Blob([biqGenerateXML(MAPS, order)], { type: 'text/xml' });
         const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
@@ -816,6 +845,7 @@ export function initBiqConverter(deps) {
     injectMarkup();
     bindEvents();
     loadMappings();
+    loadFormats();
 }
 function bindEvents() {
     const root = $('biq-converter-content');

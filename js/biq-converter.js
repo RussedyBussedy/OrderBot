@@ -1438,6 +1438,88 @@ export function biqApplyBracketPairs(mappings, order) {
     items.forEach(it => { it.variants = it.variants.filter(v => !/\b(centre|center|middle)\s+brackets?\b/i.test(biqLc(v[0]))); });
 }
 
+// ---------- per-customer FORMAT PROFILES (the format learner) ----------
+// Each customer submits orders in their own consistent house style. We learn, per customer,
+// the dealer-wording -> BlindIQ-value mappings that the global catalogue/aliases DON'T already
+// cover (i.e. the corrections a capturer makes), plus their usual delivery/packing defaults and
+// source type. On the next order we use that memory to fill ONLY values that don't already
+// resolve — never overriding a value that resolves or one a person set. Profiles are keyed by
+// the canonical BlindIQ customer account, so one branch's quirks never leak into another's.
+const BIQ_FMT_FIELDS = [['blindType', 'blindTypes'], ['fix', 'fixes'], ['control1', 'control1'], ['control2', 'control2']];
+export function biqProfileKey(mappings, customerName) {
+    const canon = biqCanonicalCustomerName ? biqCanonicalCustomerName(mappings, customerName) : customerName;
+    return biqLc(canon || customerName);
+}
+// Snapshot the raw dealer wording once, before any resolution/canonicalisation rewrites it.
+export function biqStampOriginals(order) {
+    (order ? order.items : []).forEach(it => {
+        if (!it._orig) it._orig = { blindType: it.blindType, range: it.range, colour: it.colour, control1: it.control1, control2: it.control2, fix: it.fix };
+    });
+}
+export function biqGetProfile(profiles, key) { return (profiles && profiles[key]) || null; }
+// Apply a customer's learned format. Only fills fields that DON'T currently resolve, and only
+// with a learned value that itself resolves in the live catalogue. Returns what it filled.
+export function biqApplyFormatProfile(mappings, profiles, order) {
+    if (!order || !order.customer) return [];
+    const p = biqGetProfile(profiles, biqProfileKey(mappings, order.customer));
+    if (!p || !p.vocab) return [];
+    const applied = [];
+    order.items.forEach((it, i) => {
+        BIQ_FMT_FIELDS.forEach(([f, cat]) => {
+            const cur = it[f];
+            if (cur && biqResolve(mappings, cat, cur).known) return;          // already resolves — leave it
+            const term = biqLc(cur || (it._orig && it._orig[f]) || '');
+            if (!term) return;
+            const e = p.vocab[cat] && p.vocab[cat][term];
+            if (e && e.n >= 1 && biqResolve(mappings, cat, e.value).known) { it[f] = e.value; applied.push({ i, field: f, from: cur, to: e.value }); }
+        });
+        // colour is scoped by range
+        if (!biqResolveColour(mappings, it.range, it.colour).known) {
+            const term = biqLc((it._orig && it._orig.colour) || it.colour || '');
+            const e = term && p.vocab.colours && p.vocab.colours[biqLc(it.range) + '|' + term];
+            if (e && e.n >= 1 && biqResolveColour(mappings, it.range, e.value).known) { it.colour = e.value; applied.push({ i, field: 'colour', from: it.colour, to: e.value }); }
+        }
+    });
+    if (!order.deliveryMethod && p.defaults && p.defaults.deliveryMethod) order.deliveryMethod = p.defaults.deliveryMethod;
+    if (!order.packingType && p.defaults && p.defaults.packingType) order.packingType = p.defaults.packingType;
+    return applied;
+}
+// Learn from a finished order: capture dealer-term -> canonical for fields that resolved but whose
+// original wording the global catalogue does NOT already handle (i.e. the human's corrections).
+// Returns { profile, learned:[], drift:bool }.
+export function biqLearnFormat(mappings, profiles, order) {
+    if (!order || !order.customer) return null;
+    const key = biqProfileKey(mappings, order.customer);
+    const p = profiles[key] || (profiles[key] = { customer: order.customer, sourceType: '', orders: 0, vocab: { blindTypes: {}, colours: {}, control1: {}, control2: {}, fixes: {} }, defaults: {}, updatedAt: '' });
+    const learned = [];
+    const drift = !!(p.sourceType && order.source && p.sourceType !== order.source);
+    p.orders++; if (order.source) p.sourceType = order.source; p.updatedAt = new Date().toISOString();
+    const rec = (cat, term, value) => {
+        term = biqLc(term); if (!term || !value) return;
+        const slot = p.vocab[cat] || (p.vocab[cat] = {});
+        const e = slot[term];
+        if (e && biqLc(e.value) === biqLc(value)) e.n++;
+        else slot[term] = { value, n: 1 };
+        learned.push({ cat, term, value });
+    };
+    order.items.forEach(it => {
+        const o = it._orig || {};
+        BIQ_FMT_FIELDS.forEach(([f, cat]) => {
+            const term = (o[f] != null ? o[f] : it[f]), val = it[f];
+            if (!term || !val || biqLc(term) === biqLc(val)) return;            // nothing to learn
+            if (biqResolve(mappings, cat, term).known) return;                   // global already handles this wording
+            if (biqResolve(mappings, cat, val).known) rec(cat, term, val);       // learn dealer term -> canonical
+        });
+        const cterm = (o.colour != null ? o.colour : it.colour), cval = it.colour;
+        if (cterm && cval && biqLc(cterm) !== biqLc(cval)
+            && !biqResolveColour(mappings, it.range, cterm).known
+            && biqResolveColour(mappings, it.range, cval).known) rec('colours', biqLc(it.range) + '|' + cterm, cval);
+    });
+    if (order.deliveryMethod) p.defaults.deliveryMethod = order.deliveryMethod;
+    if (order.packingType) p.defaults.packingType = order.packingType;
+    return { profile: p, learned, drift };
+}
+
 // BlindIQ mappings are the source of truth: once a field resolves to an ID, replace the
 // dealer's wording with BlindIQ's canonical name. Unresolved fields are left as-is so the
 // capturer still sees what was on the order. Idempotent.

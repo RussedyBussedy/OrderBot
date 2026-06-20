@@ -55,7 +55,9 @@ const BIQ_ALIASES = {
         'bd element vision': 'element vision', 'element vision blind': 'element vision',
         'bd element wood alloy': 'element wood', 'element wood alloy': 'element wood', 'bd element wood': 'element wood',
         'bd outdoor blinds - free hang': 'outdoor free hang', 'outdoor blinds - free hang': 'outdoor free hang', 'bd outdoor free hang': 'outdoor free hang',
-        'bd cellular skylight': 'cellular skylight lantern', 'cellular skylight': 'cellular skylight lantern'
+        'bd cellular skylight': 'cellular skylight lantern', 'cellular skylight': 'cellular skylight lantern',
+        'element wood venetian': 'element wood', 'wood venetian': 'element wood', 'bd element wood venetian': 'element wood',
+        'urban hinged': 'urban hinged shutter', 'altra hinged': 'altra hinged shutter', 'altra fold': 'altra fold shutter'
     },
     fixes: {
         'f/f': 'face', 'ff': 'face', 'face fix': 'face',
@@ -341,11 +343,114 @@ export function biqParseBlindGuysRows(rows) {
         const raw = {}; headers.forEach((h, i) => { if (h) raw[h] = biqNorm(rows[r][i]); });
         items.push(raw);
     }
-    return { meta, items, doubleRoller: /double/i.test(meta.product) };
+    const prod = biqLc(meta.product);
+    let kind = 'roller';
+    if (/double/.test(prod)) kind = 'doubleRoller';
+    else if (/shutter/.test(prod)) kind = 'shutter';
+    else if (/venetian|wood/.test(prod)) kind = 'venetian';
+    return { meta, items, kind, doubleRoller: kind === 'doubleRoller' };
+}
+// Roller + Double Roller line (the original mapping, unchanged).
+function biqBgRoller(mappings, o, it, raw, doubleRoller, product) {
+    it.width = raw['Finished Width'] || ''; it.drop = raw['Finished Height'] || '';
+    it.fix = raw['Fixing'] || '';
+    it.blindType = doubleRoller ? (product || 'Double Roller Blinds') : (raw['Type'] || product || '');
+    const fabRaw = doubleRoller ? (raw['Front Blind Fabric'] || '') : (raw['Fabric'] || '');
+    { const f = biqSplitFabric(mappings, fabRaw, it.blindType); it.range = f.range; it.colour = f.colour; it._origFabric = fabRaw; }
+    it.control1 = raw['LH Control'] || ''; it.control2 = raw['RH Control'] || '';
+    { const cl = biqNorm(raw['Control Length'] || '');
+      it.controlDrop = biqComputeControlDropV2(mappings, cl, it.drop, it.blindType, it.range);
+      it._cdAuto = !/^\d/.test(cl); }
+    it.variants = biqTemplateFor2(mappings, doubleRoller ? (product || 'Double Roller Blinds') : it.blindType);
+    const mapv = (src, key) => { const v = cleanVal(raw[src]); if (v) biqSetVar(it.variants, key, v); };
+    if (doubleRoller) {
+        const frontIsBlockout = /block/i.test(raw['Configuration Front Blind'] || '');
+        const front = cleanVal(raw['Front Blind Fabric']), back = cleanVal(raw['Back Blind Fabric']);
+        if (front) biqSetVar(it.variants, frontIsBlockout ? 'Blockout Fabric' : 'View Fabric', front);
+        if (back) biqSetVar(it.variants, frontIsBlockout ? 'View Fabric' : 'Blockout Fabric', back);
+        mapv('Bottom Bar Colour', 'Bottom Bar'); mapv('Cassette Colour', 'Cassette Colour');
+        mapv('Fabric Insert Cassette', 'Fabric Insert for 70mm Cassette');
+        mapv('Roll Type Front', 'Roll Type'); mapv('Roll Type Back', 'Roll Type Back');
+    } else {
+        mapv('Mechanism Colour', 'Mech Colour'); mapv('Bottom Bar Colour', 'Bottom Bar'); mapv('Roll', 'Roll Type');
+        mapv('Steel Ball Chain', 'Steel Ball Chain'); mapv('Remove Bracket Covers', 'Remove Bracket Covers');
+        mapv('Plastic Bottom Bar', 'Plastic Bottom Bar'); mapv('Chain Tidy', 'Chain Tidy');
+        mapv('Wired Side Guides', 'Wire Side Guides'); mapv('Fabric Only', 'Fabric Only');
+        mapv('Fabric Insert', 'Fabric Insert for 70mm Cassette');
+        const cass = cleanVal(raw['System 40 70mm Cassette'] || raw['Closed Cassette']); if (cass) biqSetVar(it.variants, 'Sys 40 70mm Cassette', cass);
+        const ty = biqLc(raw['Type']); if (ty.includes('system 32')) biqSetVar(it.variants, 'System 32', 'Yes');
+        if (ty.includes('1.5')) biqSetVar(it.variants, 'System 40 1.5:1', 'Yes');
+    }
+    const motorTxt = cleanVal(raw['Motor']), remoteTxt = cleanVal(raw['Remotes']),
+        accTxt = cleanVal(raw['Accessory']) || cleanVal(raw['Accessories']);
+    if (motorTxt) biqAddMotorSundry(mappings, o, motorTxt, +it.qty || 1);
+    if (remoteTxt) biqAddMotorSundry(mappings, o, remoteTxt, 1);
+    if (accTxt) biqAddMotorSundry(mappings, o, accTxt, +it.qty || 1);
+    if (!motorTxt && cleanVal(raw['Motor Type'])) it.notes = (it.notes ? it.notes + ' | ' : '') + 'Motor type: ' + cleanVal(raw['Motor Type']);
+    const skip = new Set(['Item #', 'Location', 'Finished Width', 'Finished Height', 'Qty', 'Type', 'LH Control', 'RH Control', 'Control Length', 'Mechanism Colour', 'Bottom Bar Colour', 'Fabric', 'Fixing', 'Roll', 'Line Notes', 'Express', 'Front Blind Fabric', 'Back Blind Fabric', 'Configuration Front Blind', 'Configuration Back Blind', 'Cassette Colour', 'Fabric Insert Cassette', 'Roll Type Front', 'Roll Type Back', 'Steel Ball Chain', 'Remove Bracket Covers', 'Plastic Bottom Bar', 'Chain Tidy', 'Wired Side Guides', 'Fabric Only', 'Fabric Insert', 'System 40 70mm Cassette', 'Closed Cassette', 'Motor', 'Motor Type', 'Remotes', 'Accessory', 'Accessories']);
+    for (const [k, v] of Object.entries(raw)) {
+        if (skip.has(k)) continue; const cv = cleanVal(v); if (cv) biqSetVar(it.variants, k, cv);
+    }
+}
+// Element Wood Venetian line (Blind Guys BD1-EWV "Supply Sheet").
+function biqBgVenetian(mappings, o, it, raw) {
+    it.width = raw['Finished Width'] || ''; it.drop = raw['Finished Drop'] || raw['Finished Height'] || '';
+    it.fix = raw['Fit'] || raw['Fixing'] || '';
+    it.blindType = 'Element Wood';
+    it.colour = raw['Colour'] || '';            // slat colour; wood range isn't on the sheet -> left to flag/map
+    it.control1 = raw['Control Side'] || ''; it.control2 = raw['Operation'] || '';
+    { const cl = biqNorm(raw['Control Length'] || '');
+      it.controlDrop = biqComputeControlDropV2(mappings, cl, it.drop, it.blindType, it.range);
+      it._cdAuto = !/^\d/.test(cl); }
+    it.variants = biqTemplateFor2(mappings, it.blindType);
+    const mapv = (src, key) => { const v = cleanVal(raw[src]); if (v) biqSetVar(it.variants, key, v); };
+    mapv('Valance Length', 'Val Size');
+    const vr = biqLc(raw['Valancce Returns'] || raw['Valance Returns'] || '');
+    if (vr) biqSetVar(it.variants, 'Val Returns', /^(no|none)$/.test(vr) ? 'None' : (raw['Valancce Returns'] || raw['Valance Returns']));
+    mapv('Mitre Val LH', 'Mitre Val LH'); mapv('Mitre Val RH', 'Mitre Val RH');
+    mapv('Mixed Slats', 'Mixed Slats'); mapv('Ladder Tape', 'Ladder Tape'); mapv('Ladder Tape Colour', 'Ladder Tape Colour');
+    const hd = biqLc(raw['Hold Downs'] || '');
+    if (/magnet/.test(hd)) biqSetVar(it.variants, 'Hold Downs Magnetic', 'Yes');
+    else if (/clip/.test(hd)) biqSetVar(it.variants, 'Hold Downs Clip In', 'Yes');
+    const lcut = [cleanVal(raw['Left Cutout Drop from Bottom']), cleanVal(raw['Left Cutout Width'])].filter(Boolean).join(' x ');
+    const rcut = [cleanVal(raw['Right Cutout Drop from Bottom']), cleanVal(raw['Right Cutout Width'])].filter(Boolean).join(' x ');
+    if (lcut) biqSetVar(it.variants, 'Cut Out LH', lcut);
+    if (rcut) biqSetVar(it.variants, 'Cut Out RH', rcut);
+    ['Second Colour', 'Additional Colour', 'Third Colour'].forEach(k => { const v = cleanVal(raw[k]); if (v && biqLc(v) !== 'standard') it.notes = (it.notes ? it.notes + ' | ' : '') + k + ': ' + v; });
+}
+// Shutter line (Blind Guys BD1-SHUT "Supply Sheet"). Range is derived from the panel count
+// ("1 Panel" -> "1 Panel Hinged"), which matches BlindIQ's shutter range names.
+function biqBgShutter(mappings, o, it, raw) {
+    it.width = raw['Width'] || raw['Finished Width'] || ''; it.drop = raw['Height'] || raw['Finished Height'] || '';
+    it.fix = raw['Fixing'] || '';
+    it.blindType = biqNorm((raw['Shutter Type'] || 'Urban Hinged') + ' Shutter');
+    it.colour = raw['Colours'] || raw['Colour'] || '';
+    it.controlDrop = '0';
+    const panels = (raw['No. of Panels'] || '').match(/\d+/);
+    if (panels) {
+        const tier = /tier/i.test(raw['Style'] || raw['Configuration'] || '');
+        it.range = panels[0] + ' Panel Hinged' + (tier ? ' Tier on Tier' : '');
+    }
+    it.variants = biqTemplateFor2(mappings, it.blindType);
+    const spec = biqVariantSpec(mappings, it.blindType) || [];
+    const keys = spec.map(s => s.k);
+    const findOpt = col => { const c = biqLc(col); return keys.find(k => biqLc(k) === c) || keys.find(k => biqLc(k).startsWith(c + ' (')); };
+    const reb = { 'left over right': 'LH over RH', 'right over left': 'RH over LH' };
+    const skip = new Set(['Item #', 'Location', 'Width', 'Height', 'Finished Width', 'Finished Height', 'Qty', 'Shutter Type', 'Colours', 'Colour', 'Fixing', 'No. of Panels', 'Style', 'Configuration', 'Frame', 'Hinge Type', 'Top Track', 'Bottom Track', 'Line Notes']);
+    for (const [col, v] of Object.entries(raw)) {
+        if (skip.has(col)) continue;
+        let cv = cleanVal(v); if (!cv) continue;
+        if (biqLc(col) === 'rebate' && reb[biqLc(cv)]) cv = reb[biqLc(cv)];
+        const k = findOpt(col); if (k) biqSetVar(it.variants, k, cv);
+    }
+    // keep the workshop-relevant descriptors that aren't BlindIQ options
+    const desc = ['No. of Panels', 'Configuration', 'Style'].map(k => cleanVal(raw[k])).filter(Boolean);
+    if (desc.length) it.notes = (it.notes ? it.notes + ' | ' : '') + desc.join(' | ');
 }
 export function biqNormalizeBlindGuys(mappings, p) {
     const o = biqBlankOrder();
-    o.source = 'blindguys'; o.sourceDesc = 'Blind Guys order sheet' + (p.doubleRoller ? ' (Double Roller)' : '');
+    const kind = p.kind || (p.doubleRoller ? 'doubleRoller' : 'roller');
+    o.source = 'blindguys'; o.sourceDesc = 'Blind Guys order sheet (' + kind + ')';
     o.customer = p.meta.company; o.orderNumber = p.meta.orderNumber; o.client = p.meta.customerName;
     o.orderDate = biqParseDate(p.meta.orderDate); o.address = p.meta.address;
     o.notes = p.meta.rep ? ('Sales rep: ' + p.meta.rep) : '';
@@ -353,47 +458,9 @@ export function biqNormalizeBlindGuys(mappings, p) {
     p.items.forEach(raw => {
         const it = biqBlankItem(raw['Item #'] || '');
         it.qty = raw['Qty'] || '1'; it.location = raw['Location'] || '';
-        it.width = raw['Finished Width'] || ''; it.drop = raw['Finished Height'] || '';
-        it.fix = raw['Fixing'] || '';
-        it.blindType = p.doubleRoller ? (p.meta.product || 'Double Roller Blinds') : (raw['Type'] || p.meta.product || '');
-        const fabRaw = p.doubleRoller ? (raw['Front Blind Fabric'] || '') : (raw['Fabric'] || '');
-        { const f = biqSplitFabric(mappings, fabRaw, it.blindType); it.range = f.range; it.colour = f.colour; it._origFabric = fabRaw; }
-        it.control1 = raw['LH Control'] || ''; it.control2 = raw['RH Control'] || '';
-        { const cl = biqNorm(raw['Control Length'] || '');
-          it.controlDrop = biqComputeControlDropV2(mappings, cl, it.drop, it.blindType, it.range);
-          it._cdAuto = !/^\d/.test(cl); }
-        it.variants = biqTemplateFor2(mappings, p.doubleRoller ? (p.meta.product || 'Double Roller Blinds') : it.blindType);
-        const mapv = (src, key) => { const v = cleanVal(raw[src]); if (v) biqSetVar(it.variants, key, v); };
-        if (p.doubleRoller) {
-            // BlindIQ's Element Double Roller speaks Blockout/View; Blind Guys speaks Front/Back
-            const frontIsBlockout = /block/i.test(raw['Configuration Front Blind'] || '');
-            const front = cleanVal(raw['Front Blind Fabric']), back = cleanVal(raw['Back Blind Fabric']);
-            if (front) biqSetVar(it.variants, frontIsBlockout ? 'Blockout Fabric' : 'View Fabric', front);
-            if (back) biqSetVar(it.variants, frontIsBlockout ? 'View Fabric' : 'Blockout Fabric', back);
-            mapv('Bottom Bar Colour', 'Bottom Bar'); mapv('Cassette Colour', 'Cassette Colour');
-            mapv('Fabric Insert Cassette', 'Fabric Insert for 70mm Cassette');
-            mapv('Roll Type Front', 'Roll Type'); mapv('Roll Type Back', 'Roll Type Back');
-        } else {
-            mapv('Mechanism Colour', 'Mech Colour'); mapv('Bottom Bar Colour', 'Bottom Bar'); mapv('Roll', 'Roll Type');
-            mapv('Steel Ball Chain', 'Steel Ball Chain'); mapv('Remove Bracket Covers', 'Remove Bracket Covers');
-            mapv('Plastic Bottom Bar', 'Plastic Bottom Bar'); mapv('Chain Tidy', 'Chain Tidy');
-            mapv('Wired Side Guides', 'Wire Side Guides'); mapv('Fabric Only', 'Fabric Only');
-            mapv('Fabric Insert', 'Fabric Insert for 70mm Cassette');
-            const cass = cleanVal(raw['System 40 70mm Cassette'] || raw['Closed Cassette']); if (cass) biqSetVar(it.variants, 'Sys 40 70mm Cassette', cass);
-            const ty = biqLc(raw['Type']); if (ty.includes('system 32')) biqSetVar(it.variants, 'System 32', 'Yes');
-            if (ty.includes('1.5')) biqSetVar(it.variants, 'System 40 1.5:1', 'Yes');
-        }
-        // Motorisation lines belong in CustomerOrderSundries, not in the options string
-        const motorTxt = cleanVal(raw['Motor']), remoteTxt = cleanVal(raw['Remotes']),
-            accTxt = cleanVal(raw['Accessory']) || cleanVal(raw['Accessories']);
-        if (motorTxt) biqAddMotorSundry(mappings, o, motorTxt, +it.qty || 1);
-        if (remoteTxt) biqAddMotorSundry(mappings, o, remoteTxt, 1);
-        if (accTxt) biqAddMotorSundry(mappings, o, accTxt, +it.qty || 1);
-        if (!motorTxt && cleanVal(raw['Motor Type'])) it.notes = (it.notes ? it.notes + ' | ' : '') + 'Motor type: ' + cleanVal(raw['Motor Type']);
-        const skip = new Set(['Item #', 'Location', 'Finished Width', 'Finished Height', 'Qty', 'Type', 'LH Control', 'RH Control', 'Control Length', 'Mechanism Colour', 'Bottom Bar Colour', 'Fabric', 'Fixing', 'Roll', 'Line Notes', 'Express', 'Front Blind Fabric', 'Back Blind Fabric', 'Configuration Front Blind', 'Configuration Back Blind', 'Cassette Colour', 'Fabric Insert Cassette', 'Roll Type Front', 'Roll Type Back', 'Steel Ball Chain', 'Remove Bracket Covers', 'Plastic Bottom Bar', 'Chain Tidy', 'Wired Side Guides', 'Fabric Only', 'Fabric Insert', 'System 40 70mm Cassette', 'Closed Cassette', 'Motor', 'Motor Type', 'Remotes', 'Accessory', 'Accessories']);
-        for (const [k, v] of Object.entries(raw)) {
-            if (skip.has(k)) continue; const cv = cleanVal(v); if (cv) biqSetVar(it.variants, k, cv);
-        }
+        if (kind === 'shutter') biqBgShutter(mappings, o, it, raw);
+        else if (kind === 'venetian') biqBgVenetian(mappings, o, it, raw);
+        else biqBgRoller(mappings, o, it, raw, kind === 'doubleRoller', p.meta.product);
         if (biqLc(raw['Express']) === 'yes') express = true;
         if (raw['Line Notes']) it.notes = (it.notes ? it.notes + ' | ' : '') + raw['Line Notes'];
         o.items.push(it);

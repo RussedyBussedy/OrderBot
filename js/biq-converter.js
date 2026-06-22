@@ -57,7 +57,8 @@ const BIQ_ALIASES = {
         'bd outdoor blinds - free hang': 'outdoor free hang', 'outdoor blinds - free hang': 'outdoor free hang', 'bd outdoor free hang': 'outdoor free hang',
         'bd cellular skylight': 'cellular skylight lantern', 'cellular skylight': 'cellular skylight lantern',
         'element wood venetian': 'element wood', 'wood venetian': 'element wood', 'bd element wood venetian': 'element wood',
-        'urban hinged': 'urban hinged shutter', 'altra hinged': 'altra hinged shutter', 'altra fold': 'altra fold shutter'
+        'urban hinged': 'urban hinged shutter', 'altra hinged': 'altra hinged shutter', 'altra fold': 'altra fold shutter',
+        'vertical blind': '90mm vertical blind', 'vertical': '90mm vertical blind', '90mm vertical': '90mm vertical blind'
     },
     fixes: {
         'f/f': 'face', 'ff': 'face', 'face fix': 'face',
@@ -637,6 +638,160 @@ export function biqNormalizeBDForm(mappings, p, gridByRow) {
             const pos = BD_ROW_SEQUENCE.indexOf(String(raw.row));
             const letter = pos >= 0 ? 'ABCDEFGHIJKLMNO'[pos] : String(raw.row);
             (gridByRow[letter] || []).forEach(([k, v]) => biqSetVar(it.variants, k, v));
+        }
+        o.items.push(it);
+    });
+    return o;
+}
+
+// ---------- text-PDF helpers (group pdf.js text items into lines) ----------
+function biqGroupLines(textItems) {
+    const items = (textItems || []).filter(i => i.s && i.s.trim());
+    const map = {};
+    items.forEach(i => { const k = Math.round(i.y / 3) * 3; (map[k] = map[k] || []).push({ s: i.s, x: i.x }); });
+    return Object.keys(map).map(Number).sort((a, b) => b - a).map(y => ({ y, parts: map[y].sort((a, b) => a.x - b.x) }));
+}
+
+// ---------- Lifestyle Blinds PDF (uniform table; product/colour encoded in Description) ----------
+export function biqParseLifestyle(textItems) {
+    const lines = biqGroupLines(textItems);
+    const full = lines.map(l => l.parts.map(p => p.s).join(' ')).join('\n');
+    if (!/lifestyleblinds/i.test(full) && !(/PURCHASE ORDER/i.test(full) && /AUTONEER/i.test(full))) return null;
+    const meta = {};
+    let m = full.match(/Number:\s*([A-Z]{0,4}\s?\d{3,})/i); if (m) meta.orderNumber = biqNorm(m[1]);
+    m = full.match(/Date:\s*(\d{4}\/\d{2}\/\d{2})/); if (m) meta.orderDate = m[1];
+    const hl = lines.find(l => { const t = l.parts.map(p => biqLc(p.s)); return t.includes('description') && t.some(s => /qty/.test(s)) && t.some(s => /location/.test(s)); });
+    if (!hl) return null;
+    const cx = {};
+    hl.parts.forEach(p => { const n = biqLc(p.s); if (/description/.test(n)) cx.qty0 = p.x; if (/qty/.test(n)) cx.qty = p.x; else if (/mount/.test(n)) cx.mount = p.x; else if (/width/.test(n)) cx.width = p.x; else if (/drop/.test(n)) cx.drop = p.x; else if (n === 'c') cx.c = p.x; else if (/location/.test(n)) cx.location = p.x; else if (/cost/.test(n)) cx.cost = p.x; });
+    const cols = [['qty', cx.qty], ['mount', cx.mount], ['width', cx.width], ['drop', cx.drop], ['c', cx.c], ['location', cx.location], ['cost', cx.cost]].filter(c => c[1] != null);
+    const descMax = cx.qty - 20;
+    const rows = [];
+    for (let li = lines.indexOf(hl) + 1; li < lines.length; li++) {
+        const joined = lines[li].parts.map(p => p.s).join(' ');
+        if (/Total Incl|Terms and Conditions|hereby accept|Designed by|Call\s+relevant/i.test(joined)) break;
+        const row = { desc: '' };
+        lines[li].parts.forEach(p => {
+            if (p.x < descMax) { row.desc = (row.desc ? row.desc + ' ' : '') + p.s; return; }
+            let best = null, bd = 1e9; cols.forEach(([n, x]) => { const d = Math.abs(p.x - x); if (d < bd) { bd = d; best = n; } });
+            if (best) row[best] = (row[best] ? row[best] + ' ' : '') + biqNorm(p.s);
+        });
+        row.desc = biqNorm(row.desc);
+        if (row.desc) rows.push(row);
+    }
+    return { meta, rows };
+}
+// "ELEMENT ROLLER 5 SCREEN - DUNE GREY" -> {blindType, range, colour}
+export function biqLifestyleDesc(desc) {
+    const segs = desc.split(/\s+-\s*|\s-(?=[A-Za-z])/).map(s => biqNorm(s)).filter(Boolean);
+    let colour = '', pr = desc;
+    if (segs.length >= 2) { colour = segs[segs.length - 1]; pr = segs.slice(0, -1).join(' - '); }
+    const prl = biqLc(pr);
+    let blindType = '', range = '';
+    if (/vertical/.test(prl)) { blindType = 'Vertical Blind'; range = biqNorm(pr.replace(/\d+\s*mm/i, '').replace(/vertical/i, '').replace(/-/g, ' ')); }
+    else if (/venetian|wood/.test(prl)) { blindType = 'Element Wood'; range = biqNorm(pr.replace(/^\d+\s*mm\s*/i, '')); }
+    else if (/roller|screen|filter|block|chatsworth/.test(prl)) { blindType = 'Element Roller Sys 40'; range = biqNorm(pr.replace(/^(bd\s*-?\s*)?(element\s+)?roller\s*/i, '')); }
+    else { blindType = pr; }
+    return { blindType, range, colour };
+}
+export function biqNormalizeLifestyle(mappings, p) {
+    const o = biqBlankOrder();
+    o.source = 'lifestyle'; o.sourceDesc = 'Lifestyle Blinds order';
+    o.customer = 'Lifestyle Blinds'; o.orderNumber = p.meta.orderNumber || ''; o.orderDate = biqParseDate(p.meta.orderDate);
+    let express = false, n = 0;
+    p.rows.forEach(r => {
+        const dl = biqLc(r.desc);
+        const hasDim = /\d{3,}/.test((r.width || '') + ' ' + (r.drop || ''));
+        if (/^express/.test(dl)) { express = true; return; }
+        // valances, brackets, cut-out specs and any dimensionless free-text are not blinds -> notes
+        if (/valance|specification|cut\s*out|bracket/.test(dl) || !hasDim) { o.notes = (o.notes ? o.notes + ' | ' : '') + r.desc; return; }
+        const it = biqBlankItem(String(++n));
+        it.qty = r.qty || '1'; it.location = r.location || ''; it.width = r.width || ''; it.drop = r.drop || '';
+        it.fix = r.mount || '';
+        const cs = biqLc(r.c || '');
+        if (cs === 'l') { it.control1 = 'Lh Chain'; it.control2 = 'Rh Pin'; }
+        else if (cs === 'r') { it.control1 = 'Lh Pin'; it.control2 = 'Rh Chain'; }
+        const d = biqLifestyleDesc(r.desc);
+        it.blindType = d.blindType; it.range = d.range; it.colour = d.colour;
+        it.controlDrop = biqComputeControlDropV2(mappings, '', it.drop, it.blindType, it.range); it._cdAuto = true;
+        it.variants = biqTemplateFor2(mappings, it.blindType || 'roller');
+        o.items.push(it);
+    });
+    if (express) o.notes = (o.notes ? o.notes + ' | ' : '') + 'EXPRESS ORDER (5 working days)';
+    return o;
+}
+
+// ---------- Curtain & Blind Workshop PDF (per-product column table) ----------
+const BIQ_CNBW_COLS = {
+    roller: [['numloc', 60], ['qnty', 158], ['window', 200], ['width', 225], ['dropctl', 248], ['chain', 335], ['fixing', 383], ['fabric', 433], ['colour', 517]],
+    outdoor: [['numloc', 55], ['qnty', 115], ['window', 159], ['width', 178], ['dropctl', 206], ['fixing', 295], ['motor', 344], ['fabric', 424], ['colour', 579]],
+    shutter: [['numloc', 71], ['qnty', 186], ['window', 231], ['width', 283], ['dropctl', 312], ['fixing', 426], ['shutter', 479], ['colour', 600], ['frame', 651]]
+};
+export function biqParseCnbw(textItems) {
+    const lines = biqGroupLines(textItems);
+    const full = lines.map(l => l.parts.map(p => p.s).join(' ')).join('\n');
+    if (!/curtain and blind workshop|cnbw\.co\.za|goldcut/i.test(full)) return null;
+    const meta = {};
+    let m = full.match(/Order number:?\s*([^\n]+?)(?:\s{2,}|Date|Phone|Email|$)/i); if (m) meta.orderNumber = biqNorm(m[1]);
+    m = full.match(/Date:?\s*(\d{1,2}[\/.]\d{1,2}[\/.]\d{2,4})/i); if (m) meta.orderDate = biqNorm(m[1]);
+    const hl = lines.find(l => { const t = l.parts.map(p => biqLc(p.s)); return t.includes('num') && t.some(s => /location/.test(s)) && t.some(s => /width/.test(s)); });
+    if (!hl) return null;
+    const heads = hl.parts.map(p => biqLc(p.s));
+    let product = 'roller';
+    if (heads.some(h => /shutter/.test(h))) product = 'shutter';
+    else if (heads.some(h => /motorised/.test(h))) product = 'outdoor';
+    const cols = BIQ_CNBW_COLS[product];
+    const rows = [];
+    for (let li = lines.indexOf(hl) + 1; li < lines.length; li++) {
+        const parts = lines[li].parts; const joined = parts.map(p => p.s).join(' ');
+        if (/Notes:|Sign:|Please tick|Special instructions/i.test(joined)) break;
+        if (!parts.length || !/^\d/.test(biqNorm(parts[0].s))) continue;        // data rows start with a number
+        const row = {};
+        const put = (k, v) => { v = biqNorm(v); if (v) row[k] = row[k] ? row[k] + ' ' + v : v; };
+        parts.forEach(p => {
+            let best = null, bd = 1e9; cols.forEach(([n, x]) => { const d = Math.abs(p.x - x); if (d < bd) { bd = d; best = n; } });
+            put(best, p.s);
+        });
+        // split the two merged fragments
+        if (row.numloc) { const mm = row.numloc.match(/^(\S+)\s+(.+)$/); if (mm) { row.num = mm[1]; row.location = mm[2]; } else row.num = row.numloc; }
+        if (row.dropctl) { const mm = row.dropctl.match(/^(\d+)\s+(.+)$/); if (mm) { row.drop = mm[1]; row.control = mm[2]; } else row.drop = row.dropctl; }
+        rows.push(row);
+    }
+    return { meta, product, rows };
+}
+export function biqNormalizeCnbw(mappings, p) {
+    const o = biqBlankOrder();
+    o.source = 'cnbw'; o.sourceDesc = 'Curtain & Blind Workshop order (' + p.product + ')';
+    o.customer = 'Curtain and Blind Workshop'; o.orderNumber = p.meta.orderNumber || ''; o.orderDate = biqParseDate(p.meta.orderDate);
+    let n = 0;
+    p.rows.forEach(r => {
+        const it = biqBlankItem(String(++n));
+        it.qty = r.qnty || '1'; it.location = r.location || ''; it.width = r.width || ''; it.drop = r.drop || '';
+        it.fix = r.fixing || '';
+        const ctl = biqLc(r.control || '');                                     // "left control" / "right motor" / "left"/"right"
+        const side = /left/.test(ctl) ? 'L' : (/right/.test(ctl) ? 'R' : '');
+        const drive = /motor/.test(ctl) ? 'Motor' : 'Chain';
+        if (side === 'L') { it.control1 = 'Lh ' + drive; it.control2 = 'Rh Pin'; }
+        else if (side === 'R') { it.control1 = 'Lh Pin'; it.control2 = 'Rh ' + drive; }
+        if (p.product === 'shutter') {
+            it.blindType = 'Urban Hinged Shutter';
+            it.colour = r.colour || '';
+            const pan = (r.shutter || '').match(/(\d+)\s*panel/i);
+            if (pan) it.range = pan[1] + ' Panel Hinged';
+            it.controlDrop = '0';
+            it.variants = biqTemplateFor2(mappings, it.blindType);
+            if (cleanVal(r.frame)) it.notes = (it.notes ? it.notes + ' | ' : '') + 'Frame: ' + cleanVal(r.frame);
+        } else {
+            it.blindType = p.product === 'outdoor' ? 'Outdoor Free Hang' : 'Element Roller Sys 40';
+            const fab = biqNorm((r.fabric || '').replace(/\b(outdoor\s+)?blind\b/ig, ''));
+            const f = biqSplitFabric(mappings, fab + (r.colour ? ' ' + r.colour : ''), it.blindType);
+            if (f.range && f.colour) { it.range = f.range; it.colour = f.colour; }
+            else { it.range = fab; it.colour = r.colour || ''; }
+            it._origFabric = fab;
+            it.controlDrop = biqComputeControlDropV2(mappings, '', it.drop, it.blindType, it.range); it._cdAuto = true;
+            it.variants = biqTemplateFor2(mappings, it.blindType);
+            if (p.product === 'outdoor' && cleanVal(r.motor)) biqAddMotorSundry(mappings, o, cleanVal(r.motor), +it.qty || 1);
+            if (p.product === 'roller' && /standard|waterfall/i.test(r.chain || '')) biqSetVar(it.variants, 'Roll Type', biqNorm(r.chain));
         }
         o.items.push(it);
     });

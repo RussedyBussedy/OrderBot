@@ -15,7 +15,7 @@ import {
     biqStampOriginals, biqApplyFormatProfile, biqLearnFormat,
     biqParseBlindGuysRows, biqNormalizeBlindGuys,
     biqParseMatheoItems, biqNormalizeMatheo,
-    biqParseLifestyle, biqNormalizeLifestyle, biqParseCnbw, biqNormalizeCnbw,
+    biqParseLifestyle, biqNormalizeLifestyle, biqParseCnbw, biqNormalizeCnbw, biqCnbwCoherent,
     biqParseBDFields, biqNormalizeBDForm,
     biqBuildExtractionPrompt, biqAiResultToOrder,
     biqCollectProblems, biqGenerateXML, biqPrettyXML, biqImportSafetyScan,
@@ -177,7 +177,7 @@ async function loadPdf(f) {
         const lf = biqParseLifestyle(textItems);
         if (lf && lf.rows.length) { setOrder(biqNormalizeLifestyle(MAPS, lf)); return; }
         const cb = biqParseCnbw(textItems);
-        if (cb && cb.rows.length) { setOrder(biqNormalizeCnbw(MAPS, cb)); return; }
+        if (cb && cb.rows.length) { const o = biqNormalizeCnbw(MAPS, cb); if (biqCnbwCoherent(MAPS, o)) { setOrder(o); return; } }
     }
     // 3) unknown or scanned -> AI
     await aiExtract([f]);

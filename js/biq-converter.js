@@ -61,8 +61,8 @@ const BIQ_ALIASES = {
         'vertical blind': '90mm vertical blind', 'vertical': '90mm vertical blind', '90mm vertical': '90mm vertical blind'
     },
     fixes: {
-        'f/f': 'face', 'ff': 'face', 'face fix': 'face',
-        'i/r': 'reveal', 'ir': 'reveal', 'inside reveal': 'reveal',
+        'f/f': 'face', 'ff': 'face', 'face fix': 'face', 'facefix': 'face',
+        'i/r': 'reveal', 'ir': 'reveal', 'inside reveal': 'reveal', 'recess': 'reveal', 'standard recess': 'reveal', 'standard facefix': 'face',
         'rev': 'reveal', 'rev l': 'reveal', 'rev r': 'reveal', 'reveal l': 'reveal', 'reveal r': 'reveal'
     }
 };
@@ -487,7 +487,9 @@ export function biqParseMatheoItems(textItems) {
     const compLine = fullText.split('\n').find(l => /math.o\s*blinds/i.test(l) && !/@|phone|e-mail/i.test(l));
     if (compLine) meta.company = biqNorm(compLine);
     m = fullText.match(/Name\s*:\s*([A-Za-zÀ-ž'\- ]+?)\s+Tel/i); if (m) meta.customerName = biqNorm(m[1]);
-    const hl = lines.find(l => { const t = l.parts.map(p => p.s.trim()); return t.includes('#') && t.some(s => /^Location$/i.test(s)) && t.some(s => /^Price$/i.test(s)); });
+    m = fullText.match(/BD\s+(Roller Blind|Outdoor Free Hang|Urban Shutter|Vision|Wood|Cellular|Double Roller)[A-Za-z ]*/i); if (m) meta.product = biqNorm(m[0]);
+    // header row: tolerate split words ("Locatio"+"n") — match on '#' + Location/Price prefixes
+    const hl = lines.find(l => { const t = l.parts.map(p => p.s.trim()); return t.includes('#') && t.some(s => /^locatio/i.test(s)) && t.some(s => /^price/i.test(s)); });
     if (!hl) return null;
     const cols = hl.parts.map(p => ({ name: biqNorm(p.s), x: p.x }));
     const hi = lines.indexOf(hl);
@@ -524,16 +526,24 @@ export function biqNormalizeMatheo(mappings, p) {
     o.orderNumber = p.meta.po || p.meta.quote || ''; o.client = p.meta.customerName || '';
     o.orderDate = biqParseDate(p.meta.orderDate);
     o.notes = [p.meta.quote ? ('Quote ' + p.meta.quote) : '', p.meta.job ? ('Job ' + p.meta.job) : ''].filter(Boolean).join(' | ');
+    // map the "BD ..." title to a BlindIQ blind type (the per-row "Type" is a price group, not a type)
+    const tp = biqLc(p.meta.product || '');
+    const titleType = /outdoor/.test(tp) ? 'Outdoor Free Hang' : /urban shutter|shutter/.test(tp) ? 'Urban Hinged Shutter'
+        : /vision/.test(tp) ? 'Element Vision' : /wood/.test(tp) ? 'Element Wood' : /cellular/.test(tp) ? 'Cellular Skylight Lantern'
+            : /double roller/.test(tp) ? 'Double Roller Blinds' : /roller/.test(tp) ? 'Element Roller Sys 40' : '';
     p.rows.forEach(raw => {
         const it = biqBlankItem(raw['#'] || '');
         it.qty = '1'; it.location = raw['Location'] || '';
         it.width = raw['Width'] || ''; it.drop = raw['Height'] || '';
-        it.blindType = raw['Type'] || '';
+        it.blindType = titleType || raw['Type'] || '';
+        if (titleType && raw['Type']) it.notes = (it.notes ? it.notes + ' | ' : '') + raw['Type'];   // keep the price group as a note
         let mat = biqNorm(raw['Material'] || '');
         let rng = mat;
         if (!biqResolveRange(mappings, it.blindType, rng).known) {
-            const stripped = mat.replace(/^bd\s*e\s*/i, '');
-            if (biqResolveRange(mappings, it.blindType, stripped).known) rng = stripped;
+            for (const re of [/^bd\s+element\s+/i, /^bd\s*e\s+/i, /^bd\s+/i, /^element\s+/i]) {
+                const s = biqNorm(mat.replace(re, ''));
+                if (s && s !== mat && biqResolveRange(mappings, it.blindType, s).known) { rng = s; break; }
+            }
         }
         it.range = rng; it.colour = raw['Colour'] || '';
         it.fix = raw['Fix'] || '';
@@ -796,6 +806,20 @@ export function biqNormalizeCnbw(mappings, p) {
         o.items.push(it);
     });
     return o;
+}
+
+// Sanity-check a deterministic CnBW parse. Their templates vary (column order, merged cells);
+// if a layout doesn't map cleanly we'd rather hand it to AI than emit confident-but-wrong data.
+// Coherent = most items have a real width and a fix that resolves (reveal/face, incl. aliases).
+export function biqCnbwCoherent(mappings, order) {
+    if (!order || !order.items.length) return false;
+    let good = 0;
+    order.items.forEach(it => {
+        const w = parseInt(it.width, 10) || 0;
+        const fixOk = it.fix && biqResolve(mappings, 'fixes', it.fix).known;
+        if (w > 0 && fixOk) good++;
+    });
+    return good >= Math.ceil(order.items.length / 2);
 }
 
 // =============================================================================

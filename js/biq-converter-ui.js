@@ -141,6 +141,7 @@ async function handleFiles(files) {
 async function loadXlsx(f) {
     const wb = XLSX.read(await f.arrayBuffer(), { type: 'array' });
     const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: null });
+    lastSourceText = rows.map(r => (r || []).join(' ')).join('\n');
     const p = biqParseBlindGuysRows(rows);
     if (p) { setOrder(biqNormalizeBlindGuys(MAPS, p)); return; }
     D.showToast('Spreadsheet layout not recognised — falling back to AI extraction.', 'info');
@@ -157,6 +158,7 @@ async function loadPdf(f) {
     }
     const filled = Object.values(fields).filter(v => !(v == null || v === '' || v === 'Off' || v === '/Off')).length;
     if (filled >= 3) {
+        lastSourceText = Object.entries(fields).map(([k, v]) => k + ' ' + v).join('\n');
         const formKey = biqDetectForm(fields);
         if (formKey && formKey !== 'element') {
             const o = biqParseSpecForm(MAPS, formKey, fields);
@@ -172,6 +174,7 @@ async function loadPdf(f) {
         tc.items.forEach(i => textItems.push({ s: i.str, x: i.transform[4], y: i.transform[5] - p * 10000 }));
     }
     if (textItems.map(i => i.s).join('').replace(/\s/g, '').length > 40) {
+        lastSourceText = textItems.map(i => i.s).join(' ');
         const m = biqParseMatheoItems(textItems);
         if (m && m.rows.length) { setOrder(biqNormalizeMatheo(MAPS, m)); return; }
         const lf = biqParseLifestyle(textItems);
@@ -212,6 +215,7 @@ async function aiExtract(files) {
     const result = JSON.parse(resultText);
     if (!result.candidates || !result.candidates[0]?.content) throw new Error('No content from AI' + (result.promptFeedback?.blockReason ? ' (' + result.promptFeedback.blockReason + ')' : ''));
     const ai = JSON.parse(result.candidates[0].content.parts[0].text);
+    lastSourceText = JSON.stringify(ai);   // the AI's reading of the document = our source of truth for attribution
     const o = biqAiResultToOrder(MAPS, ai);
     setOrder(o);
     D.showToast('AI extracted ' + o.items.length + ' line item(s) — verify every value against the original document.', 'info');
@@ -219,7 +223,8 @@ async function aiExtract(files) {
 
 // ---------------------------------------------------------------- state/render
 let aiBusy = false;
-function setOrder(o) { order = o; checkResults = null; $('biq-editor').classList.remove('hidden'); renderHeader(); refresh(); setStatus(''); fitCollapsible(); maybeAiDiscern(); }
+let lastSourceText = '';   // raw text of the document just ingested (for learning attribution)
+function setOrder(o) { o._sourceText = lastSourceText || ''; lastSourceText = ''; order = o; checkResults = null; $('biq-editor').classList.remove('hidden'); renderHeader(); refresh(); setStatus(''); fitCollapsible(); maybeAiDiscern(); }
 
 // Run AI discernment over any unresolved PRODUCT names (not the customer account).
 async function aiDiscern(manual) {

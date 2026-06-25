@@ -1666,19 +1666,30 @@ export function biqApplyFormatProfile(mappings, profiles, order) {
 // Learn from a finished order: capture dealer-term -> canonical for fields that resolved but whose
 // original wording the global catalogue does NOT already handle (i.e. the human's corrections).
 // Returns { profile, learned:[], drift:bool }.
+// Fields whose movement between columns we watch (the capturer-moved-it-elsewhere signal).
+const BIQ_MOVE_FIELDS = ['blindType', 'range', 'colour', 'control1', 'control2', 'fix'];
 export function biqLearnFormat(mappings, profiles, order) {
     if (!order || !order.customer) return null;
     const key = biqProfileKey(mappings, order.customer);
-    const p = profiles[key] || (profiles[key] = { customer: order.customer, sourceType: '', orders: 0, vocab: { blindTypes: {}, colours: {}, control1: {}, control2: {}, fixes: {} }, defaults: {}, updatedAt: '' });
-    const learned = [];
+    const p = profiles[key] || (profiles[key] = { customer: order.customer, sourceType: '', orders: 0, vocab: { blindTypes: {}, colours: {}, control1: {}, control2: {}, fixes: {} }, defaults: {}, log: [], updatedAt: '' });
+    if (!p.log) p.log = [];
+    const learned = [], moves = [];
     const drift = !!(p.sourceType && order.source && p.sourceType !== order.source);
     p.orders++; if (order.source) p.sourceType = order.source; p.updatedAt = new Date().toISOString();
+    const ts = p.updatedAt;
+    const src = biqLc(order._sourceText || '');
+    // ATTRIBUTION: a value is only a genuine conversion miss if it was actually on the customer document.
+    // If we have the source text and the term isn't in it, the capturer sourced it (e.g. phoned the customer) -> don't learn it as a rule.
+    const onDoc = term => !src || src.includes(biqLc(term));
+    const logPush = e => { p.log.push(e); if (p.log.length > 150) p.log.shift(); };   // bounded ledger of real corrections
     const rec = (cat, term, value) => {
         term = biqLc(term); if (!term || !value) return;
+        const present = onDoc(term);
+        logPush({ field: cat, term, value, onDoc: present, t: ts });
+        if (!present) return;                                                  // not on the document -> don't learn as a conversion rule
         const slot = p.vocab[cat] || (p.vocab[cat] = {});
         const e = slot[term];
-        if (e && biqLc(e.value) === biqLc(value)) e.n++;
-        else slot[term] = { value, n: 1 };
+        if (e && biqLc(e.value) === biqLc(value)) e.n++; else slot[term] = { value, n: 1 };
         learned.push({ cat, term, value });
     };
     order.items.forEach(it => {
@@ -1693,10 +1704,23 @@ export function biqLearnFormat(mappings, profiles, order) {
         if (cterm && cval && biqLc(cterm) !== biqLc(cval)
             && !biqResolveColour(mappings, it.range, cterm).known
             && biqResolveColour(mappings, it.range, cval).known) rec('colours', biqLc(it.range) + '|' + cterm, cval);
+        // FIELD-MOVE detection (data only — recorded, never auto-applied): a value the converter put
+        // in field A that the capturer moved to field B. Reveals where this customer's format misplaces things.
+        BIQ_MOVE_FIELDS.forEach(A => {
+            const av = biqNorm(o[A] || ''); if (!av || biqLc(av) === biqLc(it[A] || '')) return;
+            BIQ_MOVE_FIELDS.forEach(B => {
+                if (B === A) return;
+                const bv = biqLc(it[B] || '');
+                if (bv && bv.includes(biqLc(av)) && biqLc(o[B] || '') !== bv) {
+                    moves.push({ from: A, to: B, value: av });
+                    logPush({ move: A + '->' + B, term: biqLc(av), onDoc: onDoc(av), t: ts });
+                }
+            });
+        });
     });
     if (order.deliveryMethod) p.defaults.deliveryMethod = order.deliveryMethod;
     if (order.packingType) p.defaults.packingType = order.packingType;
-    return { profile: p, learned, drift };
+    return { profile: p, learned, moves, drift };
 }
 
 // BlindIQ mappings are the source of truth: once a field resolves to an ID, replace the

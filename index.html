@@ -1074,6 +1074,13 @@ Below each primary row there is a line of detailed specifications separated by "
 ## Sundries Table
 Extract each sundry item's description and quantity. If a sundry item is absent from the customer document, the result should be "OMISSION".
 
+## Valance Instruction Detection
+Check whether the CUSTOMER document contains an instruction that ALL blinds must have a valance. The wording varies: "all blinds to have valances", "valances on all blinds", "all with pelmets", "cassettes on everything", etc. It may appear in a notes/special-instructions area, a header, or handwriting anywhere on the page.
+- Valance types include: linear valance, half round valance, 70mm open cassette, pelmet, fascia. Any of these count as a valance.
+- Set valanceInstruction.required = true and quote the exact wording in valanceInstruction.evidence when such an instruction exists.
+- An instruction on a SINGLE line item only (e.g. one blind with a valance) is NOT an all-blinds instruction — in that case set required = false.
+- Valances themselves usually appear as their own line items or as specifications on a blind; extract them exactly as they appear (do not merge them into blind lines).
+
 # COMPARISON PROTOCOL
 For EACH line item:
 1. Fill the "reasoning" field FIRST — explicitly list EACH field and specification side-by-side (Customer vs Blind IQ), including Control 1 and Control 2.
@@ -1161,6 +1168,15 @@ ${feedbackExamples}
                     "bdoOrderNumber": { "type": "STRING" },
                     "customerOrderNumber": comparisonFieldSchema,
                     "specialInstructions": comparisonFieldSchema,
+                    "valanceInstruction": {
+                        type: "OBJECT",
+                        description: "Whether the CUSTOMER order instructs that all blinds must have a valance (any wording: valance/pelmet/fascia/cassette on all blinds, all blinds with valances, etc.).",
+                        properties: {
+                            "required": { "type": "BOOLEAN" },
+                            "evidence": { "type": "STRING", "description": "The exact wording found on the customer document, or empty string if none." }
+                        },
+                        required: ["required", "evidence"]
+                    },
                     "lineItems": {
                         type: "ARRAY",
                         items: {
@@ -1330,8 +1346,9 @@ ${feedbackExamples}
                     let hasAlert = false;
 
                     if (data.motorValidation) hasAlert = true;
+                    if (data.valanceValidation && data.valanceValidation.global) hasAlert = true;
                     (data.lineItems || []).forEach(item => {
-                        if (item.fabricValidation || item.colourValidation || item.motorValidation || item.torqueValidation || item.controlValidation || item.minWidthValidation || item.chainValidation) hasAlert = true;
+                        if (item.fabricValidation || item.colourValidation || item.motorValidation || item.torqueValidation || item.controlValidation || item.minWidthValidation || item.chainValidation || item.valanceValidation) hasAlert = true;
                         Object.values(item).forEach(field => {
                             if (field && (field.result === 'MISMATCH' || field.result === 'OMISSION')) hasMismatch = true;
                         });
@@ -1547,6 +1564,11 @@ ${feedbackExamples}
             if (data.motorValidation && data.motorValidation.global) {
                 globalValidationHtml = `<div class="mb-4 p-2 text-sm font-semibold bg-red-100 text-red-800 rounded-lg flex items-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.21 3.03-1.742 3.03H4.42c-1.532 0-2.492-1.696-1.742-3.03l5.58-9.92zM10 13a1 1 0 110-2 1 1 0 010 2zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" /></svg> ${data.motorValidation.global}</div>`;
             }
+            if (data.valanceValidation && data.valanceValidation.global) {
+                globalValidationHtml += `<div class="mb-4 p-2 text-sm font-semibold bg-red-100 text-red-800 rounded-lg flex items-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.21 3.03-1.742 3.03H4.42c-1.532 0-2.492-1.696-1.742-3.03l5.58-9.92zM10 13a1 1 0 110-2 1 1 0 010 2zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" /></svg> ${data.valanceValidation.global}</div>`;
+            } else if (data.valanceValidation && data.valanceValidation.globalOk) {
+                globalValidationHtml += `<div class="mb-4 p-2 text-sm font-semibold bg-green-100 text-green-800 rounded-lg flex items-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" /></svg> ${data.valanceValidation.globalOk}</div>`;
+            }
 
             const cn = data.customerOrderNumber || { customerValue: 'N/A', blindIQValue: 'N/A', result: 'OMISSION' };
             const orderNumberRow = `
@@ -1599,6 +1621,10 @@ ${feedbackExamples}
                  if (lineItem.chainValidation) {
                     const alertClass = lineItem.chainValidation.type === 'error' ? 'bg-red-100 text-red-800' : 'bg-yellow-100 text-yellow-800';
                     validationHtml += `<div class="p-2 text-sm font-semibold ${alertClass} flex items-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.21 3.03-1.742 3.03H4.42c-1.532 0-2.492-1.696-1.742-3.03l5.58-9.92zM10 13a1 1 0 110-2 1 1 0 010 2zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" /></svg> ${lineItem.chainValidation.message}</div>`;
+                }
+                 if (lineItem.valanceValidation) {
+                    const alertClass = lineItem.valanceValidation.type === 'error' ? 'bg-red-100 text-red-800' : 'bg-yellow-100 text-yellow-800';
+                    validationHtml += `<div class="p-2 text-sm font-semibold ${alertClass} flex items-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.21 3.03-1.742 3.03H4.42c-1.532 0-2.492-1.696-1.742-3.03l5.58-9.92zM10 13a1 1 0 110-2 1 1 0 010 2zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" /></svg> ${lineItem.valanceValidation.message}</div>`;
                 }
 
 
@@ -2408,9 +2434,97 @@ ${feedbackExamples}
                  validateMotorDependencies(comparisonData, motorProperties, tubeProperties, fabricProperties);
             }
 
+            // --- 5. Valance Validation (order says all blinds must have a valance) ---
+            validateValances(comparisonData);
+
             return comparisonData;
         }
-        
+
+        // Rule: when the customer order instructs that ALL blinds must have valances,
+        // every blind line needs a matching valance (any type: linear / half round /
+        // 70mm open cassette / pelmet / fascia) whose width is 20-25mm MORE than the
+        // blind's width. Valance type differences are NOT flagged (the type choice is
+        // established by the data capturer when the customer didn't express one).
+        const VALANCE_KEYWORDS = /valance|pelmet|fascia|cassette/i;
+        function validateValances(data) {
+            if (!data.valanceInstruction || data.valanceInstruction.required !== true) return;
+            const lineItems = data.lineItems || [];
+            const parseMm = v => {
+                const m = String(v ?? '').replace(',', '.').match(/(\d+(?:\.\d+)?)/);
+                return m ? parseFloat(m[1]) : null;
+            };
+            const textOf = f => ((f?.blindIQValue || '') + ' ' + (f?.customerValue || ''));
+            const isValanceLine = it => VALANCE_KEYWORDS.test(textOf(it.blindType) + ' ' + textOf(it.item) + ' ' + textOf(it.range) + ' ' + textOf(it.location));
+
+            const blinds = [], valances = [];
+            for (const it of lineItems) (isValanceLine(it) ? valances : blinds).push(it);
+
+            // expand valance lines by qty into individual widths
+            let pool = [];
+            for (const v of valances) {
+                const w = parseMm(v.width?.blindIQValue) ?? parseMm(v.width?.customerValue);
+                let q = parseInt(String(v.qty?.blindIQValue ?? v.qty?.customerValue ?? '1').replace(/\D/g, ''), 10);
+                if (!Number.isFinite(q) || q < 1) q = 1;
+                if (q > 50) q = 50;
+                for (let i = 0; i < q; i++) pool.push({ width: w, used: false, src: v });
+            }
+
+            // a valance recorded as a specification on the blind line also counts
+            const specValance = it => (it.specifications || []).find(s =>
+                VALANCE_KEYWORDS.test((s.specName || '') + ' ' + ((s.specComparison?.blindIQValue) || '')));
+
+            let problems = 0;
+            for (const b of blinds) {
+                const bw = parseMm(b.width?.blindIQValue) ?? parseMm(b.width?.customerValue);
+                let bq = parseInt(String(b.qty?.blindIQValue ?? b.qty?.customerValue ?? '1').replace(/\D/g, ''), 10);
+                if (!Number.isFinite(bq) || bq < 1) bq = 1;
+                if (bq > 50) bq = 50;
+                if (bw == null) {
+                    b.valanceValidation = { type: 'warning', message: 'Valance Alert: could not read this blind’s width, so its valance could not be checked.' };
+                    problems++; continue;
+                }
+                const lo = bw + 20, hi = bw + 25;
+
+                const spec = specValance(b);
+                if (spec) {
+                    const sw = parseMm(spec.specComparison?.blindIQValue);
+                    if (sw == null) {
+                        b.valanceValidation = { type: 'warning', message: `Valance Alert: valance specified ("${spec.specName}") but no size stated — must be ${lo}–${hi}mm for this ${bw}mm blind.` };
+                        problems++;
+                    } else if (sw < lo || sw > hi) {
+                        b.valanceValidation = { type: 'error', message: `Valance Alert: valance is ${sw}mm but must be 20–25mm larger than the ${bw}mm blind (${lo}–${hi}mm).` };
+                        problems++;
+                    }
+                    continue;
+                }
+
+                let matched = 0, nearest = null;
+                for (let n = 0; n < bq; n++) {
+                    const hit = pool.find(p => !p.used && p.width != null && p.width >= lo && p.width <= hi);
+                    if (hit) { hit.used = true; matched++; }
+                }
+                if (matched >= bq) continue;
+                for (const p of pool) {
+                    if (p.used || p.width == null) continue;
+                    if (nearest == null || Math.abs(p.width - (bw + 22.5)) < Math.abs(nearest - (bw + 22.5))) nearest = p.width;
+                }
+                b.valanceValidation = {
+                    type: 'error',
+                    message: `Valance Alert: no valance sized ${lo}–${hi}mm found for this ${bw}mm blind` +
+                        (bq > 1 ? ` (needs ${bq}, found ${matched})` : '') +
+                        (nearest != null ? ` — nearest unassigned valance is ${nearest}mm.` : ' — no unassigned valances left on the order.')
+                };
+                problems++;
+            }
+
+            const spare = pool.filter(p => !p.used).length;
+            if (problems > 0) {
+                data.valanceValidation = { global: `Valance Alert: the customer order requires valances on ALL blinds (${(data.valanceInstruction.evidence || '').trim() || 'instruction detected'}) — ${problems} blind(s) failed the valance check.` };
+            } else if (blinds.length > 0) {
+                data.valanceValidation = { globalOk: `Valance check passed: all ${blinds.length} blind(s) have a valance 20–25mm larger than the blind.` + (spare > 0 ? ` ${spare} spare valance(s) on the order.` : '') };
+            }
+        }
+
         function validateMotorDependencies(data, motorProperties, tubeProperties, fabricProperties) {
             const motorizedBlinds = (data.lineItems || []).filter(item => {
                 const control = ((item.control1?.blindIQValue || '') + ' ' + (item.control2?.blindIQValue || '')).toLowerCase();

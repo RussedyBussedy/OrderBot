@@ -17,7 +17,13 @@ const cleanVal = v => { const x = biqNorm(v); return /^(no|none|n\/a|na|off|-)$/
 
 // ---------- seed mappings (learned from real BlindIQ exports 116888 / 20112) ----------
 export const BIQ_SEED_MAPPINGS = {
-    blindTypes: { 'element roller sys 40': 25, 'system 40': 25, 'roller blinds': 25, 'roller blind': 25, 'element wood': 24, 'wood venetian': 24, 'curtain ripple': 18, 'double roller blinds': 28, 'double roller': 28 },
+    blindTypes: {
+        'element roller sys 40': 25, 'system 40': 25, 'roller blinds': 25, 'roller blind': 25, 'element wood': 24, 'wood venetian': 24, 'curtain ripple': 18, 'double roller blinds': 28, 'double roller': 28,
+        // shutters & valances — IDs verified against the BlindIQ Blind Type table (Mappings.xlsx, 2026-07-14)
+        'urban hinged shutter': 38, 'urban shutter': 38, 'urban shutters': 38,
+        'altra hinged shutter': 31, 'altra fold shutter': 35,
+        'element valance': 27
+    },
     ranges: { 'edge block': 993, 'urban filter': 1023, '3 screen': 754, 'classic': 408, 'hand drawn': 327 },
     colours: { 'edge block|alabaster': 35, 'urban filter|melody': 2854, '3 screen|ice': 517, 'classic|snow': 686 },
     fixes: { 'reveal': 1, 'face': 2, 'none': -1 },
@@ -26,7 +32,20 @@ export const BIQ_SEED_MAPPINGS = {
     deliveryMethods: { 'courier triton': 3, 'courier': 3 },
     packingTypes: { 'boxed': 2 },
     customers: { 'total blind designs': { customer: 7051, address: 7050, operator: 954 } },
-    fabricSplits: {}, rangesScoped: {}, rangeFormulas: {}, sundries: {}, sundryTypes: {}, variantTemplates: {}
+    fabricSplits: {},
+    // panel/valance ranges verified against the BlindIQ Blind Range table (Mappings.xlsx, 2026-07-14); keys are blindTypeId|range
+    rangesScoped: {
+        '38|1 panel hinged': 943, '38|2 panel hinged': 944, '38|3 panel hinged': 945, '38|4 panel hinged': 946, '38|6 panel hinged': 947,
+        '38|1 panel hinged tier on tier': 948, '38|2 panel hinged tier on tier': 949,
+        '31|1 panel hinged': 632, '31|2 panel hinged': 633, '31|3 panel hinged': 634, '31|4 panel hinged': 785,
+        '31|2 panel double hinged': 703, '31|4 panel double hinged': 704, '31|6 panel double hinged': 705,
+        '31|fixed panel': 752, '31|slide1 panel': 865,
+        '35|2 panel fold': 744, '35|3 panel fold': 745, '35|4 panel fold': 746, '35|5 panel fold': 747, '35|6 panel fold': 748, '35|7 panel fold': 749, '35|8 panel fold': 750,
+        '14|half round valance': 273, '14|linear valance': 503, '14|70mm cassette': 751, '14|70mm cassette grip fit': 1150,
+        '14|new foiled valance': 297, '14|basswood valance': 298, '14|aluminium valance': 729, '14|wood alloy valance': 730, '14|deco rod': 743,
+        '27|linear valance': 596
+    },
+    rangeFormulas: {}, sundries: {}, sundryTypes: {}, variantTemplates: {}
 };
 export const BIQ_MAPPING_CATEGORIES = {
     blindTypes: { label: 'Blind types', xml: 'COI_BlindType_Link' },

@@ -3,361 +3,340 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OrderBot - Document Comparison with Learning</title>
+    <title>OrderBot · Blind Designs</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- BlindIQ XML Converter: spreadsheet + PDF parsing libraries -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=PT+Sans:wght@400;700&family=PT+Serif:wght@400;700&display=swap" rel="stylesheet">
     <style>
-        body {
-            font-family: 'Inter', sans-serif;
+        /* ============ Blind Designs CI — Bosveld (Transitional) ============
+           Paper #f4f3f1 · Ink #3e3e3a · Olive #747655 · Sage #a29d84
+           Teal #8ab599 · Blush #bf8a79 · Grey #8b8a82 · PT Sans / PT Serif */
+        :root {
+            --bd-paper: #f4f3f1; --bd-card: #ffffff; --bd-ink: #3e3e3a;
+            --bd-grey: #8b8a82; --bd-line: #e3e1da; --bd-line-strong: #cfccc2;
+            --bd-olive: #747655; --bd-olive-deep: #5d5f45; --bd-olive-tint: #ecebe2;
+            --bd-sage: #a29d84; --bd-sage-tint: #f0efe8;
+            --bd-teal: #8ab599; --bd-blush: #bf8a79;
         }
+        body {
+            font-family: 'PT Sans', sans-serif;
+            background: var(--bd-paper);
+            color: var(--bd-ink);
+        }
+        .bd-serif { font-family: 'PT Serif', serif; }
+
+        /* Header band */
+        .bd-header { background: var(--bd-ink); color: var(--bd-paper); box-shadow: 0 10px 30px rgba(62,62,58,.22); }
+        .bd-wordmark { font: 700 1.25rem 'PT Sans', sans-serif; letter-spacing: .18em; color: var(--bd-paper); }
+        .bd-tagline { font-size: .625rem; letter-spacing: .38em; color: var(--bd-sage); margin-top: 2px; }
+        .bd-app { font: 700 1.6rem 'PT Serif', serif; color: var(--bd-paper); line-height: 1.1; }
+        .bd-sub { font-size: .78rem; color: var(--bd-line-strong); }
+
+        /* Cards & section furniture */
+        .bd-card { background: var(--bd-card); border: 1px solid var(--bd-line); border-radius: 14px; box-shadow: 0 1px 2px rgba(62,62,58,.05); overflow: hidden; }
+        .bd-overline { font-weight: 700; font-size: .68rem; letter-spacing: .24em; text-transform: uppercase; color: var(--bd-grey); margin: 0 0 .6rem .25rem; }
+        .bd-panel-title { font: 700 1.05rem 'PT Serif', serif; color: var(--bd-ink); }
+        .bd-chip { width: 34px; height: 34px; border-radius: 10px; background: var(--bd-olive-tint); color: var(--bd-olive); display: inline-flex; align-items: center; justify-content: center; flex: none; }
+
+        /* Buttons */
+        .bd-btn-primary { background: var(--bd-olive); color: #fff; font-weight: 700; border-radius: 10px; transition: background .15s ease, transform .1s ease; }
+        .bd-btn-primary:hover:not(:disabled) { background: var(--bd-olive-deep); }
+        .bd-btn-primary:active:not(:disabled) { transform: translateY(1px); }
+        .bd-btn-primary:disabled { background: #d8d6cc; color: #97958a; cursor: not-allowed; }
+        .bd-btn-secondary { background: var(--bd-sage-tint); color: var(--bd-ink); font-weight: 700; border: 1px solid var(--bd-line-strong); border-radius: 10px; transition: background .15s ease; }
+        .bd-btn-secondary:hover { background: var(--bd-olive-tint); border-color: var(--bd-sage); }
+        .bd-btn-ink { background: var(--bd-ink); color: var(--bd-paper); font-weight: 700; border-radius: 10px; }
+        .bd-btn-ink:hover { background: #2e2e2b; }
+
+        input[type="text"], textarea, select {
+            border-color: var(--bd-line-strong) !important;
+        }
+        input[type="text"]:focus, textarea:focus, select:focus {
+            outline: none; border-color: var(--bd-olive) !important;
+            box-shadow: 0 0 0 3px rgba(116,118,85,.18) !important;
+        }
+
+        /* Drop zones */
         .drop-zone {
-            border: 2px dashed #cbd5e1;
-            transition: background-color 0.2s ease-in-out, border-color 0.2s ease-in-out;
+            border: 2px dashed var(--bd-line-strong);
+            background: #fbfaf7;
+            border-radius: 14px;
+            transition: background-color .2s ease, border-color .2s ease;
             min-height: 120px;
         }
-        .drop-zone.drag-over {
-            background-color: #e2e8f0;
-            border-color: #4f46e5;
-        }
-        .file-item, .history-item {
-            animation: fadeIn 0.5s ease-in-out;
-        }
-        .modal-backdrop {
-            animation: fadeIn 0.3s ease-out;
-        }
-        .modal-content {
-             animation: slideInUp 0.4s ease-out;
-        }
-        @keyframes fadeIn {
-            from { opacity: 0; }
-            to { opacity: 1; }
-        }
-        @keyframes slideInUp {
-            from { opacity: 0; transform: translateY(30px) scale(0.98); }
-            to { opacity: 1; transform: translateY(0) scale(1); }
-        }
-        .loader {
-            border: 4px solid #f3f4f6;
-            border-top: 4px solid #4f46e5;
-            border-radius: 50%;
-            width: 40px;
-            height: 40px;
-            animation: spin 1s linear infinite;
-        }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-        .reportable-cell, .reportable-spec {
-            cursor: pointer;
-            position: relative;
-            word-break: break-word;
-        }
-        .reportable-cell:hover {
-            background-color: #eef2ff !important;
-        }
-        .spec-text {
-            cursor: pointer;
-            padding: 2px 4px;
-            border-radius: 4px;
-            transition: background-color 0.2s;
-            display: inline-block;
-        }
-        .spec-text:hover {
-            background-color: rgba(79, 70, 229, 0.1);
-        }
-        .spec-match { color: #166534; }
-        .spec-mismatch { color: #b91c1c; font-weight: 600; }
-        .spec-low-confidence { color: #b45309; }
-        
+        .drop-zone:hover { border-color: var(--bd-sage); }
+        .drop-zone.drag-over { background-color: var(--bd-olive-tint); border-color: var(--bd-olive); }
+        .bd-drop-icon { color: var(--bd-sage); }
+        .drop-zone.drag-over .bd-drop-icon, .drop-zone:hover .bd-drop-icon { color: var(--bd-olive); }
+
+        .file-item, .history-item { animation: fadeIn 0.5s ease-in-out; }
+        .modal-backdrop { animation: fadeIn 0.3s ease-out; }
+        .modal-content { animation: slideInUp 0.4s ease-out; border: 1px solid var(--bd-line); }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes slideInUp { from { opacity: 0; transform: translateY(30px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+
+        .loader { border: 4px solid var(--bd-olive-tint); border-top: 4px solid var(--bd-olive); border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        .reportable-cell, .reportable-spec { cursor: pointer; position: relative; word-break: break-word; }
+        .reportable-cell:hover { background-color: var(--bd-olive-tint) !important; }
+        .spec-text { cursor: pointer; padding: 2px 4px; border-radius: 4px; transition: background-color 0.2s; display: inline-block; }
+        .spec-text:hover { background-color: rgba(116,118,85,0.12); }
+        .spec-match { color: #4e7d62; }
+        .spec-mismatch { color: #a4442c; font-weight: 700; }
+        .spec-low-confidence { color: #96702e; }
+
         .tooltip {
-            position: absolute;
-            bottom: 100%;
-            left: 50%;
-            transform: translateX(-50%);
-            background-color: #1e293b;
-            color: white;
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-size: 0.75rem;
-            white-space: nowrap;
-            opacity: 0;
-            visibility: hidden;
-            transition: opacity 0.2s, visibility 0.2s;
-            z-index: 10;
+            position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%);
+            background-color: var(--bd-ink); color: var(--bd-paper);
+            padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; white-space: nowrap;
+            opacity: 0; visibility: hidden; transition: opacity 0.2s, visibility 0.2s; z-index: 10;
         }
-        .reportable-cell:hover .tooltip, .spec-text:hover .tooltip {
-            opacity: 1;
-            visibility: visible;
-        }
+        .reportable-cell:hover .tooltip, .spec-text:hover .tooltip { opacity: 1; visibility: visible; }
 
-        #feedback-textarea-container {
-            position: relative;
-        }
-        #feedback-image-preview {
-            position: absolute;
-            top: 8px;
-            left: 8px;
-            max-height: 60px;
-            border-radius: 4px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-        }
+        #feedback-textarea-container { position: relative; }
+        #feedback-image-preview { position: absolute; top: 8px; left: 8px; max-height: 60px; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
         #feedback-image-delete {
-            position: absolute;
-            top: 0;
-            left: 0;
-            transform: translate(-50%, -50%);
-            background-color: #4f46e5;
-            color: white;
-            width: 20px;
-            height: 20px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 12px;
-            cursor: pointer;
-            border: 2px solid white;
+            position: absolute; top: 0; left: 0; transform: translate(-50%, -50%);
+            background-color: var(--bd-olive); color: white; width: 20px; height: 20px; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center; font-size: 12px; cursor: pointer; border: 2px solid white;
         }
-        .summary-item-details, .sundry-details {
-            max-height: 0;
-            overflow: hidden;
-            transition: max-height 0.5s ease-in-out;
-        }
+        .summary-item-details, .sundry-details { max-height: 0; overflow: hidden; transition: max-height 0.5s ease-in-out; }
+        .collapsible-content { max-height: 0; overflow: hidden; transition: max-height 0.3s ease-out; }
+        .chevron-icon { transition: transform 0.3s ease-out; color: var(--bd-sage); }
+        .open .chevron-icon { transform: rotate(180deg); color: var(--bd-olive); }
 
-        .collapsible-content {
-            max-height: 0;
-            overflow: hidden;
-            transition: max-height 0.3s ease-out;
-        }
-        .chevron-icon {
-            transition: transform 0.3s ease-out;
-        }
-        .open .chevron-icon {
-            transform: rotate(180deg);
-        }
-
-        /* Toast Notifications */
-        #toast-container {
-            position: fixed;
-            bottom: 1.5rem;
-            right: 1.5rem;
-            z-index: 9999;
-            display: flex;
-            flex-direction: column;
-            gap: 0.5rem;
-            pointer-events: none;
-        }
+        /* Toasts — CI hues */
+        #toast-container { position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 9999; display: flex; flex-direction: column; gap: 0.5rem; pointer-events: none; }
         .toast {
-            display: flex;
-            align-items: flex-start;
-            gap: 0.75rem;
-            padding: 0.75rem 1rem;
-            border-radius: 0.5rem;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-            font-size: 0.875rem;
-            font-weight: 500;
-            max-width: 360px;
-            pointer-events: all;
-            animation: toastIn 0.3s ease-out;
+            display: flex; align-items: flex-start; gap: 0.75rem; padding: 0.75rem 1rem;
+            border-radius: 10px; box-shadow: 0 6px 18px rgba(62,62,58,0.18);
+            font-size: 0.875rem; font-weight: 700; max-width: 360px; pointer-events: all; animation: toastIn 0.3s ease-out;
         }
-        .toast.toast-hiding {
-            animation: toastOut 0.3s ease-in forwards;
-        }
-        .toast-success { background: #dcfce7; color: #166534; border-left: 4px solid #16a34a; }
-        .toast-error   { background: #fee2e2; color: #991b1b; border-left: 4px solid #dc2626; }
-        .toast-warning { background: #fef9c3; color: #854d0e; border-left: 4px solid #ca8a04; }
-        .toast-info    { background: #dbeafe; color: #1e40af; border-left: 4px solid #2563eb; }
-        @keyframes toastIn {
-            from { opacity: 0; transform: translateX(40px); }
-            to   { opacity: 1; transform: translateX(0); }
-        }
-        @keyframes toastOut {
-            from { opacity: 1; transform: translateX(0); }
-            to   { opacity: 0; transform: translateX(40px); }
-        }
+        .toast.toast-hiding { animation: toastOut 0.3s ease-in forwards; }
+        .toast-success { background: #e6efe8; color: #3f6b52; border-left: 4px solid var(--bd-teal); }
+        .toast-error   { background: #f4e3dd; color: #8a4a38; border-left: 4px solid var(--bd-blush); }
+        .toast-warning { background: #f2ecdb; color: #7a5f21; border-left: 4px solid #c9a35a; }
+        .toast-info    { background: var(--bd-olive-tint); color: var(--bd-olive-deep); border-left: 4px solid var(--bd-olive); }
+        @keyframes toastIn { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
+        @keyframes toastOut { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(40px); } }
 
-        /* Status badges in report cells */
-        .status-badge {
-            display: inline-block;
-            font-size: 9px;
-            font-weight: 700;
-            letter-spacing: 0.05em;
-            text-transform: uppercase;
-            padding: 1px 4px;
-            border-radius: 3px;
-            line-height: 1.4;
-        }
+        .status-badge { display: inline-block; font-size: 9px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; padding: 1px 4px; border-radius: 3px; line-height: 1.4; }
 
-        /* Top progress bar */
-        #top-progress-bar {
-            position: fixed; top: 0; left: 0; height: 3px; width: 0;
-            background: linear-gradient(90deg, #4f46e5, #818cf8);
-            z-index: 10000; transition: width 0.4s ease;
-        }
+        #top-progress-bar { position: fixed; top: 0; left: 0; height: 3px; width: 0; background: var(--bd-olive); z-index: 10000; transition: width 0.4s ease; }
 
-        /* Skeleton loading */
-        .skeleton-line {
-            background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%);
-            background-size: 200% 100%;
-            animation: shimmer 1.5s infinite;
-            border-radius: 4px;
-        }
-        @keyframes shimmer {
-            from { background-position: 200% 0; }
-            to   { background-position: -200% 0; }
-        }
+        .skeleton-line { background: linear-gradient(90deg, #e9e7df 25%, #f4f3ee 50%, #e9e7df 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; border-radius: 4px; }
+        @keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
 
+        /* ---- Retheme of Tailwind utilities used by JS-generated markup ----
+           (keeps the JS untouched: indigo → olive, slate chrome → warm greys) */
+        .bg-indigo-600 { background-color: var(--bd-olive) !important; }
+        .hover\:bg-indigo-700:hover { background-color: var(--bd-olive-deep) !important; }
+        .bg-indigo-100, .bg-indigo-50 { background-color: var(--bd-olive-tint) !important; }
+        .hover\:bg-indigo-200:hover { background-color: #e2e0d2 !important; }
+        .text-indigo-700, .text-indigo-600, .text-indigo-500 { color: var(--bd-olive) !important; }
+        .focus\:ring-indigo-500:focus { --tw-ring-color: var(--bd-sage) !important; }
+        .focus\:border-indigo-500:focus { border-color: var(--bd-olive) !important; }
+        .bg-slate-600 { background-color: var(--bd-ink) !important; }
+        .hover\:bg-slate-700:hover { background-color: #2e2e2b !important; }
+        .bg-slate-200 { background-color: var(--bd-sage-tint) !important; }
+        .hover\:bg-slate-300:hover { background-color: var(--bd-olive-tint) !important; }
+        .bg-slate-50 { background-color: #faf9f6 !important; }
+        .bg-slate-100 { background-color: #f0efe9 !important; }
+        .border-slate-200, .border-slate-300 { border-color: var(--bd-line) !important; }
+        .divide-slate-200 > :not([hidden]) ~ :not([hidden]) { border-color: var(--bd-line) !important; }
+        .text-slate-800, .text-slate-900 { color: var(--bd-ink) !important; }
+        .text-slate-500, .text-slate-600, .text-slate-700 { color: #6d6c63 !important; }
+        .text-slate-400 { color: var(--bd-grey) !important; }
+        .bg-green-100 { background-color: #e6efe8 !important; }
+        .text-green-700, .text-green-800 { color: #3f6b52 !important; }
+        .hover\:bg-green-200:hover { background-color: #d8e7dd !important; }
+        .bg-white { background-color: var(--bd-card) !important; }
+        .rounded-lg { border-radius: 12px !important; }
+        .shadow-sm { box-shadow: 0 1px 2px rgba(62,62,58,.06) !important; }
+        .shadow-md, .shadow-xl { box-shadow: 0 10px 30px rgba(62,62,58,.14) !important; }
     </style>
 </head>
-<body class="bg-slate-50 text-slate-800">
+<body>
 
 <div id="top-progress-bar"></div>
 
     <div class="container mx-auto p-4 md:p-8">
-        <header class="sticky top-0 z-10 bg-white p-4 rounded-lg mb-8 flex items-center justify-between shadow-sm">
+        <header class="bd-header sticky top-0 z-10 p-4 md:px-6 rounded-2xl mb-10 flex items-center justify-between">
             <div class="flex items-center gap-4">
-                <svg class="w-12 h-12 text-slate-800" viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <circle cx="30" cy="30" r="28" stroke="currentColor" stroke-width="2.5"/>
-                      <path d="M18 20 H42" stroke="currentColor" stroke-width="2.5"/>
-                      <path d="M18 25 H42" stroke="currentColor" stroke-width="2.5"/>
-                      <path d="M18 30 H42" stroke="currentColor" stroke-width="2.5"/>
-                      <path d="M18 35 H42" stroke="currentColor" stroke-width="2.5"/>
-                      <path d="M18 40 H42" stroke="currentColor" stroke-width="2.5"/>
+                <svg class="w-12 h-12" viewBox="0 0 64 64" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+                    <defs><clipPath id="bd-logo-clip"><circle cx="32" cy="32" r="29"/></clipPath></defs>
+                    <circle cx="32" cy="32" r="29" fill="#f4f3f1"/>
+                    <g clip-path="url(#bd-logo-clip)" fill="#3e3e3a">
+                        <path d="M36 1 H62 V63 H36 L40 32 Z"/>
+                        <g transform="rotate(-14 32 32)">
+                            <rect x="0" y="7"  width="40" height="5.4"/>
+                            <rect x="0" y="16" width="40" height="5.4"/>
+                            <rect x="0" y="25" width="40" height="5.4"/>
+                            <rect x="0" y="34" width="40" height="5.4"/>
+                            <rect x="0" y="43" width="40" height="5.4"/>
+                            <rect x="0" y="52" width="40" height="5.4"/>
+                        </g>
+                    </g>
                 </svg>
                 <div>
-                      <h1 class="text-2xl font-bold text-slate-800 tracking-wider">BLIND DESIGNS</h1>
-                      <p class="text-xs text-slate-500 tracking-[0.25em]">REFLECT YOUR STYLE</p>
+                    <h1 class="bd-wordmark">BLIND DESIGNS</h1>
+                    <p class="bd-tagline">REFLECT YOUR STYLE</p>
                 </div>
             </div>
             <div class="text-right">
-                <h2 class="text-2xl font-bold text-slate-900">OrderBot</h2>
-                <p class="text-sm text-slate-600">Comparison Tool</p>
+                <h2 class="bd-app">OrderBot</h2>
+                <p class="bd-sub">AI order checking</p>
             </div>
         </header>
 
         <main>
+            <!-- ============ 1 · Check an order ============ -->
+            <p class="bd-overline">Check an order</p>
+            <div id="upload-section" class="bd-card p-5 md:p-6 mb-10">
+                <div id="upload-pairs-container" class="space-y-6">
+                </div>
+                <div class="mt-6 flex justify-center">
+                    <button id="add-pair-btn" class="bd-btn-secondary py-2 px-5">+ Add another order</button>
+                </div>
+                <div class="text-center mt-8 mb-2">
+                    <button id="compare-btn" class="bd-btn-primary text-lg py-3 px-12 shadow-md" disabled>Run comparisons</button>
+                </div>
+            </div>
+
+            <div id="report-section" class="bd-card p-6 md:p-8 mb-10 hidden">
+                <div id="report-actions" class="flex justify-between items-center mb-6 border-b border-slate-200 pb-4">
+                     <h2 class="bd-serif text-2xl font-bold">Comparison summary</h2>
+                     <button id="new-comparison-btn" class="bd-btn-secondary py-2 px-4 hidden">Start new comparison</button>
+                </div>
+                <div id="report-content"></div>
+            </div>
+
+            <!-- ============ 2 · Look things up ============ -->
+            <p class="bd-overline">Look things up</p>
+            <div id="history-section" class="bd-card p-5 md:p-6 mb-4">
+                <div class="flex items-center gap-3 mb-4">
+                    <span class="bd-chip"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 13.5"/></svg></span>
+                    <h3 class="bd-panel-title">Comparison history</h3>
+                </div>
+                <div class="flex flex-col sm:flex-row gap-2">
+                    <input type="text" id="history-search-input" class="w-full sm:w-auto flex-grow p-2 border border-slate-300 rounded-md" placeholder="Search by order number">
+                    <button id="history-search-btn" class="bd-btn-ink py-2 px-6">Find history</button>
+                    <button id="clear-history-btn" class="bg-red-500 text-white font-bold py-2 px-6 rounded-lg hover:bg-red-600 transition-colors hidden">Clear</button>
+                </div>
+                <div id="history-results" class="mt-4 space-y-4"></div>
+                <div id="history-load-more-container" class="mt-4 text-center hidden">
+                    <button id="history-load-more-btn" class="bd-btn-secondary py-2 px-8">Load more</button>
+                </div>
+            </div>
+
+            <div id="biq-converter-section" class="bd-card mb-10">
+                <div id="biq-converter-header" class="flex justify-between items-center p-4 cursor-pointer">
+                    <div class="flex items-center gap-3">
+                        <span class="bd-chip"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 2 21 6 17 10"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 22 3 18 7 14"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg></span>
+                        <h3 class="bd-panel-title">BlindIQ XML converter <span class="text-sm font-normal text-slate-400 bd-serif-off">— customer order → import-ready XML, with torque &amp; spec checks</span></h3>
+                    </div>
+                    <svg class="chevron-icon w-6 h-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg>
+                </div>
+                <div id="biq-converter-content" class="collapsible-content"></div>
+            </div>
+
+            <!-- ============ 3 · Reference data & rules ============ -->
+            <p class="bd-overline">Reference data &amp; rules</p>
             <div class="space-y-4 mb-8">
-                <div class="bg-white rounded-lg shadow-sm overflow-hidden">
+                <div class="bd-card">
                     <div id="guidelines-header" class="flex justify-between items-center p-4 cursor-pointer">
-                        <h3 class="font-bold text-lg text-slate-800">AI Guidelines</h3>
-                        <svg class="chevron-icon w-6 h-6 text-slate-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg>
+                        <div class="flex items-center gap-3">
+                            <span class="bd-chip"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span>
+                            <h3 class="bd-panel-title">AI guidelines</h3>
+                        </div>
+                        <svg class="chevron-icon w-6 h-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg>
                     </div>
                     <div id="guidelines-content" class="collapsible-content">
                         <div class="p-4 border-t border-slate-200">
-                             <button id="add-guideline-btn" class="w-full bg-indigo-100 text-indigo-700 font-bold py-2 px-4 rounded-lg hover:bg-indigo-200 transition-colors text-sm mb-3">Add / Unify Guideline/s</button>
+                             <button id="add-guideline-btn" class="w-full bg-indigo-100 text-indigo-700 font-bold py-2 px-4 rounded-lg hover:bg-indigo-200 transition-colors text-sm mb-3">Add / unify guideline/s</button>
                             <div id="guidelines-list" class="text-sm text-slate-600 space-y-2">
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <div id="fabric-properties-section" class="bg-white rounded-lg shadow-sm overflow-hidden">
+                <div id="fabric-properties-section" class="bd-card">
                     <div id="fabric-properties-header" class="flex justify-between items-center p-4 cursor-pointer">
-                        <h3 class="font-bold text-lg text-slate-800">Fabric Properties</h3>
-                        <svg class="chevron-icon w-6 h-6 text-slate-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg>
+                        <div class="flex items-center gap-3">
+                            <span class="bd-chip"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 22 8.5 12 15 2 8.5"/><polyline points="2 15.5 12 22 22 15.5"/></svg></span>
+                            <h3 class="bd-panel-title">Fabric properties</h3>
+                        </div>
+                        <svg class="chevron-icon w-6 h-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg>
                     </div>
                      <div id="fabric-properties-content" class="collapsible-content">
                         <div class="p-4 border-t border-slate-200">
-                             <label id="fabric-csv-drop-zone" class="drop-zone !min-h-0 p-4 mb-3 rounded-lg flex flex-col items-center justify-center cursor-pointer bg-white shadow-sm text-center">
-                                <h3 class="text-base font-semibold text-slate-700">Upload CSV to Replace All</h3>
-                                <p class="text-xs text-slate-500">Drag & drop new CSV here, or click to upload</p>
+                             <label id="fabric-csv-drop-zone" class="drop-zone !min-h-0 p-4 mb-3 rounded-lg flex flex-col items-center justify-center cursor-pointer text-center">
+                                <h3 class="text-base font-semibold text-slate-700">Upload CSV to replace all</h3>
+                                <p class="text-xs text-slate-500">Drag &amp; drop new CSV here, or click to upload</p>
                                 <input type="file" id="fabric-csv-upload" class="hidden" accept=".csv">
                             </label>
                             <div id="fabric-properties-list" class="space-y-2">
                             </div>
                              <button id="add-fabric-btn" class="w-full mt-4 bg-green-100 text-green-700 font-bold py-2 px-4 rounded-lg hover:bg-green-200 transition-colors text-sm">
-                                Add New Fabric
+                                Add new fabric
                             </button>
                         </div>
                     </div>
                 </div>
 
-                <div id="motor-properties-section" class="bg-white rounded-lg shadow-sm overflow-hidden">
+                <div id="motor-properties-section" class="bd-card">
                     <div id="motor-properties-header" class="flex justify-between items-center p-4 cursor-pointer">
-                        <h3 class="font-bold text-lg text-slate-800">Motor Properties</h3>
-                        <svg class="chevron-icon w-6 h-6 text-slate-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg>
+                        <div class="flex items-center gap-3">
+                            <span class="bd-chip"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span>
+                            <h3 class="bd-panel-title">Motor properties</h3>
+                        </div>
+                        <svg class="chevron-icon w-6 h-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg>
                     </div>
                      <div id="motor-properties-content" class="collapsible-content">
                         <div class="p-4 border-t border-slate-200">
-                             <label id="motor-csv-drop-zone" class="drop-zone !min-h-0 p-4 mb-3 rounded-lg flex flex-col items-center justify-center cursor-pointer bg-white shadow-sm text-center">
-                                <h3 class="text-base font-semibold text-slate-700">Upload CSV to Replace All</h3>
-                                <p class="text-xs text-slate-500">Drag & drop new CSV here, or click to upload</p>
+                             <label id="motor-csv-drop-zone" class="drop-zone !min-h-0 p-4 mb-3 rounded-lg flex flex-col items-center justify-center cursor-pointer text-center">
+                                <h3 class="text-base font-semibold text-slate-700">Upload CSV to replace all</h3>
+                                <p class="text-xs text-slate-500">Drag &amp; drop new CSV here, or click to upload</p>
                                 <input type="file" id="motor-csv-upload" class="hidden" accept=".csv">
                             </label>
                             <div id="motor-properties-list" class="space-y-2">
                             </div>
                              <button id="add-motor-btn" class="w-full mt-4 bg-green-100 text-green-700 font-bold py-2 px-4 rounded-lg hover:bg-green-200 transition-colors text-sm">
-                                Add New Motor
+                                Add new motor
                             </button>
                         </div>
                     </div>
                 </div>
-                
-                <div id="tube-properties-section" class="bg-white rounded-lg shadow-sm overflow-hidden">
+
+                <div id="tube-properties-section" class="bd-card">
                     <div id="tube-properties-header" class="flex justify-between items-center p-4 cursor-pointer">
-                        <h3 class="font-bold text-lg text-slate-800">Tube Properties</h3>
-                        <svg class="chevron-icon w-6 h-6 text-slate-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg>
+                        <div class="flex items-center gap-3">
+                            <span class="bd-chip"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="5" cy="12" rx="3" ry="7"/><path d="M5 5h11a3 7 0 0 1 0 14H5"/></svg></span>
+                            <h3 class="bd-panel-title">Tube properties</h3>
+                        </div>
+                        <svg class="chevron-icon w-6 h-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg>
                     </div>
                      <div id="tube-properties-content" class="collapsible-content">
                         <div class="p-4 border-t border-slate-200">
-                             <label id="tube-csv-drop-zone" class="drop-zone !min-h-0 p-4 mb-3 rounded-lg flex flex-col items-center justify-center cursor-pointer bg-white shadow-sm text-center">
-                                <h3 class="text-base font-semibold text-slate-700">Upload CSV to Replace All</h3>
-                                <p class="text-xs text-slate-500">Drag & drop new CSV here, or click to upload</p>
+                             <label id="tube-csv-drop-zone" class="drop-zone !min-h-0 p-4 mb-3 rounded-lg flex flex-col items-center justify-center cursor-pointer text-center">
+                                <h3 class="text-base font-semibold text-slate-700">Upload CSV to replace all</h3>
+                                <p class="text-xs text-slate-500">Drag &amp; drop new CSV here, or click to upload</p>
                                 <input type="file" id="tube-csv-upload" class="hidden" accept=".csv">
                             </label>
                             <div id="tube-properties-list" class="space-y-2">
                             </div>
                              <button id="add-tube-btn" class="w-full mt-4 bg-green-100 text-green-700 font-bold py-2 px-4 rounded-lg hover:bg-green-200 transition-colors text-sm">
-                                Add New Tube
+                                Add new tube
                             </button>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <div id="history-section" class="mb-8 bg-white p-6 rounded-lg shadow-sm">
-                <h3 class="font-bold text-lg text-slate-800 mb-3">Comparison History</h3>
-                <div class="flex flex-col sm:flex-row gap-2">
-                    <input type="text" id="history-search-input" class="w-full sm:w-auto flex-grow p-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" placeholder="Search by Order Number">
-                    <button id="history-search-btn" class="bg-slate-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-slate-700 transition-colors">Find History</button>
-                    <button id="clear-history-btn" class="bg-red-500 text-white font-bold py-2 px-6 rounded-lg hover:bg-red-600 transition-colors hidden">Clear</button>
-                </div>
-                <div id="history-results" class="mt-4 space-y-4"></div>
-                <div id="history-load-more-container" class="mt-4 text-center hidden">
-                    <button id="history-load-more-btn" class="bg-slate-200 text-slate-700 font-bold py-2 px-8 rounded-lg hover:bg-slate-300 transition-colors">Load More</button>
-                </div>
-            </div>
-
-            <div id="biq-converter-section" class="mb-8 bg-white rounded-lg shadow-sm overflow-hidden">
-                <div id="biq-converter-header" class="flex justify-between items-center p-4 cursor-pointer">
-                    <h3 class="font-bold text-lg text-slate-800">BlindIQ XML Converter <span class="text-sm font-normal text-slate-400">— customer order → import-ready XML, with torque & spec checks</span></h3>
-                    <svg class="chevron-icon w-6 h-6 text-slate-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg>
-                </div>
-                <div id="biq-converter-content" class="collapsible-content"></div>
-            </div>
-
-            <div id="upload-section">
-                <div id="upload-pairs-container" class="space-y-6">
-                </div>
-                <div class="mt-6 flex justify-center">
-                    <button id="add-pair-btn" class="bg-slate-200 text-slate-800 font-bold py-2 px-4 rounded-lg hover:bg-slate-300 transition-colors">+ Add Another Order</button>
-                </div>
-                <div class="text-center mt-8 mb-8">
-                    <button id="compare-btn" class="bg-indigo-600 text-white font-bold py-3 px-8 rounded-lg shadow-md hover:bg-indigo-700 disabled:bg-slate-300 disabled:cursor-not-allowed transition-colors" disabled>Run Comparisons</button>
-                </div>
-            </div>
-
-            <div id="report-section" class="bg-white rounded-lg shadow-md p-6 md:p-8 hidden">
-                <div id="report-actions" class="flex justify-between items-center mb-6 border-b pb-4">
-                     <h2 class="text-2xl font-bold text-slate-900">Comparison Summary</h2>
-                     <button id="new-comparison-btn" class="bg-slate-200 text-slate-800 font-bold py-2 px-4 rounded-lg hover:bg-slate-300 transition-colors hidden">Start New Comparison</button>
-                </div>
-                <div id="report-content"></div>
-            </div>
+            <p class="text-center text-xs mb-6" style="color: var(--bd-grey); letter-spacing: .08em;">BLIND DESIGNS · REFLECT YOUR STYLE</p>
         </main>
     </div>
 
@@ -367,34 +346,34 @@
     <!-- Modals -->
     <div id="guideline-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden items-center justify-center p-4 modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="guideline-modal-title">
         <div class="modal-content bg-white rounded-lg shadow-xl w-full max-w-lg">
-             <div class="p-6 border-b"><h3 id="guideline-modal-title" class="text-xl font-semibold text-slate-800">Add & Consolidate Guideline/s</h3><p class="text-sm text-slate-500">The AI will actively integrate this into the master list to prevent logic conflicts.</p></div>
-             <div class="p-6"><label for="guideline-input" class="block text-sm font-medium text-slate-700 mb-2">Describe the new rule(s):</label><textarea id="guideline-input" rows="4" class="w-full p-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" placeholder="e.g., 1. If the location is 'Kitchen', the material must be water-resistant. 2. All shutter orders must specify a 'Rebate' type."></textarea></div>
-             <div class="px-6 py-4 bg-slate-50 rounded-b-lg flex justify-end gap-3"><button id="cancel-guideline-btn" class="bg-white text-slate-700 font-semibold py-2 px-4 rounded-md border border-slate-300 hover:bg-slate-100">Cancel</button><button id="save-guideline-btn" class="bg-indigo-600 text-white font-bold py-2 px-4 rounded-md hover:bg-indigo-700">Integrate Guideline/s</button></div>
+             <div class="p-6 border-b border-slate-200"><h3 id="guideline-modal-title" class="bd-serif text-xl font-bold text-slate-800">Add &amp; consolidate guideline/s</h3><p class="text-sm text-slate-500">The AI will actively integrate this into the master list to prevent logic conflicts.</p></div>
+             <div class="p-6"><label for="guideline-input" class="block text-sm font-medium text-slate-700 mb-2">Describe the new rule(s):</label><textarea id="guideline-input" rows="4" class="w-full p-2 border border-slate-300 rounded-md" placeholder="e.g., 1. If the location is 'Kitchen', the material must be water-resistant. 2. All shutter orders must specify a 'Rebate' type."></textarea></div>
+             <div class="px-6 py-4 bg-slate-50 rounded-b-lg flex justify-end gap-3"><button id="cancel-guideline-btn" class="bg-white text-slate-700 font-semibold py-2 px-4 rounded-md border border-slate-300 hover:bg-slate-100">Cancel</button><button id="save-guideline-btn" class="bd-btn-primary py-2 px-4">Integrate guideline/s</button></div>
         </div>
     </div>
 
     <div id="feedback-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden items-center justify-center p-4 modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="feedback-modal-title">
         <div class="modal-content bg-white rounded-lg shadow-xl w-full max-w-lg">
-            <div class="p-6 border-b"><h3 id="feedback-modal-title" class="text-xl font-semibold text-slate-800">Report an Error</h3><p class="text-sm text-slate-500">Help OrderBot learn by explaining what it got wrong.</p></div>
+            <div class="p-6 border-b border-slate-200"><h3 id="feedback-modal-title" class="bd-serif text-xl font-bold text-slate-800">Report an error</h3><p class="text-sm text-slate-500">Help OrderBot learn by explaining what it got wrong.</p></div>
             <div class="p-6 space-y-4">
-                <div class="bg-slate-50 p-4 rounded-md"><h4 class="font-semibold text-slate-700">Incorrect Data:</h4><pre id="incorrect-item-details" class="text-sm text-slate-600 whitespace-pre-wrap font-mono"></pre></div>
+                <div class="bg-slate-50 p-4 rounded-md"><h4 class="font-semibold text-slate-700">Incorrect data:</h4><pre id="incorrect-item-details" class="text-sm text-slate-600 whitespace-pre-wrap font-mono"></pre></div>
                 <div id="feedback-textarea-container">
                     <label for="feedback-explanation" class="block text-sm font-medium text-slate-700 mb-2">What is the correct interpretation? (You can paste an image)</label>
                     <div id="feedback-image-container" class="hidden relative w-max">
                         <img id="feedback-image-preview" src="" alt="Pasted snippet">
                         <div id="feedback-image-delete" title="Remove image">&times;</div>
                     </div>
-                    <textarea id="feedback-explanation" rows="4" class="w-full p-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" placeholder="e.g., The AI misread the handwritten '5' as an 'S'. The value should be 1500mm, making it a MATCH."></textarea>
+                    <textarea id="feedback-explanation" rows="4" class="w-full p-2 border border-slate-300 rounded-md" placeholder="e.g., The AI misread the handwritten '5' as an 'S'. The value should be 1500mm, making it a MATCH."></textarea>
                 </div>
             </div>
-            <div class="px-6 py-4 bg-slate-50 rounded-b-lg flex justify-end gap-3"><button id="cancel-feedback-btn" class="bg-white text-slate-700 font-semibold py-2 px-4 rounded-md border border-slate-300 hover:bg-slate-100">Cancel</button><button id="submit-feedback-btn" class="bg-indigo-600 text-white font-bold py-2 px-4 rounded-md hover:bg-indigo-700">Submit Feedback</button></div>
+            <div class="px-6 py-4 bg-slate-50 rounded-b-lg flex justify-end gap-3"><button id="cancel-feedback-btn" class="bg-white text-slate-700 font-semibold py-2 px-4 rounded-md border border-slate-300 hover:bg-slate-100">Cancel</button><button id="submit-feedback-btn" class="bd-btn-primary py-2 px-4">Submit feedback</button></div>
         </div>
     </div>
 
     <div id="confirm-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden items-center justify-center p-4 modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="confirm-modal-title">
         <div class="modal-content bg-white rounded-lg shadow-xl w-full max-w-sm">
             <div class="p-6 text-center">
-                <h3 id="confirm-modal-title" class="text-lg font-semibold text-slate-800">Are you sure?</h3>
+                <h3 id="confirm-modal-title" class="bd-serif text-lg font-bold text-slate-800">Are you sure?</h3>
                 <p id="confirm-modal-body" class="text-sm text-slate-500 mt-2">This action cannot be undone.</p>
             </div>
             <div class="px-6 py-4 bg-slate-50 rounded-b-lg flex justify-center gap-3">
@@ -405,20 +384,22 @@
     </div>
 
     <template id="upload-pair-template">
-        <div class="upload-pair border-t-2 pt-6">
+        <div class="upload-pair border-t-2 border-slate-200 pt-6">
             <div class="grid md:grid-cols-2 gap-8">
-                <div class="drop-zone rounded-lg p-4 text-center cursor-pointer bg-white shadow-sm">
+                <div class="drop-zone p-5 text-center cursor-pointer">
                     <div class="flex flex-col items-center justify-center h-full">
-                        <h3 class="text-lg font-semibold text-slate-700">Customer Order(s)</h3>
-                        <p class="text-sm text-slate-500">Drag & drop or click</p>
+                        <svg class="bd-drop-icon mb-2" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                        <h3 class="text-lg font-bold text-slate-700 bd-serif">Customer order(s)</h3>
+                        <p class="text-sm text-slate-500">Drag &amp; drop or click</p>
                         <input type="file" class="hidden customer-file-input" multiple accept=".pdf,.jpg,.jpeg,.png">
                     </div>
                     <ul class="mt-2 text-left customer-file-list"></ul>
                 </div>
-                <div class="drop-zone rounded-lg p-4 text-center cursor-pointer bg-white shadow-sm">
+                <div class="drop-zone p-5 text-center cursor-pointer">
                     <div class="flex flex-col items-center justify-center h-full">
-                        <h3 class="text-lg font-semibold text-slate-700">Blind IQ Order(s)</h3>
-                        <p class="text-sm text-slate-500">Drag & drop or click</p>
+                        <svg class="bd-drop-icon mb-2" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                        <h3 class="text-lg font-bold text-slate-700 bd-serif">Blind IQ order(s)</h3>
+                        <p class="text-sm text-slate-500">Drag &amp; drop or click</p>
                         <input type="file" class="hidden blindiq-file-input" multiple accept=".pdf,.jpg,.jpeg,.png">
                     </div>
                     <ul class="mt-2 text-left blindiq-file-list"></ul>

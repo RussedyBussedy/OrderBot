@@ -9,7 +9,7 @@ import {
     biqNorm, biqLc, biqResolve, biqResolveColour, biqBlankOrder, biqBlankItem,
     biqParseDate, biqComputeControlDrop, biqTemplateFor, biqSetVar,
     biqSplitFabric, biqNeedsSplit, biqReSplitFabrics,
-    biqResolveRange, biqRangeNamesFor, biqComputeControlDropV2, biqResolveSundry, biqRecomputeControlDrops, biqApplyCustomerDefaults, biqVariantSpec, biqMergeTemplate, biqTemplateFor2, biqAssignSundryCodes, biqResolveCustomer, biqCanonicalCustomerName,
+    biqResolveRange, biqRangeNamesFor, biqComputeControlDropV2, biqResolveSundry, biqRecomputeControlDrops, biqApplyCustomerDefaults, biqVariantSpec, biqMergeTemplate, biqTemplateFor2, biqAssignSundryCodes, biqResolveCustomer, biqSuggestCustomer, biqCanonicalCustomerName,
     biqBuildDiscernment, BIQ_DISCERN_SCHEMA, biqBuildDiscernPrompt, biqApplyDiscernment, biqAcceptSuggestion, biqLearnFromAI,
     biqApplyShutterConfig, biqApplyOptionDefaults, biqFoldOptionSynonyms, biqApplyBracketPairs, biqEmittedVariants, biqCopyOptions, biqInferControls, biqCanonicalize,
     biqStampOriginals, biqApplyFormatProfile, biqLearnFormat,
@@ -324,7 +324,9 @@ function renderCustomerTag() {
     $('biq-custtag').innerHTML = order.customer
         ? (r.known
             ? `<span class="biq-tag biq-tag-ok" data-biq-assign='${escH(JSON.stringify(['customers', order.customer]))}'>✓ cust ${r.entry.customer} / addr ${r.entry.address}${r.entry.operator ? ' / op ' + r.entry.operator : ''}</span>`
-            : `<span class="biq-tag biq-tag-miss" data-biq-assign='${escH(JSON.stringify(['customers', order.customer]))}'>? assign BlindIQ customer IDs</span>`)
+            // near miss (letterhead trading name vs registered name) — name it so the capturer
+            // confirms in one click instead of hunting for it
+            : `<span class="biq-tag biq-tag-miss" data-biq-assign='${escH(JSON.stringify(['customers', order.customer]))}'>? assign BlindIQ customer IDs${(() => { const s = biqSuggestCustomer(MAPS, order.customer); return s ? ' — did you mean "' + escH(biqCanonicalCustomerName(MAPS, s) || s) + '"?' : ''; })()}</span>`)
         : '';
     const dm = biqResolve(MAPS, 'deliveryMethods', order.deliveryMethod);
     $('biq-delmtag').innerHTML = order.deliveryMethod ? idTag(dm, 'deliveryMethods', order.deliveryMethod) : '';
@@ -354,7 +356,9 @@ function renderItems() {
             rc = biqResolveColour(MAPS, it.range, it.colour), rf = biqResolve(MAPS, 'fixes', it.fix),
             r1 = biqResolve(MAPS, 'control1', it.control1), r2 = biqResolve(MAPS, 'control2', it.control2);
         const DL = { blindType: 'biq-dl-bt', fix: 'biq-dl-fix', control1: 'biq-dl-c1', control2: 'biq-dl-c2' };
-        const inp = (k, v, cls, mw) => `<input class="biq-in ${cls || ''}" style="min-width:${mw || 60}px" value="${escH(v)}" data-biq-item="${i}" data-biq-field="${k}"${DL[k] ? ` list="${DL[k]}"` : ''}>`;
+        // column widths now come from the table's colgroup, so inputs must not carry a min-width
+        // of their own — that is what used to push the table wider than the screen.
+        const inp = (k, v, cls) => `<input class="biq-in ${cls || ''}" value="${escH(v)}" data-biq-item="${i}" data-biq-field="${k}"${DL[k] ? ` list="${DL[k]}"` : ''}>`;
         const rangeTag = biqNeedsSplit(MAPS, it)
             ? `<span class="biq-tag biq-tag-miss" data-biq-split="${i}">✂ split</span>`
             : prodTag(i,'range',rr);
@@ -401,10 +405,10 @@ function renderItems() {
     tb.innerHTML = html || '<tr><td colspan="13" class="text-slate-400 p-3">No items — drop an order file above or add an item.</td></tr>';
     const sb = $('biq-sundryrows'); let sh = '';
     order.sundries.forEach((s, i) => {
-        sh += `<tr><td><input class="biq-in" style="min-width:40px" value="${escH(s.code)}" data-biq-sundry="${i}" data-biq-field="code"></td>`
-            + `<td><input class="biq-in" style="min-width:40px" value="${escH(s.qty)}" data-biq-sundry="${i}" data-biq-field="qty"></td>`
-            + `<td><input class="biq-in" style="min-width:60px" value="${escH(s.type)}" data-biq-sundry="${i}" data-biq-field="type" placeholder="e.g. 8"></td>`
-            + `<td><input class="biq-in" style="min-width:60px" value="${escH(s.sundry)}" data-biq-sundry="${i}" data-biq-field="sundry" placeholder="e.g. 1897"></td>`
+        sh += `<tr><td><input class="biq-in" value="${escH(s.code)}" data-biq-sundry="${i}" data-biq-field="code"></td>`
+            + `<td><input class="biq-in" value="${escH(s.qty)}" data-biq-sundry="${i}" data-biq-field="qty"></td>`
+            + `<td><input class="biq-in" value="${escH(s.type)}" data-biq-sundry="${i}" data-biq-field="type" placeholder="e.g. 8"></td>`
+            + `<td><input class="biq-in" value="${escH(s.sundry)}" data-biq-sundry="${i}" data-biq-field="sundry" placeholder="e.g. 1897"></td>`
             + `<td><input class="biq-in w-full" value="${escH(s.notes)}" data-biq-sundry="${i}" data-biq-field="notes"></td>`
             + `<td class="whitespace-nowrap"><button class="biq-btn-sm" data-biq-sundrysearch="${i}" title="Search the BlindIQ sundries database">🔍</button> <button class="biq-btn-sm biq-btn-danger" data-biq-delsundry="${i}">✕</button></td></tr>`;
     });
@@ -953,9 +957,15 @@ function bindEvents() {
 function injectMarkup() {
     const css = `<style id="biq-css">
 #biq-converter-content .biq-in{padding:4px 6px;border:1px solid #cbd5e1;border-radius:5px;font-size:12.5px}
-#biq-converter-content table.biq-items{width:100%;border-collapse:collapse;font-size:12px}
-#biq-converter-content table.biq-items th{background:#f1f5f9;color:#475569;text-align:left;padding:5px 5px;border-bottom:2px solid #e2e8f0;font-size:10.5px;text-transform:uppercase;white-space:nowrap}
-#biq-converter-content table.biq-items td{border-bottom:1px solid #f1f5f9;padding:3px 3px;vertical-align:top}
+/* Fixed layout + a colgroup of percentage widths: the table always fits its container, so the
+   item list never scrolls sideways and the flags, fields and "opts" button stay on one screen. */
+#biq-converter-content table.biq-items{width:100%;table-layout:fixed;border-collapse:collapse;font-size:12px}
+#biq-converter-content table.biq-items th{background:#f1f5f9;color:#475569;text-align:left;padding:5px 4px;border-bottom:2px solid #e2e8f0;font-size:10.5px;text-transform:uppercase;white-space:normal;overflow-wrap:anywhere;line-height:1.15}
+#biq-converter-content table.biq-items td{border-bottom:1px solid #f1f5f9;padding:3px 4px;vertical-align:top;overflow-wrap:anywhere}
+/* only inputs sitting directly in a cell stretch — the options panel keeps its own flex layout */
+#biq-converter-content table.biq-items > tbody > tr > td > input.biq-in{width:100%;min-width:0;box-sizing:border-box}
+#biq-converter-content table.biq-items td .biq-tag{max-width:100%;overflow-wrap:anywhere}
+#biq-converter-content table.biq-items td .biq-btn-sm{padding:2px 5px}
 #biq-converter-content .biq-row-alert td{background:#fef2f2}
 #biq-converter-content .biq-row-warn td{background:#fffbeb}
 .biq-tag{display:inline-block;font-size:10px;border-radius:4px;padding:1px 5px;margin-top:2px;cursor:pointer;white-space:nowrap}
@@ -1034,7 +1044,11 @@ function injectMarkup() {
           <h4 class="font-bold text-slate-700 text-sm">Blind items <span class="font-normal text-slate-400 text-xs">— click red tags to assign BlindIQ IDs (saved for everyone)</span></h4>
           <button id="biq-additem" class="biq-btn-sm">+ Add item</button>
         </div>
-        <div class="overflow-x-auto"><table class="biq-items"><thead><tr>
+        <div><table class="biq-items"><colgroup>
+          <col style="width:3.5%"><col style="width:3.5%"><col style="width:10%"><col style="width:12%">
+          <col style="width:11%"><col style="width:10%"><col style="width:5.5%"><col style="width:5.5%">
+          <col style="width:6.5%"><col style="width:9%"><col style="width:9%"><col style="width:5.5%"><col style="width:9.5%">
+        </colgroup><thead><tr>
           <th>Code</th><th>Qty</th><th>Location</th><th>Blind type</th><th>Range</th><th>Colour</th><th>Width</th><th>Drop</th><th>Fix</th><th>Control L</th><th>Control R</th><th>Ctrl drop</th><th></th>
         </tr></thead><tbody id="biq-itemrows"></tbody></table></div>
 
@@ -1042,7 +1056,7 @@ function injectMarkup() {
           <h4 class="font-bold text-slate-700 text-sm">Sundries <span class="font-normal text-slate-400 text-xs">— IDs from BlindIQ (SundryType_Link / Sundry_Link)</span></h4>
           <button id="biq-addsundry" class="biq-btn-sm">+ Add sundry</button>
         </div>
-        <div class="overflow-x-auto"><table class="biq-items"><thead><tr><th>Code</th><th>Qty</th><th>Type ID</th><th>Sundry ID</th><th>Notes</th><th></th></tr></thead><tbody id="biq-sundryrows"></tbody></table></div>
+        <div><table class="biq-items"><colgroup><col style="width:8%"><col style="width:8%"><col style="width:12%"><col style="width:12%"><col style="width:52%"><col style="width:8%"></colgroup><thead><tr><th>Code</th><th>Qty</th><th>Type ID</th><th>Sundry ID</th><th>Notes</th><th></th></tr></thead><tbody id="biq-sundryrows"></tbody></table></div>
 
         <div id="biq-problems" class="mt-3"></div>
 

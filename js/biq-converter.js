@@ -1212,6 +1212,19 @@ export function biqAiResultToOrder(mappings, ai) {
 // Customers: one name per account. Dealer phrasings are stored as pointer
 // aliases ({alias: canonicalKey}) and resolve to the canonical BlindIQ record;
 // the order's customer name is rewritten to the canonical name.
+// Letterheads print trading names ("Galaxy Blinds", "Total Blind Design") while BlindIQ stores
+// registered ones ("Galaxy Blinds (Pty) Ltd", "Total Blind Designs"). Strip legal suffixes and
+// singular/plural before comparing — but only accept a match that is UNIQUE, so we can never
+// silently pick between two real customers (e.g. Galaxy Blinds vs Galaxy Curtain).
+function biqCustKey(s, dePlural) {
+    let k = biqLc(s).replace(/\(pty\)\s*ltd|\bpty\s*ltd\b|\(pty\)|\bltd\b|\bcc\b|\binc\b|\bt\/a\b.*$/g, ' ')
+        .replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+    if (dePlural) k = k.split(' ').map(w => w.length > 3 ? w.replace(/s$/, '') : w).join(' ');
+    return k;
+}
+// Deliberately does NOT auto-match near misses: the customer ID decides who is billed, so an
+// unmatched name stays unmatched and gets flagged. biqSuggestCustomer offers the likely match
+// for the capturer to confirm once — after which the alias is saved and resolves exactly.
 export function biqResolveCustomer(mappings, name) {
     const key = biqLc(name);
     if (!key) return { known: false };
@@ -1220,6 +1233,28 @@ export function biqResolveCustomer(mappings, name) {
     if (entry && entry.alias) { canonicalKey = biqLc(entry.alias); entry = (mappings.customers || {})[canonicalKey]; }
     if (!entry || entry.customer == null) return { known: false };
     return { known: true, entry, canonicalKey };
+}
+// "Galaxy Blinds" (letterhead) -> "galaxy blinds (pty) ltd" (BlindIQ). Suggestion only, and only
+// when the normalised name maps to exactly ONE customer — never a guess between two real ones
+// (Galaxy Blinds vs Galaxy Curtain both normalise differently, so they stay distinct).
+export function biqSuggestCustomer(mappings, name) {
+    const key = biqLc(name);
+    const all = mappings.customers || {};
+    if (!key || all[key]) return null;
+    if (!mappings._custIdx) {
+        const idx = { a: {}, b: {} };
+        Object.keys(all).forEach(k => {
+            if (!all[k] || (all[k].customer == null && !all[k].alias)) return;
+            [['a', biqCustKey(k, false)], ['b', biqCustKey(k, true)]].forEach(([b, nk]) => {
+                if (!nk) return;
+                if (idx[b][nk] === undefined) idx[b][nk] = k; else if (idx[b][nk] !== k) idx[b][nk] = null;
+            });
+        });
+        try { Object.defineProperty(mappings, '_custIdx', { value: idx, enumerable: false }); }
+        catch (e) { mappings._custIdx = idx; }
+    }
+    const hit = mappings._custIdx.a[biqCustKey(key, false)] || mappings._custIdx.b[biqCustKey(key, true)];
+    return (hit && biqResolveCustomer(mappings, hit).known) ? hit : null;
 }
 export function biqCanonicalCustomerName(mappings, name) {
     const r = biqResolveCustomer(mappings, name);

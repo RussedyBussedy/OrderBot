@@ -1778,16 +1778,41 @@ export function biqFoldOptionSynonyms(mappings, order) {
 //              genuine multi-choice with no default (Frame, Rail Size, Louvre, Closure) -> left to flag.
 //  - OPTIONAL Yes/No toggles (Steel Ball Chain, SmartRail, Intermediate Bracket, ...): default "No"
 //    unless stipulated. (On export, "No" toggles collapse to nothing — absence = No in BlindIQ.)
+// Dealer phrasings that mean an option value BlindIQ spells differently. Only ever used when the
+// supplied value doesn't already match one of the option's allowed values.
+const BIQ_VALUE_SYNONYMS = [
+    [/^(lhs?|left)(\s*(hand\s*)?(side|only))?$/i, 'LH'],
+    [/^(rhs?|right)(\s*(hand\s*)?(side|only))?$/i, 'RH'],
+    [/^(both(\s*sides)?|lhs?\s*(&|and|\+|\/)\s*rhs?|left\s*(&|and|\+|\/)\s*right)$/i, 'LH & RH'],
+    [/^(none|no|nil|n\/a)$/i, 'None']
+];
 export function biqApplyOptionDefaults(mappings, order) {
     (order ? order.items : []).forEach(it => {
         const spec = biqVariantSpec(mappings, it.blindType);
         if (!spec) return;
         spec.forEach(o => {
             const f = it.variants.find(v => biqLc(v[0]) === biqLc(o.k));
+            // A value that isn't one of the spec's allowed values is silently dropped from the
+            // XML, losing what the customer asked for ("Val Returns=RHS only"). Coerce common
+            // phrasings onto the real value; anything still unmatched is left to be flagged.
+            if (f && biqNorm(f[1]) && (o.values || []).length
+                && !(o.values || []).some(v => biqLc(v) === biqLc(f[1]))) {
+                const hit = BIQ_VALUE_SYNONYMS.find(([re]) => re.test(biqNorm(f[1])));
+                const want = hit && (o.values || []).find(v => biqLc(v) === biqLc(hit[1]));
+                if (want) { f[1] = want; it._optCoerced = true; }
+            }
             if (f && biqNorm(f[1])) return;            // already set
             const vals = (o.values || []).map(biqLc);
             const isToggle = vals.length > 0 && vals.every(v => v === 'yes' || v === 'no');
             const isColour = /colou?r/i.test(o.k);     // colour is order-specific — never silently default it
+            // A reveal-fit blind sits inside the recess, so the valance has no exposed ends and
+            // needs no returns. Face-fix leaves the ends visible, so that stays for the capturer.
+            // Only fills a blank — an explicit "LH & RH" on the order is never overridden.
+            const revealId = (mappings.fixes || {})['reveal'];
+            if (/^val(ance)?\s*returns$/i.test(o.k) && vals.includes('none') && revealId != null
+                && biqResolve(mappings, 'fixes', it.fix).id === revealId) {
+                biqSetVar(it.variants, o.k, 'None'); it._optDefaulted = true; return;
+            }
             if (o.req) {
                 if (isColour) return;                  // leave blank so collectProblems flags it for the capturer
                 let def = '';

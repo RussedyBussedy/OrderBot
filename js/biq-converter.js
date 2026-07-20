@@ -883,7 +883,8 @@ export function biqParseTbd(textItems) {
         const n = biqLc(p.s);
         if (n === 'item') cx.item = p.x; else if (/location/.test(n)) cx.location = p.x;
         else if (/qty/.test(n)) cx.qty = p.x; else if (/description/.test(n)) cx.desc = p.x;
-        else if (/colou?r/.test(n)) cx.colour = p.x; else if (n === 'w') cx.dim = p.x;
+        // pdf.js emits this header as one item ("W × D"); other extractors split it into W / × / D
+        else if (/colou?r/.test(n)) cx.colour = p.x; else if (/^w(\s*[×x]\s*d)?$/.test(n)) cx.dim = p.x;
         else if (/^fix/.test(n)) cx.fix = p.x; else if (/control/.test(n)) cx.ctl = p.x;
         else if (/price/.test(n)) cx.price = p.x;
     });
@@ -898,13 +899,16 @@ export function biqParseTbd(textItems) {
         }
         return order[order.length - 1][0];
     };
-    // Diagonal watermarks ("FINAL MEASURED") land as ISOLATED single capitals. The "X" in
-    // "Channel X" / "Wire X" / "Zip X" is also a single capital, so only drop a lone letter
-    // that has no neighbouring text on its line.
-    const isWm = (p, parts) => /^[A-Z]$/.test(biqNorm(p.s))
-        && Math.abs(p.x - cx.item) > 15
-        && (cx.price == null || Math.abs(p.x - cx.price) > 15)
-        && !parts.some(q => q !== p && Math.abs(q.x - p.x) < 45);
+    // Diagonal watermarks ("FINAL MEASURED"). pdf.js — which is what the app uses — delivers
+    // these as one whole string, so match the phrase. Word-level extractors instead scatter them
+    // as lone capitals; those are only discarded when far from EVERY column, because real cell
+    // text always aligns to a column and the "X" of "Channel X" is a lone capital too.
+    const nearestCol = x => Math.min.apply(null, order.map(c => Math.abs(x - c[1])));
+    const BIQ_TBD_WM = /^(final\s*measured?|sample|draft|copy|provisional|not\s*final|duplicate)$/i;
+    const isWm = p => {
+        const t = biqNorm(p.s);
+        return BIQ_TBD_WM.test(t) || (/^[A-Z]$/.test(t) && nearestCol(p.x) > 60);
+    };
 
     const meta = {};
     let m = full.match(/^[ \t]*Name:\s*(.*)$/mi);
@@ -926,7 +930,7 @@ export function biqParseTbd(textItems) {
     for (let li = lines.indexOf(hl) + 1; li < lines.length; li++) {
         const L = lines[li];
         if (isHeader(L)) { mode = ''; continue; }                       // header repeats on later pages
-        const parts = L.parts.filter(p => !isWm(p, L.parts));
+        const parts = L.parts.filter(p => !isWm(p));
         if (!parts.length) continue;
         const joined = biqNorm(parts.map(p => p.s).join(' '));
         if (/^(sub\s*total|vat\b|total\b)/i.test(joined)) { cur = null; mode = ''; continue; }
@@ -945,7 +949,9 @@ export function biqParseTbd(textItems) {
                 // the dimension cell only ever holds "NNNN × NNNN"; free text landing there is a
                 // colour overflowing its column ("White /Dune Grey" pushes past the boundary)
                 const t = biqNorm(p.s);
-                if (b === 'dim' && !(/^\d+$/.test(t) || /^[×xX]$/.test(t))) b = 'colour';
+                // the dimension cell is either a whole "1455 × 1210" (pdf.js) or its separate
+                // pieces; anything else landing there is a colour overflowing its column
+                if (b === 'dim' && !/^\d+(\s*[×xX]\s*\d+)?$|^[×xX]$/.test(t)) b = 'colour';
                 (bag[b] = bag[b] || []).push(p.s);
             });
             Object.keys(bag).forEach(k => { cur[k] = biqNorm(bag[k].join(' ')); });

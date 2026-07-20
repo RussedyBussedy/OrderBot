@@ -17,13 +17,7 @@ const cleanVal = v => { const x = biqNorm(v); return /^(no|none|n\/a|na|off|-)$/
 
 // ---------- seed mappings (learned from real BlindIQ exports 116888 / 20112) ----------
 export const BIQ_SEED_MAPPINGS = {
-    blindTypes: {
-        'element roller sys 40': 25, 'system 40': 25, 'roller blinds': 25, 'roller blind': 25, 'element wood': 24, 'wood venetian': 24, 'curtain ripple': 18, 'double roller blinds': 28, 'double roller': 28,
-        // shutters & valances — IDs verified against the BlindIQ Blind Type table (Mappings.xlsx, 2026-07-14)
-        'urban hinged shutter': 38, 'urban shutter': 38, 'urban shutters': 38,
-        'altra hinged shutter': 31, 'altra fold shutter': 35,
-        'element valance': 27
-    },
+    blindTypes: { 'element roller sys 40': 25, 'system 40': 25, 'roller blinds': 25, 'roller blind': 25, 'element wood': 24, 'wood venetian': 24, 'curtain ripple': 18, 'double roller blinds': 28, 'double roller': 28 },
     ranges: { 'edge block': 993, 'urban filter': 1023, '3 screen': 754, 'classic': 408, 'hand drawn': 327 },
     colours: { 'edge block|alabaster': 35, 'urban filter|melody': 2854, '3 screen|ice': 517, 'classic|snow': 686 },
     fixes: { 'reveal': 1, 'face': 2, 'none': -1 },
@@ -32,20 +26,7 @@ export const BIQ_SEED_MAPPINGS = {
     deliveryMethods: { 'courier triton': 3, 'courier': 3 },
     packingTypes: { 'boxed': 2 },
     customers: { 'total blind designs': { customer: 7051, address: 7050, operator: 954 } },
-    fabricSplits: {},
-    // panel/valance ranges verified against the BlindIQ Blind Range table (Mappings.xlsx, 2026-07-14); keys are blindTypeId|range
-    rangesScoped: {
-        '38|1 panel hinged': 943, '38|2 panel hinged': 944, '38|3 panel hinged': 945, '38|4 panel hinged': 946, '38|6 panel hinged': 947,
-        '38|1 panel hinged tier on tier': 948, '38|2 panel hinged tier on tier': 949,
-        '31|1 panel hinged': 632, '31|2 panel hinged': 633, '31|3 panel hinged': 634, '31|4 panel hinged': 785,
-        '31|2 panel double hinged': 703, '31|4 panel double hinged': 704, '31|6 panel double hinged': 705,
-        '31|fixed panel': 752, '31|slide1 panel': 865,
-        '35|2 panel fold': 744, '35|3 panel fold': 745, '35|4 panel fold': 746, '35|5 panel fold': 747, '35|6 panel fold': 748, '35|7 panel fold': 749, '35|8 panel fold': 750,
-        '14|half round valance': 273, '14|linear valance': 503, '14|70mm cassette': 751, '14|70mm cassette grip fit': 1150,
-        '14|new foiled valance': 297, '14|basswood valance': 298, '14|aluminium valance': 729, '14|wood alloy valance': 730, '14|deco rod': 743,
-        '27|linear valance': 596
-    },
-    rangeFormulas: {}, sundries: {}, sundryTypes: {}, variantTemplates: {}
+    fabricSplits: {}, rangesScoped: {}, rangeFormulas: {}, sundries: {}, sundryTypes: {}, variantTemplates: {}
 };
 export const BIQ_MAPPING_CATEGORIES = {
     blindTypes: { label: 'Blind types', xml: 'COI_BlindType_Link' },
@@ -106,6 +87,21 @@ export function biqResolveColour(mappings, range, colour) {
     if (mappings.colours[k1] != null) return { id: mappings.colours[k1], known: true };
     if (mappings.colours[k2] != null) return { id: mappings.colours[k2], known: true };
     if (!biqLc(colour)) return { id: null, known: false, empty: true };
+    // Spacing-insensitive fallback: "Dunegrey" -> "Dune Grey". Only accepted when the squashed
+    // form maps to exactly one colour, so it can never silently pick between two fabrics.
+    const squash = s => biqLc(s).replace(/[\s\-]+/g, '');
+    if (!mappings._colourSquash) {
+        const idx = {};
+        Object.keys(mappings.colours).forEach(k => {
+            const s = squash(k.slice(k.indexOf('|') + 1)); if (!s) return;
+            if (idx[s] === undefined) idx[s] = mappings.colours[k];
+            else if (idx[s] !== mappings.colours[k]) idx[s] = null;      // ambiguous -> never used
+        });
+        try { Object.defineProperty(mappings, '_colourSquash', { value: idx, enumerable: false }); }
+        catch (e) { mappings._colourSquash = idx; }
+    }
+    const hit = mappings._colourSquash[squash(colour)];
+    if (hit != null) return { id: hit, known: true, alias: true };
     return { id: null, known: false };
 }
 
@@ -839,6 +835,256 @@ export function biqCnbwCoherent(mappings, order) {
         if (w > 0 && fixOk) good++;
     });
     return good >= Math.ceil(order.items.length / 2);
+}
+
+// ---------- Total Blind Designs ordering software PDF ----------
+// TBD licence this software to dealers, so the letterhead varies (Total Blind Design,
+// Galaxy Blinds, ...) and the heading is "<X> ORDER" (BLINDS / OUTDOOR). Detection therefore
+// keys off the layout signature — the Item/Location/Qty/Description column header plus the
+// "Options:" lines — and never off the company name.
+// The software already emits BlindIQ-shaped "Key=Value | Key=Value" options, so options pass
+// through almost 1:1; only the TBD-only keys (Left End / Right End / Joined To) are consumed
+// here, into controls and the shared-bracket pairing.
+const BIQ_TBD_TYPES = [
+    [/^free\s*hang/i, 'Outdoor Free Hang'], [/^channel\s*x/i, 'Outdoor Channel X'],
+    [/^wire\s*x/i, 'Outdoor Wire X'], [/^zip\s*x/i, 'Outdoor Zip X'],
+    [/^widescreen/i, 'Outdoor Widescreen'], [/^double\s*roller/i, 'Element Double Roller'],
+    [/^roller\s*40/i, 'Element Roller Sys 40'], [/^roller\s*45/i, 'Roller System 45'],
+    [/^roller\s*55/i, 'Roller System 55'], [/^romashade/i, 'RomaShade'],
+    [/^perfect\s*fit\s*roller/i, 'Perfect Fit Roller Blind'],
+    [/^perfect\s*fit\s*cellular/i, 'Perfect Fit Cellular Blind'],
+    [/^perfect\s*fit\s*vision/i, 'Perfect Fit Vision Blind'],
+    [/^vision/i, 'Element Vision'], [/^wood\s*alloy/i, 'Element Wood'],
+    [/^wood\s*venetian/i, 'Element Wood'], [/^35\s*mm\s*alum/i, 'Element 35mm Aluminium'],
+    [/^cellular/i, 'Cellular Free Hang'], [/^(90\s*mm\s*)?vertical/i, '90mm Vertical Blind'],
+    [/^allusion/i, 'Allusion Blind'], [/^(urban\s*hinged|shutter)/i, 'Urban Hinged Shutter']
+];
+// TBD prints some products under their exact BlindIQ name (Retro Venetian, Roman Panel,
+// Sliding Panel, Element Valance, Allusion Blind...) — those need no alias and pass through.
+// "50mm Wood" / "50mm Wood Alloy" are slat descriptions, not BlindIQ ranges.
+const BIQ_TBD_WOOD_RANGES = [[/woodgrain/i, 'Wood Alloy Woodgrain Classic'], [/alloy/i, 'Wood Alloy Std Classic'], [/wood/i, 'Classic']];
+const BIQ_TBD_DRIVE = [[/mtr|motor/i, 'Motor'], [/crank/i, 'Crank'], [/spring/i, 'Spring'],
+[/coupl/i, 'Coupled'], [/\bint/i, 'Intermediate'], [/chain/i, 'Chain'], [/pin/i, 'Pin'],
+[/wand/i, 'Wand'], [/cord/i, 'Cord']];
+function biqTbdDrive(s) { const t = biqLc(s || ''); for (const [re, v] of BIQ_TBD_DRIVE) if (re.test(t)) return v; return ''; }
+
+export function biqParseTbd(textItems) {
+    const lines = biqGroupLines(textItems);
+    const full = lines.map(l => l.parts.map(p => p.s).join(' ')).join('\n');
+    if (!/\bORDER\b/i.test(full) || !/Options:/i.test(full)) return null;
+    const isHeader = l => {
+        const t = l.parts.map(p => biqLc(p.s));
+        return t.includes('item') && t.includes('location') && t.includes('qty') && t.includes('description');
+    };
+    const hl = lines.find(isHeader);
+    if (!hl) return null;
+    const cx = {};
+    hl.parts.forEach(p => {
+        const n = biqLc(p.s);
+        if (n === 'item') cx.item = p.x; else if (/location/.test(n)) cx.location = p.x;
+        else if (/qty/.test(n)) cx.qty = p.x; else if (/description/.test(n)) cx.desc = p.x;
+        else if (/colou?r/.test(n)) cx.colour = p.x; else if (n === 'w') cx.dim = p.x;
+        else if (/^fix/.test(n)) cx.fix = p.x; else if (/control/.test(n)) cx.ctl = p.x;
+        else if (/price/.test(n)) cx.price = p.x;
+    });
+    if (cx.item == null || cx.desc == null || cx.dim == null) return null;
+    // x-bands from the header anchors (midpoints), so a value never lands in the wrong column
+    const order = ['item', 'location', 'qty', 'desc', 'colour', 'dim', 'fix', 'ctl', 'price']
+        .filter(k => cx[k] != null).map(k => [k, cx[k]]).sort((a, b) => a[1] - b[1]);
+    const bandOf = x => {
+        for (let i = 0; i < order.length; i++) {
+            const next = order[i + 1];
+            if (!next || x < (order[i][1] + next[1]) / 2) return order[i][0];
+        }
+        return order[order.length - 1][0];
+    };
+    // Diagonal watermarks ("FINAL MEASURED") land as ISOLATED single capitals. The "X" in
+    // "Channel X" / "Wire X" / "Zip X" is also a single capital, so only drop a lone letter
+    // that has no neighbouring text on its line.
+    const isWm = (p, parts) => /^[A-Z]$/.test(biqNorm(p.s))
+        && Math.abs(p.x - cx.item) > 15
+        && (cx.price == null || Math.abs(p.x - cx.price) > 15)
+        && !parts.some(q => q !== p && Math.abs(q.x - p.x) < 45);
+
+    const meta = {};
+    let m = full.match(/^[ \t]*Name:\s*(.*)$/mi);
+    if (m) {                                                            // Name and Project share a line
+        meta.client = biqNorm(m[1].replace(/\s*Project:.*$/i, ''));
+        const pm = m[1].match(/Project:\s*(.*)$/i);
+        if (pm) meta.project = biqNorm(pm[1]);
+    }
+    m = full.match(/Date:\s*(\d{4}-\d{2}-\d{2}|\d{1,2}[\/.]\d{1,2}[\/.]\d{2,4})/i); if (m) meta.orderDate = m[1];
+    m = full.match(/Rep:\s*(\S+@\S+)/i); if (m) meta.rep = m[1];
+    const hIdx = lines.findIndex(l => /^[A-Z][A-Z ]*ORDER$/.test(biqNorm(l.parts.map(p => p.s).join(' '))));
+    if (hIdx >= 0) {
+        meta.docType = biqNorm(lines[hIdx].parts.map(p => p.s).join(' '));
+        if (lines[hIdx + 1]) meta.company = biqNorm(lines[hIdx + 1].parts.map(p => p.s).join(' '));
+    }
+
+    const rows = [];
+    let cur = null, mode = '';
+    for (let li = lines.indexOf(hl) + 1; li < lines.length; li++) {
+        const L = lines[li];
+        if (isHeader(L)) { mode = ''; continue; }                       // header repeats on later pages
+        const parts = L.parts.filter(p => !isWm(p, L.parts));
+        if (!parts.length) continue;
+        const joined = biqNorm(parts.map(p => p.s).join(' '));
+        if (/^(sub\s*total|vat\b|total\b)/i.test(joined)) { cur = null; mode = ''; continue; }
+        if (/^Options:/i.test(joined)) {
+            if (cur) { cur.options = biqNorm(joined.replace(/^Options:\s*/i, '')); mode = 'opt'; }
+            continue;
+        }
+        const first = parts[0];
+        const isItem = /^[A-Z]$/.test(biqNorm(first.s)) && Math.abs(first.x - cx.item) <= 20
+            && parts.some(p => /\d/.test(p.s) && Math.abs(p.x - cx.dim) < 80);
+        if (isItem) {
+            cur = { code: biqNorm(first.s), desc: [], options: '' };
+            const bag = {};
+            parts.slice(1).forEach(p => {
+                let b = bandOf(p.x);
+                // the dimension cell only ever holds "NNNN × NNNN"; free text landing there is a
+                // colour overflowing its column ("White /Dune Grey" pushes past the boundary)
+                const t = biqNorm(p.s);
+                if (b === 'dim' && !(/^\d+$/.test(t) || /^[×xX]$/.test(t))) b = 'colour';
+                (bag[b] = bag[b] || []).push(p.s);
+            });
+            Object.keys(bag).forEach(k => { cur[k] = biqNorm(bag[k].join(' ')); });
+            if (cur.desc) { cur.desc = [cur.desc]; } else cur.desc = [];
+            // the dimension cell is unmistakable — take it from the row text so a tight
+            // column boundary can never split "1455 × 1210" across dim/fix
+            const dm = joined.match(/(\d{2,5})\s*[×xX]\s*(\d{2,5})/);
+            if (dm) { cur.width = dm[1]; cur.drop = dm[2]; }
+            rows.push(cur); mode = 'row';
+            continue;
+        }
+        if (!cur) continue;
+        if (mode === 'opt') { cur.options = biqNorm(cur.options + ' ' + joined); continue; }
+        const dp = parts.filter(p => bandOf(p.x) === 'desc');           // 2nd description line = range
+        if (dp.length) cur.desc.push(biqNorm(dp.map(p => p.s).join(' ')));
+    }
+    if (!rows.length) return null;
+    return { meta, rows };
+}
+
+// "Options: A=1 | B=2" -> [[A,1],[B,2]]. Values may contain bare pipes ("(1.1|2|3Nm)"),
+// so split only on a pipe with whitespace either side. Repeated keys (Accessory=) are kept.
+export function biqTbdOptions(s) {
+    return biqNorm(s).split(/\s+\|\s+/).map(seg => {
+        const i = seg.indexOf('=');
+        if (i < 1) return null;
+        return [biqNorm(seg.slice(0, i)), biqNorm(seg.slice(i + 1))];
+    }).filter(Boolean);
+}
+
+export function biqNormalizeTbd(mappings, p) {
+    const o = biqBlankOrder();
+    o.source = 'tbd';
+    o.sourceDesc = (p.meta.docType || 'BLINDS ORDER') + ' — ' + (p.meta.company || 'Total Blind Designs software');
+    o.customer = p.meta.company || 'Total Blind Designs';
+    o.client = p.meta.client || '';
+    o.orderDate = biqParseDate(p.meta.orderDate);
+    if (p.meta.project) o.notes = 'Project: ' + p.meta.project;
+    let n = 0;
+    p.rows.forEach(r => {
+        const it = biqBlankItem(String(++n));
+        it.qty = r.qty || '1'; it.location = r.location || '';
+        it.width = r.width || ''; it.drop = r.drop || ''; it.fix = r.fix || '';
+        // description is two lines — product and range — but their order can invert in the
+        // text layer, so identify the product by name and treat whatever is left as the range.
+        const frags = (r.desc || []).map(biqNorm).filter(Boolean);
+        let prod = '', rest = [];
+        frags.forEach(f => {
+            if (!prod && BIQ_TBD_TYPES.some(([re]) => re.test(f))) prod = f; else rest.push(f);
+        });
+        if (!prod && frags.length) { prod = frags[0]; rest = frags.slice(1); }
+        const hit = BIQ_TBD_TYPES.find(([re]) => re.test(prod));
+        it.blindType = hit ? hit[1] : prod;
+        it.range = biqNorm(rest.join(' '));
+        it._tbdProduct = prod;
+        if (it.blindType === 'Element Wood') {
+            const w = BIQ_TBD_WOOD_RANGES.find(([re]) => re.test(it.range || prod));
+            if (w) it.range = w[1];
+        }
+        // Double roller prints two fabrics ("Blockout + 5 Screen"); BlindIQ carries one combined
+        // range ("blockout/duo block/surface block/any screen"). Only accept it when exactly one
+        // scoped range covers the front fabric — otherwise leave it to be flagged.
+        if (it.blindType === 'Element Double Roller' && /\+/.test(it.range)) {
+            const front = biqLc(it.range.split('+')[0]);
+            const bt = biqResolve(mappings, 'blindTypes', it.blindType);
+            if (bt.known && front) {
+                const pre = bt.id + '|';
+                const cands = Object.keys(mappings.rangesScoped || {})
+                    .filter(k => k.indexOf(pre) === 0).map(k => k.slice(pre.length))
+                    .filter(rn => rn.split('/').some(a => biqLc(a) === front));
+                if (cands.length === 1) { it._origRange = it.range; it.range = cands[0]; }
+            }
+        }
+        // double roller carries two fabrics and two colours ("Blockout + 5 Screen", "White /Dune Grey")
+        const col = biqNorm(r.colour || '');
+        if (/\//.test(col) && it.blindType === 'Element Double Roller') {
+            const cs = col.split('/').map(biqNorm).filter(Boolean);
+            it.colour = cs[0]; it._colour2 = cs[1] || '';
+            it.notes = (it.notes ? it.notes + ' | ' : '') + 'Fabrics: ' + it.range + ' / colours: ' + cs.join(' + ');
+        } else it.colour = col;
+
+        const opts = biqTbdOptions(r.options || '');
+        it.variants = biqTemplateFor2(mappings, it.blindType || 'roller');
+        let leftEnd = '', rightEnd = '', joined = '';
+        const seen = {}, extra = [];
+        opts.forEach(([k, v]) => {
+            const kl = biqLc(k);
+            if (kl === 'left end') { leftEnd = v; return; }
+            if (kl === 'right end') { rightEnd = v; return; }
+            if (kl === 'joined to') { joined = v; return; }
+            // TBD repeats keys (Accessory=A | Accessory=B). A variant holds one value, so keep
+            // the first and carry the rest into notes rather than silently dropping them.
+            if (seen[kl] !== undefined && seen[kl] !== v) { extra.push(k + '=' + v); return; }
+            seen[kl] = v;
+            biqSetVar(it.variants, k, v);                               // already BlindIQ-shaped
+        });
+        if (extra.length) it.notes = (it.notes ? it.notes + ' | ' : '') + 'Also: ' + extra.join(' | ');
+        // Controls: prefer the explicit Left End / Right End options; fall back to the
+        // Controls cell ("LHC", "RHM", "LH Crank", "L:Mtr R:Int").
+        let c1 = biqTbdDrive(leftEnd), c2 = biqTbdDrive(rightEnd);
+        if (!c1 && !c2) {
+            const ctl = biqNorm(r.ctl || '');
+            const lm = ctl.match(/L\s*:\s*([A-Za-z]+)/i), rm = ctl.match(/R\s*:\s*([A-Za-z]+)/i);
+            if (lm || rm) { c1 = biqTbdDrive(lm && lm[1]); c2 = biqTbdDrive(rm && rm[1]); }
+            else if (/^(LH|RH)/i.test(ctl)) {
+                const d = biqTbdDrive(ctl.replace(/^(LH|RH)C?M?/i, '')) || (/C$/i.test(ctl) ? 'Chain' : /M$/i.test(ctl) ? 'Motor' : '');
+                if (/^LH/i.test(ctl)) { c1 = d; c2 = 'Pin'; } else { c1 = 'Pin'; c2 = d; }
+            }
+        }
+        if (c1) it.control1 = 'Lh ' + c1;
+        if (c2) it.control2 = 'Rh ' + c2;
+        if (c1 && !c2) it.control2 = 'Rh Pin';
+        if (c2 && !c1) it.control1 = 'Lh Pin';
+        // "Joined To=Blind 2 (Intermediate)" -> pair with the next line via the shared-bracket
+        // engine. Only consecutive pairs are auto-applied; anything else is left for the capturer.
+        if (joined) {
+            const jm = joined.match(/(\d+)/);
+            const kind = /coupl/i.test(joined) ? 'coupled' : 'intermediate';
+            const target = jm ? parseInt(jm[1], 10) : 0;
+            if (target === n + 1) it._bracketWith = kind;
+            else if (target && target !== n - 1) it.notes = (it.notes ? it.notes + ' | ' : '') + 'Joined to blind ' + target + ' (' + kind + ') — not consecutive, check pairing';
+        }
+        it.controlDrop = biqComputeControlDropV2(mappings, '', it.drop, it.blindType, it.range); it._cdAuto = true;
+        o.items.push(it);
+    });
+    return o;
+}
+
+// Sanity-check a deterministic TBD parse before trusting it over the AI path.
+// Coherent = most items resolved to a real blind type and carry a real width.
+export function biqTbdCoherent(mappings, order) {
+    if (!order || !order.items.length) return false;
+    let good = 0;
+    order.items.forEach(it => {
+        const w = parseInt(it.width, 10) || 0;
+        const typeOk = it.blindType && biqResolve(mappings, 'blindTypes', it.blindType).known;
+        if (w > 0 && typeOk) good++;
+    });
+    return good >= Math.ceil(order.items.length * 0.6);
 }
 
 // =============================================================================

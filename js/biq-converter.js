@@ -182,11 +182,15 @@ export function biqFuzzySundry(mappings, text) {
 }
 // Turn motorisation text (motor / remote / adapter) into an order sundry line,
 // aggregating duplicates by description.
-export function biqAddMotorSundry(mappings, order, text, qty) {
+export function biqAddMotorSundry(mappings, order, text, qty, preferMotors) {
     const t = biqNorm(text); if (!t) return;
     const existing = order.sundries.find(su => biqLc(su.notes) === biqLc(t) || (su._src && biqLc(su._src) === biqLc(t)));
     if (existing) { existing.qty = String((+existing.qty || 0) + (+qty || 1)); return; }
-    const hit = biqFuzzySundry(mappings, t);
+    // Many parts exist twice: "motors <name>" (type 13) and a bare "<name>" (type 23/65/66).
+    // preferMotors picks the motors-prefixed entry when there is one.
+    let hit = null;
+    if (preferMotors) { const h = biqFuzzySundry(mappings, 'motors ' + t); if (h && h.sundry != null) hit = h; }
+    if (!hit) hit = biqFuzzySundry(mappings, t);
     const su = { code: '', qty: String(+qty || 1), type: '', sundry: '', notes: t, _src: t };
     if (hit && hit.sundry != null) { su.type = String(hit.type); su.sundry = String(hit.sundry); if (!hit.exact) su.notes = t; }
     order.sundries.push(su);
@@ -867,6 +871,13 @@ const BIQ_TBD_DRIVE = [[/mtr|motor/i, 'Motor'], [/crank/i, 'Crank'], [/spring/i,
 [/coupl/i, 'Coupled'], [/\bint/i, 'Intermediate'], [/chain/i, 'Chain'], [/pin/i, 'Pin'],
 [/wand/i, 'Wand'], [/cord/i, 'Cord']];
 function biqTbdDrive(s) { const t = biqLc(s || ''); for (const [re, v] of BIQ_TBD_DRIVE) if (re.test(t)) return v; return ''; }
+// TBD prints motorisation hardware as options, but BlindIQ carries it as sundry LINES.
+// Hold Downs stays an option; the rest become lines. Every one becomes a line so nothing is
+// lost — the sundry ID is filled in when the name resolves confidently and left blank (and so
+// flagged for the capturer) when it doesn't, rather than guessed onto the wrong part.
+const BIQ_TBD_SUNDRY_KEYS = /^(motor|adaptor|adapter|charger|remote|wall\s*switch|smart\s*hub|wind\s*sensor|crank\s*handle|pull\s*pole|accessory)$/i;
+// "1TD" is Total Blind Designs' shorthand for BlindIQ's "One Touch Dual" range.
+export function biqTbdExpand(s) { return biqNorm(String(s == null ? '' : s).replace(/\b1TD\b/gi, 'One Touch Dual')); }
 
 export function biqParseTbd(textItems) {
     const lines = biqGroupLines(textItems);
@@ -1036,12 +1047,19 @@ export function biqNormalizeTbd(mappings, p) {
         const opts = biqTbdOptions(r.options || '');
         it.variants = biqTemplateFor2(mappings, it.blindType || 'roller');
         let leftEnd = '', rightEnd = '', joined = '';
-        const seen = {}, extra = [];
+        const seen = {}, extra = [], hardware = [];
         opts.forEach(([k, v]) => {
             const kl = biqLc(k);
             if (kl === 'left end') { leftEnd = v; return; }
             if (kl === 'right end') { rightEnd = v; return; }
             if (kl === 'joined to') { joined = v; return; }
+            // motorisation hardware -> its own sundry line, not a variant option. A Yes/No
+            // toggle (Pull Pole=Yes) names the part in its KEY; the rest name it in the value.
+            if (BIQ_TBD_SUNDRY_KEYS.test(kl)) {
+                const txt = biqTbdExpand(/^(yes|true)$/i.test(biqNorm(v)) ? k : v);
+                if (txt && !/^(no|false|none)$/i.test(txt)) hardware.push(txt);
+                return;
+            }
             // TBD repeats keys (Accessory=A | Accessory=B). A variant holds one value, so keep
             // the first and carry the rest into notes rather than silently dropping them.
             if (seen[kl] !== undefined && seen[kl] !== v) { extra.push(k + '=' + v); return; }
@@ -1049,6 +1067,8 @@ export function biqNormalizeTbd(mappings, p) {
             biqSetVar(it.variants, k, v);                               // already BlindIQ-shaped
         });
         if (extra.length) it.notes = (it.notes ? it.notes + ' | ' : '') + 'Also: ' + extra.join(' | ');
+        // aggregates duplicates across lines, so two blinds on the same motor give qty 2
+        hardware.forEach(txt => biqAddMotorSundry(mappings, o, txt, +it.qty || 1, true));
         // Controls: prefer the explicit Left End / Right End options; fall back to the
         // Controls cell ("LHC", "RHM", "LH Crank", "L:Mtr R:Int").
         let c1 = biqTbdDrive(leftEnd), c2 = biqTbdDrive(rightEnd);

@@ -1862,6 +1862,19 @@ export function biqApplyOptionDefaults(mappings, order) {
                 && biqResolve(mappings, 'fixes', it.fix).id === revealId) {
                 biqSetVar(it.variants, o.k, 'None'); it._optDefaulted = true; return;
             }
+            // Eliminative default: a required choice where some values are explicitly
+            // "for Motor Only" and exactly ONE alternative exists. On a blind whose controls are
+            // known and contain no motor, the motor-only value is impossible — the alternative is
+            // the only legal one. (System Choice on Roller System 55: "Sys 55" vs "Sys 55 (with
+            // 40+ Bracket) for Motor Only".) Motorised or unknown-control blinds keep the flag.
+            if (o.req && (o.values || []).length >= 2) {
+                const motorOnly = (o.values || []).filter(v => /motor\s*only/i.test(v));
+                const others = (o.values || []).filter(v => !/motor\s*only/i.test(v));
+                const ctl = biqNorm((it.control1 || '') + ' ' + (it.control2 || ''));
+                if (motorOnly.length && others.length === 1 && ctl && !/motor/i.test(ctl)) {
+                    biqSetVar(it.variants, o.k, others[0]); it._optDefaulted = true; return;
+                }
+            }
             if (o.req) {
                 if (isColour) return;                  // leave blank so collectProblems flags it for the capturer
                 let def = '';

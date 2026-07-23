@@ -9,7 +9,7 @@ export const firebaseConfig = {
 };
 
 export const PROXY_API_URL = 'https://gemini-secure-proxy-51064902388.africa-south1.run.app';
-export const PROMPT_VERSION = 'v2.1';
+export const PROMPT_VERSION = 'v2.2';
 
 // Document parsing / OCR extraction — fast, cheap, strong on long forms.
 export const EXTRACTION_MODEL = 'gemini-3-flash-preview';

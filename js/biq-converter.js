@@ -63,7 +63,8 @@ const BIQ_ALIASES = {
     fixes: {
         'f/f': 'face', 'ff': 'face', 'face fix': 'face', 'facefix': 'face',
         'i/r': 'reveal', 'ir': 'reveal', 'inside reveal': 'reveal', 'recess': 'reveal', 'standard recess': 'reveal', 'standard facefix': 'face',
-        'rev': 'reveal', 'rev l': 'reveal', 'rev r': 'reveal', 'reveal l': 'reveal', 'reveal r': 'reveal'
+        'rev': 'reveal', 'rev l': 'reveal', 'rev r': 'reveal', 'reveal l': 'reveal', 'reveal r': 'reveal',
+        'side fix': 'side', 'top fix': 'top'                        // TBD software wording (catalogue: side=6, top=7)
     }
 };
 export function biqResolve(mappings, cat, name) {
@@ -167,9 +168,13 @@ export function biqFuzzySundry(mappings, text) {
     const exact = biqResolveSundry(mappings, text);
     if (exact) return Object.assign({ desc: biqLc(text), exact: true }, exact);
     const stop = new Set(['for', 'the', 'and', 'with', 'x']);
-    const tokens = biqLc(text).split(/[^a-z0-9.:]+/).filter(t => t.length > 1 && !stop.has(t));
+    // Single-digit tokens are kept: they distinguish real parts ("smoove origin 4" vs "origin 2",
+    // "ysia 1" vs "ysia 5"). Dropping them made those permanently ambiguous. They match on word
+    // boundaries (not substring), so "4" can never match inside "40".
+    const tokens = biqLc(text).split(/[^a-z0-9.:]+/).filter(t => (t.length > 1 || /^\d$/.test(t)) && !stop.has(t));
     if (!tokens.length) return null;
-    const hits = Object.keys(mappings.sundries || {}).filter(k => tokens.every(t => k.includes(t)));
+    const tokMatch = (k, t) => t.length > 1 ? k.includes(t) : new RegExp('(^|[^0-9.])' + t + '($|[^0-9.])').test(k);
+    const hits = Object.keys(mappings.sundries || {}).filter(k => tokens.every(t => tokMatch(k, t)));
     if (hits.length === 1) { const e = mappings.sundries[hits[0]]; return { sundry: e.sundry, type: e.type, desc: hits[0], exact: false }; }
     if (hits.length > 1) return { ambiguous: hits.length };
     // second pass: gentle spelling synonyms (li-ion <-> lithium ion, "2.0nm" <-> "2nm")
@@ -188,9 +193,34 @@ export function biqAddMotorSundry(mappings, order, text, qty, preferMotors) {
     if (existing) { existing.qty = String((+existing.qty || 0) + (+qty || 1)); return; }
     // Many parts exist twice: "motors <name>" (type 13) and a bare "<name>" (type 23/65/66).
     // preferMotors picks the motors-prefixed entry when there is one.
+    // The variant ladder bridges dealer shorthand to catalogue phrasing WITHOUT loosening the
+    // unique-match rule: "16ch" -> "16 channel" (one touch remotes), "4ch" -> "4" (smoove origin),
+    // and a parenthetical-stripped form ("Tahoma Switch Pro (ZB)" -> "Tahoma Switch Pro").
+    // First variant that yields a unique hit wins; anything still unmatched stays blank + flagged.
+    const variants = [];
+    for (const base of [t, biqNorm(t.replace(/\([^)]*\)/g, ' '))]) {
+        for (const v of [base, base.replace(/(\d+)\s*ch\b/gi, '$1 channel'), base.replace(/(\d+)\s*ch\b/gi, '$1')]) {
+            const n = biqNorm(v);
+            if (n && !variants.includes(n)) variants.push(n);
+        }
+    }
+    // Last resort, ZIGBEE ONLY: drop the Sonesse size qualifier — TBD prints "Sonesse 30/28 ZB
+    // Solar Panel" while the catalogue's Zigbee accessories are size-less ("motors sonesse zigbee
+    // solar panel li-ion"). Deliberately NOT applied to RTS/other lines: there the size picks
+    // between real parts, and dropping it once mis-resolved a 30/28 charger to the RTS-30 one.
+    if (/zigbee/i.test(t)) {
+        for (const v of variants.slice()) {
+            const n = biqNorm(v.replace(/\b40\/30\/28\b|\b30\/28\b/g, ' '));
+            if (n && n !== v && !variants.includes(n)) variants.push(n);
+        }
+    }
     let hit = null;
-    if (preferMotors) { const h = biqFuzzySundry(mappings, 'motors ' + t); if (h && h.sundry != null) hit = h; }
-    if (!hit) hit = biqFuzzySundry(mappings, t);
+    outer: for (const v of variants) {
+        for (const cand of (preferMotors ? ['motors ' + v, v] : [v])) {
+            const h = biqFuzzySundry(mappings, cand);
+            if (h && h.sundry != null) { hit = h; break outer; }
+        }
+    }
     const su = { code: '', qty: String(+qty || 1), type: '', sundry: '', notes: t, _src: t };
     if (hit && hit.sundry != null) { su.type = String(hit.type); su.sundry = String(hit.sundry); if (!hit.exact) su.notes = t; }
     order.sundries.push(su);
@@ -868,7 +898,10 @@ const BIQ_TBD_TYPES = [
 // "50mm Wood" / "50mm Wood Alloy" are slat descriptions, not BlindIQ ranges.
 const BIQ_TBD_WOOD_RANGES = [[/woodgrain/i, 'Wood Alloy Woodgrain Classic'], [/alloy/i, 'Wood Alloy Std Classic'], [/wood/i, 'Classic']];
 const BIQ_TBD_DRIVE = [[/mtr|motor/i, 'Motor'], [/crank/i, 'Crank'], [/spring/i, 'Spring'],
-[/coupl/i, 'Coupled'], [/\bint/i, 'Intermediate'], [/chain/i, 'Chain'], [/pin/i, 'Pin'],
+[/coupl/i, 'Coupled'], [/\bint/i, 'Intermediate'], [/chain/i, 'Chain'],
+// TBD prints the manual drive side as "Control"/"Ctrl"; every product it emits drives by chain
+// (woods/verticals arrive as LHC/RHC), so Control = Chain.
+[/\bctrl\b|\bcontrol\b/i, 'Chain'], [/pin/i, 'Pin'],
 [/wand/i, 'Wand'], [/cord/i, 'Cord']];
 function biqTbdDrive(s) { const t = biqLc(s || ''); for (const [re, v] of BIQ_TBD_DRIVE) if (re.test(t)) return v; return ''; }
 // TBD prints motorisation hardware as options, but BlindIQ carries it as sundry LINES.
@@ -876,8 +909,16 @@ function biqTbdDrive(s) { const t = biqLc(s || ''); for (const [re, v] of BIQ_TB
 // lost — the sundry ID is filled in when the name resolves confidently and left blank (and so
 // flagged for the capturer) when it doesn't, rather than guessed onto the wrong part.
 const BIQ_TBD_SUNDRY_KEYS = /^(motor|adaptor|adapter|charger|remote|wall\s*switch|smart\s*hub|wind\s*sensor|crank\s*handle|pull\s*pole|accessory)$/i;
-// "1TD" is Total Blind Designs' shorthand for BlindIQ's "One Touch Dual" range.
-export function biqTbdExpand(s) { return biqNorm(String(s == null ? '' : s).replace(/\b1TD\b/gi, 'One Touch Dual')); }
+// TBD shorthand -> the catalogue's long-form vocabulary (each mapping evidence-backed against
+// the sundries DB): 1TD = One Touch Dual, ZB = Zigbee, M&T = Matter (the smart-home protocol —
+// DB: "one touch dual matter motor 220v ac 2nm"), WF = Wire Free.
+export function biqTbdExpand(s) {
+    return biqNorm(String(s == null ? '' : s)
+        .replace(/\b1TD\b/gi, 'One Touch Dual')
+        .replace(/\bZB\b/gi, 'Zigbee')
+        .replace(/\bM&T\b/gi, 'Matter')
+        .replace(/\bWF\b/gi, 'Wire Free'));
+}
 
 export function biqParseTbd(textItems) {
     const lines = biqGroupLines(textItems);
@@ -944,6 +985,12 @@ export function biqParseTbd(textItems) {
         const parts = L.parts.filter(p => !isWm(p));
         if (!parts.length) continue;
         const joined = biqNorm(parts.map(p => p.s).join(' '));
+        // Letterhead repeats on every page ("BLINDS ORDER", company, footer). Without this check a
+        // page break in the middle of a wrapped Options line concatenates the next page's title
+        // into the option text ("Hub=Tahoma Switch Pro (ZB) BLINDS ORDER").
+        if (/^[A-Z][A-Z &]*ORDER$/.test(joined)
+            || (meta.company && (joined === meta.company || joined.indexOf(meta.company + ' |') === 0))
+            || /@|www\./.test(joined) || /^Rep:/.test(joined) || /^Name:/.test(joined)) continue;
         if (/^(sub\s*total|vat\b|total\b)/i.test(joined)) { cur = null; mode = ''; continue; }
         if (/^Options:/i.test(joined)) {
             if (cur) { cur.options = biqNorm(joined.replace(/^Options:\s*/i, '')); mode = 'opt'; }
@@ -971,6 +1018,8 @@ export function biqParseTbd(textItems) {
             // column boundary can never split "1455 × 1210" across dim/fix
             const dm = joined.match(/(\d{2,5})\s*[×xX]\s*(\d{2,5})/);
             if (dm) { cur.width = dm[1]; cur.drop = dm[2]; }
+            // a wide drop value can overflow the dimension band into Fix ("1400 Side Fix")
+            if (cur.fix && dm) cur.fix = biqNorm(cur.fix.replace(new RegExp('^' + dm[2] + '\\s+'), ''));
             rows.push(cur); mode = 'row';
             continue;
         }

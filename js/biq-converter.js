@@ -26,7 +26,11 @@ export const BIQ_SEED_MAPPINGS = {
     deliveryMethods: { 'courier triton': 3, 'courier': 3 },
     packingTypes: { 'boxed': 2 },
     customers: { 'total blind designs': { customer: 7051, address: 7050, operator: 954 } },
-    fabricSplits: {}, rangesScoped: {}, rangeFormulas: {}, sundries: {}, sundryTypes: {}, variantTemplates: {}
+    fabricSplits: {}, rangesScoped: {}, rangeFormulas: {}, sundries: {}, sundryTypes: {}, variantTemplates: {},
+    // Per-blind-type availability matrices (from BlindIQ's own linkage tables, via SQL export).
+    // controlsScoped: { "<blindTypeId>": [controlId,...] } or { "<id>": {c1:[...], c2:[...]} }.
+    // Empty until the matrix is imported — all checks stay silent with no data.
+    controlsScoped: {}, fixesScoped: {}
 };
 export const BIQ_MAPPING_CATEGORIES = {
     blindTypes: { label: 'Blind types', xml: 'COI_BlindType_Link' },
@@ -1453,6 +1457,13 @@ export function biqCollectProblems(mappings, order) {
         if (!biqResolve(mappings, 'control2', it.control2).known && biqLc(it.control2)) probs.push({ t: w + 'control "' + it.control2 + '" not mapped.', cat: 'control2', name: it.control2 });
         if (biqRequiresDualControl(mappings, it.blindType) && (!biqLc(it.control1) || !biqLc(it.control2)))
             probs.push({ t: w + 'both control sides (Control L and Control R) must be set for ' + (it.blindType || 'this blind') + '.' });
+        // per-blind-type control availability (BlindIQ's own dropdown matrix, where known)
+        [['c1', 'control1'], ['c2', 'control2']].forEach(([side, field]) => {
+            if (biqControlAllowed(mappings, it.blindType, side, it[field]) === false) {
+                const names = biqAllowedControlNames(mappings, it.blindType, side) || [];
+                probs.push({ t: w + 'control "' + it[field] + '" is not available for ' + it.blindType + ' (' + (side === 'c1' ? 'Control 1' : 'Control 2') + ' options: ' + names.join(' / ') + ').' });
+            }
+        });
         if (it._bracketOdd) probs.push({ t: w + 'flagged as ' + it._bracketOdd + ' bracket but has no matching pair — couple it with its partner line (or clear the flag).' });
         const spec = biqVariantSpec(mappings, it.blindType);
         if (spec) spec.forEach(o => {
@@ -2012,6 +2023,73 @@ export function biqInferControls(mappings, order) {
         const drive = s => /chain|motor|crank|wand|cord|spring/.test(s);
         if (drive(c2) && !c1) { it.control1 = 'Lh Pin'; it._ctlInferred = true; }
         else if (drive(c1) && !c2) { it.control2 = 'Rh Pin'; it._ctlInferred = true; }
+    });
+}
+
+// ---------- per-blind-type CONTROL availability ----------
+// BlindIQ scopes the Control 1 / Control 2 dropdowns per blind type (its own UI greys out the
+// rest). That matrix lives in BlindIQ's database; until the SQL export lands, code-confirmed
+// matrices go here (source: screenshots of BlindIQ's own dropdowns). Keyed by blindTypeId; ids
+// are control catalogue IDs. mappings.controlsScoped (imported data) always wins over this seed.
+const BIQ_CONTROLS_SCOPED_SEED = {
+    // Cellular Free Hang (32) — confirmed 27 Jul 2026: C1 = Lh/Rh Cordlock, Lh/Rh Motor; C2 = Free Hang
+    '32': { c1: [107, 108, 17, 4], c2: [190] }
+};
+function biqControlMatrixFor(mappings, blindType) {
+    const bt = biqResolve(mappings, 'blindTypes', blindType);
+    if (!bt.known) return null;
+    const m = (mappings.controlsScoped || {})[String(bt.id)] || BIQ_CONTROLS_SCOPED_SEED[String(bt.id)];
+    if (!m) return null;
+    return Array.isArray(m) ? { c1: m, c2: m } : m;
+}
+// true / false / null (null = no matrix data for this type — stay silent)
+export function biqControlAllowed(mappings, blindType, side, controlName) {
+    const m = biqControlMatrixFor(mappings, blindType);
+    if (!m) return null;
+    const r = biqResolve(mappings, side === 'c2' ? 'control2' : 'control1', controlName);
+    if (!r.known) return null;                                     // unmapped is flagged elsewhere
+    if (r.id === -1) return true;                                  // 'None' is always acceptable
+    return (m[side] || []).some(id => String(id) === String(r.id));
+}
+// Human-readable list of what IS allowed (for flags/pickers).
+export function biqAllowedControlNames(mappings, blindType, side) {
+    const m = biqControlMatrixFor(mappings, blindType);
+    if (!m) return null;
+    const cat = side === 'c2' ? 'control2' : 'control1';
+    const inv = {};
+    Object.entries(mappings[cat] || {}).forEach(([k, v]) => { if (inv[v] === undefined || k.length > inv[v].length) inv[v] = k; });
+    return (m[side] || []).map(id => inv[id] || ('#' + id)).map(biqTitleCase);
+}
+function biqTitleCase(s) { return String(s).replace(/\b[a-z]/g, c => c.toUpperCase()); }
+// Snap controls onto the type's matrix where the answer is FORCED, flag where it isn't:
+//  - a side whose matrix holds exactly ONE option and the current value isn't legal -> set it
+//    (Cellular C2 must be "Free Hang" — a parsed "Rh Pin" is an artefact, not information);
+//  - an illegal MANUAL drive when the matrix has exactly one manual family on that side -> swap
+//    drive family, keep the side (dealer "LHC" on a cellular = left-hand control = Lh Cordlock);
+//  - anything else illegal is left in place for collectProblems to flag. Bracket-assigned sides
+//    (Coupled/Intermediate) are never touched.
+export function biqApplyControlMatrix(mappings, order) {
+    const MANUAL = /cordlock|chain|wand|cord|crank|spring/i;
+    ((order && order.items) || []).forEach(it => {
+        const m = biqControlMatrixFor(mappings, it.blindType);
+        if (!m || it._bracketRole) return;
+        [['c1', 'control1', 'Lh'], ['c2', 'control2', 'Rh']].forEach(([side, field, pref]) => {
+            const cur = biqNorm(it[field]);
+            if (/coupled|intermediate/i.test(cur)) return;
+            const ok = biqControlAllowed(mappings, it.blindType, side, cur);
+            if (ok !== false) return;                              // legal, unknown, or no data
+            const names = biqAllowedControlNames(mappings, it.blindType, side) || [];
+            if (names.length === 1) { it[field] = names[0]; it._ctlMatrixed = true; return; }
+            if (MANUAL.test(cur)) {
+                const sidePrefix = new RegExp('^' + (cur.match(/^(lh|rh)/i) ? cur.match(/^(lh|rh)/i)[1] : pref), 'i');
+                const manuals = names.filter(n => MANUAL.test(n));
+                const families = [...new Set(manuals.map(n => (n.match(MANUAL) || [''])[0].toLowerCase()))];
+                if (families.length === 1) {
+                    const sameSide = manuals.find(n => sidePrefix.test(n));
+                    if (sameSide) { it[field] = sameSide; it._ctlMatrixed = true; }
+                }
+            }
+        });
     });
 }
 

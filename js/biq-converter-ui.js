@@ -11,7 +11,7 @@ import {
     biqSplitFabric, biqNeedsSplit, biqReSplitFabrics,
     biqResolveRange, biqRangeNamesFor, biqComputeControlDropV2, biqResolveSundry, biqRecomputeControlDrops, biqApplyCustomerDefaults, biqVariantSpec, biqMergeTemplate, biqTemplateFor2, biqAssignSundryCodes, biqResolveCustomer, biqSuggestCustomer, biqCanonicalCustomerName,
     biqBuildDiscernment, BIQ_DISCERN_SCHEMA, biqBuildDiscernPrompt, biqApplyDiscernment, biqAcceptSuggestion, biqLearnFromAI,
-    biqApplyShutterConfig, biqApplyOptionDefaults, biqFoldOptionSynonyms, biqApplyBracketPairs, biqEmittedVariants, biqCopyOptions, biqInferControls, biqCanonicalize,
+    biqApplyShutterConfig, biqApplyOptionDefaults, biqFoldOptionSynonyms, biqApplyBracketPairs, biqEmittedVariants, biqCopyOptions, biqInferControls, biqApplyControlMatrix, biqCanonicalize,
     biqStampOriginals, biqApplyFormatProfile, biqLearnFormat,
     biqParseBlindGuysRows, biqNormalizeBlindGuys,
     biqParseMatheoItems, biqNormalizeMatheo,
@@ -306,6 +306,7 @@ function refresh() {
     biqApplyBracketPairs(MAPS, order);
     biqApplyOptionDefaults(MAPS, order);
     biqInferControls(MAPS, order);
+    biqApplyControlMatrix(MAPS, order);            // snap controls to the blind type's own dropdown list (where known)
     biqApplyFormatProfile(MAPS, FORMATS, order);   // fill unresolved fields from this customer's learned format
     biqCanonicalize(MAPS, order);
     renderCustomerTag();

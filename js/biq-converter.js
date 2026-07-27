@@ -1162,6 +1162,86 @@ export function biqTbdCoherent(mappings, order) {
     return good >= Math.ceil(order.items.length * 0.6);
 }
 
+// ---------- printable order preview (PDF via the browser's print dialog) ----------
+// Mirrors BlindIQ's own "Online Purchase Order" preview (reference: BlindIQ_ExportedCO_116888.pdf):
+// From/To company blocks, an order-meta panel, a Blinds table with the pipe-separated options
+// line under each item, then Sundries. Pure function -> full standalone HTML document string;
+// the UI opens it in a window and calls print() so the capturer saves it as a PDF.
+// Unresolved names print in red — the PDF doubles as a checking document.
+export function biqOrderPreviewHtml(mappings, order) {
+    const H = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const cust = biqResolveCustomer(mappings, order.customer);
+    const ce = cust.known ? cust.entry : {};
+    const opName = (() => {
+        if (!cust.known || !ce.ops || ce.operator == null || ce.operator === '') return '';
+        const hit = (ce.ops || []).find(o => String(o[0]) === String(ce.operator));
+        return hit ? hit[1] : '';
+    })();
+    const mark = (name, res) => res.known
+        ? H(name)
+        : '<span class="bad">' + (H(name) || '—') + '</span>';
+    const rows = order.items.map((it, i) => {
+        const rt = biqResolve(mappings, 'blindTypes', it.blindType), rr = biqResolveRange(mappings, it.blindType, it.range),
+            rc = biqResolveColour(mappings, it.range, it.colour), rf = biqResolve(mappings, 'fixes', it.fix),
+            r1 = biqResolve(mappings, 'control1', it.control1), r2 = biqResolve(mappings, 'control2', it.control2);
+        const opts = biqEmittedVariants(mappings, it).map(v => H(v[0]) + '=' + H(v[1])).join(' | ');
+        return `<tr class="item">
+  <td>${H(it.code || String.fromCharCode(97 + (i % 26)))}</td><td>${H(it.qty)}</td><td>${H(it.location)}</td>
+  <td>${mark(it.blindType, rt)}</td><td>${mark(it.range, rr)}</td><td>${mark(it.colour, rc)}</td>
+  <td class="num">${H(it.width)}</td><td class="num">${H(it.drop)}</td><td class="num">${H(it.controlDrop)}</td>
+  <td>${mark(it.control1, r1)}</td><td>${mark(it.control2, r2)}</td><td>${mark(it.fix, rf)}</td>
+</tr>` + (opts || it.notes ? `<tr class="opts"><td></td><td colspan="11">${opts ? opts : ''}${it.notes ? (opts ? '<br>' : '') + '<i>Note: ' + H(it.notes) + '</i>' : ''}</td></tr>` : '');
+    }).join('\n');
+    const sunRows = (order.sundries || []).map(s => `<tr>
+  <td>${H(s.code)}</td><td>${H(s.qty)}</td><td class="num">${H(s.type)}</td><td class="num">${s.sundry ? H(s.sundry) : '<span class="bad">—</span>'}</td><td>${H(s.notes)}</td>
+</tr>`).join('\n');
+    const meta = [
+        ['Order No', order.orderNumber], ['Order Date', order.orderDate], ['Required Date', order.requiredDate],
+        ['Delivery Method', order.deliveryMethod], ['Packing Type', order.packingType],
+        ['BlindIQ Order ID', order.orderId || '0'], ['Source', order.sourceDesc]
+    ].map(([k, v]) => `<tr><th>${H(k)}</th><td>${H(v) || '—'}</td></tr>`).join('');
+    return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Order ${H(order.orderNumber || 'preview')} — ${H(order.customer)}</title>
+<style>
+  @page { size: A4 landscape; margin: 12mm; }
+  * { box-sizing: border-box; }
+  body { font: 9.5pt/1.35 "Segoe UI", Arial, sans-serif; color: #1a1a1a; margin: 0; }
+  h1 { font-size: 14pt; margin: 0 0 2mm; } h2 { font-size: 11pt; margin: 5mm 0 1.5mm; }
+  .head { display: flex; gap: 6mm; align-items: flex-start; border-bottom: 2px solid #333; padding-bottom: 3mm; }
+  .blk { flex: 1; } .blk h3 { font-size: 8.5pt; text-transform: uppercase; color: #666; margin: 0 0 1mm; }
+  .blk p { margin: 0; font-size: 9pt; }
+  table.meta { border-collapse: collapse; font-size: 8.5pt; }
+  table.meta th { text-align: left; color: #666; font-weight: 600; padding: .4mm 3mm .4mm 0; white-space: nowrap; }
+  table.meta td { padding: .4mm 0; }
+  table.items { width: 100%; border-collapse: collapse; font-size: 8.5pt; margin-top: 1mm; }
+  table.items th { background: #eee; text-align: left; padding: 1.2mm 1.5mm; border-bottom: 1.2px solid #333; font-size: 7.5pt; text-transform: uppercase; }
+  table.items td { padding: 1mm 1.5mm; border-bottom: .3px solid #ccc; vertical-align: top; }
+  tr.item td { border-bottom: none; }
+  tr.opts td { font-size: 7.5pt; color: #444; padding-top: 0; border-bottom: .3px solid #bbb; }
+  td.num { text-align: right; }
+  .bad { color: #b91c1c; font-weight: 600; }
+  .foot { margin-top: 5mm; font-size: 7.5pt; color: #777; display: flex; justify-content: space-between; }
+  thead { display: table-header-group; }
+  tr { page-break-inside: avoid; }
+</style></head><body>
+<div class="head">
+  <div class="blk"><h3>From</h3>
+    <p><b>Blind Designs &amp; Interiors (Pty) Ltd</b><br>14 - 18 Ivanseth Rd, Reuven, JHB, 2091<br>Tel 011 683 0080 · orders@blinddesigns.co.za<br>VAT # 4760134025</p></div>
+  <div class="blk"><h3>To (Customer)</h3>
+    <p><b>${H(order.customer) || '—'}</b>${cust.known ? '<br>Customer ' + H(ce.customer) + ' · Address ' + H(ce.address) + (ce.operator !== '' && ce.operator != null ? ' · Operator ' + H(ce.operator) + (opName ? ' (' + H(opName) + ')' : '') : '') : ' <span class="bad">(no BlindIQ IDs)</span>'}${order.client ? '<br>End client / job: ' + H(order.client) : ''}${order.address ? '<br>' + H(order.address).replace(/\n/g, '<br>') : ''}</p></div>
+  <div class="blk"><table class="meta">${meta}</table></div>
+</div>
+${order.notes ? '<p style="margin:2mm 0 0"><b>Order notes:</b> ' + H(order.notes) + '</p>' : ''}
+<h2>Blinds (${order.items.length})</h2>
+<table class="items"><thead><tr>
+  <th>Item</th><th>Qty</th><th>Location</th><th>Blind Type</th><th>Range</th><th>Colour</th>
+  <th>Width</th><th>Drop</th><th>Cont. Drop</th><th>Control</th><th>Control</th><th>Fix</th>
+</tr></thead><tbody>${rows}</tbody></table>
+${(order.sundries || []).length ? `<h2>Sundries (${order.sundries.length})</h2>
+<table class="items"><thead><tr><th>Code</th><th>Qty</th><th>Type ID</th><th>Sundry ID</th><th>Description / notes</th></tr></thead><tbody>${sunRows}</tbody></table>` : ''}
+<div class="foot"><span>Generated by OrderBot — BlindIQ import preview. Red values are not yet mapped to BlindIQ IDs.</span><span>${H(new Date().toISOString().slice(0, 10))}</span></div>
+</body></html>`;
+}
+
 // =============================================================================
 // AI EXTRACTION — universal path for any document type (via the Gemini proxy)
 // =============================================================================

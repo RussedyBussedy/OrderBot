@@ -16,7 +16,7 @@ import {
     biqParseBlindGuysRows, biqNormalizeBlindGuys,
     biqParseMatheoItems, biqNormalizeMatheo,
     biqParseLifestyle, biqNormalizeLifestyle, biqParseCnbw, biqNormalizeCnbw, biqCnbwCoherent,
-    biqParseTbd, biqNormalizeTbd, biqTbdCoherent,
+    biqParseTbd, biqNormalizeTbd, biqTbdCoherent, biqOrderPreviewHtml,
     biqParseBDFields, biqNormalizeBDForm,
     biqBuildExtractionPrompt, biqAiResultToOrder,
     biqCollectProblems, biqGenerateXML, biqPrettyXML, biqImportSafetyScan,
@@ -883,6 +883,16 @@ function bindEvents() {
     $('biq-helpclose').addEventListener('click', () => { $('biq-helppanel').classList.add('hidden'); fitCollapsible(); });
     $('biq-download').addEventListener('click', downloadXML);
     $('biq-copyxml').addEventListener('click', () => { navigator.clipboard.writeText(biqGenerateXML(MAPS, order)).then(() => D.showToast('XML copied.', 'success')); });
+    $('biq-pdf').addEventListener('click', () => {
+        if (!order || !order.items.length) { D.showToast('Nothing to print — load or create an order first.', 'error'); return; }
+        refresh();                                                       // print exactly the current state
+        const w = window.open('', '_blank');
+        if (!w) { D.showToast('Popup blocked — allow popups for this site to print the preview.', 'error'); return; }
+        w.document.write(biqOrderPreviewHtml(MAPS, order));
+        w.document.close();
+        w.onload = () => setTimeout(() => w.print(), 150);               // print dialog -> "Save as PDF"
+        setTimeout(() => { try { w.print(); } catch (e) { } }, 900);      // fallback if onload already fired
+    });
     $('biq-reqplus').addEventListener('click', () => { const base = val('biq-h-orderdate') || new Date().toISOString().slice(0, 10); const d = new Date(base); d.setDate(d.getDate() + 14); $('biq-h-reqdate').value = d.toISOString().slice(0, 10); refresh(); });
     // tab switch preview/xml
     $('biq-tab-prev').addEventListener('click', () => { $('biq-preview').classList.remove('hidden'); $('biq-xmlwrap').classList.add('hidden'); $('biq-tab-prev').classList.add('biq-btn-on'); $('biq-tab-xml').classList.remove('biq-btn-on'); });
@@ -1073,6 +1083,7 @@ function injectMarkup() {
           <button id="biq-tab-xml" class="biq-btn-sm">BlindIQ XML</button>
           <span class="flex-1"></span>
           <button id="biq-copyxml" class="biq-btn-sm">Copy XML</button>
+          <button id="biq-pdf" class="biq-btn-sm" title="Opens the print dialog — choose 'Save as PDF'">🖨 PDF preview</button>
           <button id="biq-download" class="bg-green-600 text-white font-bold py-1.5 px-5 rounded-lg hover:bg-green-700 text-sm">⬇ Download .xml</button>
         </div>
         <div id="biq-preview" class="mt-2"></div>

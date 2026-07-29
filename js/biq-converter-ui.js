@@ -183,7 +183,7 @@ async function loadPdf(f) {
         const cb = biqParseCnbw(textItems);
         if (cb && cb.rows.length) { const o = biqNormalizeCnbw(MAPS, cb); if (biqCnbwCoherent(MAPS, o)) { setOrder(o); return; } }
         const tb = biqParseTbd(textItems);
-        if (tb && tb.rows.length) { const o = biqNormalizeTbd(MAPS, tb); if (biqTbdCoherent(MAPS, o)) { setOrder(o); return; } }
+        if (tb && tb.rows.length) { const o = biqNormalizeTbd(MAPS, tb, f && f.name); if (biqTbdCoherent(MAPS, o)) { setOrder(o); return; } }
     }
     // 3) unknown or scanned -> AI
     await aiExtract([f]);

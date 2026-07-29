@@ -1067,12 +1067,25 @@ export function biqTbdOptions(s) {
     }).filter(Boolean);
 }
 
-export function biqNormalizeTbd(mappings, p) {
+// TBD/Galaxy documents print no quote or order number anywhere, so BlindIQ's customer order
+// reference has to come from what the document DOES identify itself by. Galaxy's job number lives
+// in the file name ("L17084 Rob.pdf" -> L17084); TBD names files without one, so those fall back to
+// the document's own "Name:" job field. Never invents a reference — with neither, it stays blank
+// and collectProblems keeps flagging it.
+// Deliberately narrow: a job number is a letter-prefixed serial at the START of the file name
+// (L17084, JOB2231, BD-4457). A bare date or a word is not a job number.
+export function biqJobNumberFromFileName(fileName) {
+    const base = biqNorm(String(fileName || '').replace(/\.[a-z0-9]+$/i, '').replace(/[_]+/g, ' '));
+    const m = base.match(/^([A-Za-z]{1,4}-?\d{4,8})\b/);
+    return m ? m[1].toUpperCase() : '';
+}
+export function biqNormalizeTbd(mappings, p, fileName) {
     const o = biqBlankOrder();
     o.source = 'tbd';
     o.sourceDesc = (p.meta.docType || 'BLINDS ORDER') + ' — ' + (p.meta.company || 'Total Blind Designs software');
     o.customer = p.meta.company || 'Total Blind Designs';
     o.client = p.meta.client || '';
+    o.orderNumber = biqJobNumberFromFileName(fileName) || biqNorm(p.meta.client) || '';
     o.orderDate = biqParseDate(p.meta.orderDate);
     if (p.meta.project) o.notes = 'Project: ' + p.meta.project;
     let n = 0;

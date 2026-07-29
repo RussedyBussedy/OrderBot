@@ -1181,7 +1181,90 @@ export function biqNormalizeTbd(mappings, p) {
         it.controlDrop = biqComputeControlDropV2(mappings, '', it.drop, it.blindType, it.range); it._cdAuto = true;
         o.items.push(it);
     });
+    biqExpandValances(mappings, o);
     return o;
+}
+
+// A valance block on a blind row becomes its OWN order line (that is how BlindIQ carries it).
+// Product family follows the parent blind (Element Roller -> Element Valance; otherwise Valance);
+// the doc's Range/Colour/Width/Fix land on the line; Returns / End Cap details are mapped onto the
+// valance type's own option keys where its template has them, and anything unmappable rides in the
+// line notes. Drop comes from the range name's profile size ("Linear 150mm" -> 150) when stated,
+// else stays blank to be flagged. If the DB has no valance blind type at all, the line is NOT
+// invented — the parent keeps its _valance flag for the capturer (never silently wrong).
+export function biqExpandValances(mappings, order) {
+    (order ? order.items.slice() : []).forEach(src => {
+        if (!src._valance || !src._valance.length || src._valanceLine) return;
+        const kv = {};
+        src._valance.forEach(s => {
+            const i = s.indexOf('=');
+            if (i > 0) kv[biqLc(biqNorm(s.slice(0, i)).replace(/^valance\s+/i, ''))] = biqNorm(s.slice(i + 1));
+        });
+        const fam = /^element\b/i.test(src.blindType || '') ? 'Element Valance' : 'Valance';
+        const alt = fam === 'Element Valance' ? 'Valance' : 'Element Valance';
+        const use = biqResolve(mappings, 'blindTypes', fam).known ? fam
+            : (biqResolve(mappings, 'blindTypes', alt).known ? alt : '');
+        if (!use) return;
+        const it = biqBlankItem(String(order.items.length + 1));
+        it.blindType = use;
+        it.qty = src.qty || '1'; it.location = src.location || '';
+        it.range = kv['range'] || '';
+        it.colour = kv['colour'] || '';
+        it.width = (kv['width'] || '').replace(/[^\d]/g, '');
+        const dm = (kv['range'] || '').match(/(\d{2,4})\s*mm/i);
+        it.drop = dm ? dm[1] : '';
+        it.fix = kv['fix'] || src.fix || '';
+        // "Linear 150mm" is TBD's name; BlindIQ's range is e.g. "linear valance" — accept the
+        // scoped range only when the first word pins it to exactly ONE candidate (same rule as
+        // the double-roller composite ranges; anything else stays as written and gets flagged).
+        if (!biqResolveRange(mappings, it.blindType, it.range).known && it.range) {
+            const bt = biqResolve(mappings, 'blindTypes', it.blindType);
+            const tok = biqLc(it.range).split(/\s+/)[0];
+            if (bt.known && tok) {
+                const pre = bt.id + '|';
+                const cands = Object.keys(mappings.rangesScoped || {})
+                    .filter(k => k.indexOf(pre) === 0).map(k => k.slice(pre.length))
+                    .filter(rn => rn.split(/\s+/).includes(tok));
+                if (cands.length === 1) { it._origRange = it.range; it.range = cands[0]; }
+            }
+        }
+        // No legacy fallback here: a valance with no DB template gets NO options (details go to
+        // notes) rather than inheriting roller-shaped keys that don't exist on a valance.
+        const spec = biqVariantSpec(mappings, it.blindType) || [];
+        it.variants = spec.map(s => [s.k, s.def || '']);
+        const used = new Set(['range', 'colour', 'width', 'fix']);
+        const matchVal = (v, o) => {
+            const vals = o.values || [];
+            const hit = vals.find(x => biqLc(x) === biqLc(v));
+            if (hit) return hit;
+            const syn = BIQ_VALUE_SYNONYMS.find(([re]) => re.test(biqNorm(v)));
+            return (syn && vals.find(x => biqLc(x) === biqLc(syn[1]))) || v;   // unmatched -> flagged, not dropped
+        };
+        const put = (docKey, specRe) => {
+            if (kv[docKey] == null) return;
+            const o = spec.find(s => specRe.test(s.k));
+            if (!o) return;
+            biqSetVar(it.variants, o.k, matchVal(kv[docKey], o));
+            used.add(docKey);
+        };
+        put('returns', /^val\s*returns$/i);
+        put('end cap colour', /^end\s*cap\s*colou?r$/i);
+        put('end cap lh', /^lh\s*side$/i);
+        put('end cap rh', /^rh\s*side$/i);
+        const tob = spec.find(s => /^type\s*of\s*blind$/i.test(s.k));
+        if (tob) {
+            const want = /roller/i.test(src.blindType) ? 'Roller Blind'
+                : /wood|venetian/i.test(src.blindType) ? 'Wood Venetian' : '';
+            const real = want && (tob.values || []).find(x => biqLc(x) === biqLc(want));
+            if (real) biqSetVar(it.variants, tob.k, real);
+        }
+        const leftovers = Object.keys(kv).filter(k => !used.has(k)).map(k => k + '=' + kv[k]);
+        it.notes = 'Valance for blind ' + (src.location || src.code)
+            + (it._origRange ? ' | doc range: ' + it._origRange : '')
+            + (leftovers.length ? ' | ' + leftovers.join(' | ') : '');
+        order.items.push(it);
+        src._valanceLine = it.code;
+    });
 }
 
 // Sanity-check a deterministic TBD parse before trusting it over the AI path.
@@ -1501,7 +1584,7 @@ export function biqCollectProblems(mappings, order) {
         // Options the emit gate would withhold — surfaced here so they are FIXED, not lost.
         biqDroppedVariants(mappings, it).forEach(d =>
             probs.push({ t: w + 'option "' + d.k + '=' + d.v + '" will NOT import — ' + d.why + '. Correct the value or move it to the item notes.' }));
-        if (it._valance && it._valance.length)
+        if (it._valance && it._valance.length && !it._valanceLine)
             probs.push({ t: w + 'has a VALANCE (' + it._valance.join(', ') + ') — BlindIQ needs this captured as its own valance line. Details are carried in the item notes.' });
         const spec = biqVariantSpec(mappings, it.blindType);
         if (spec) spec.forEach(o => {

@@ -11,7 +11,7 @@ import {
     biqSplitFabric, biqNeedsSplit, biqReSplitFabrics,
     biqResolveRange, biqRangeNamesFor, biqComputeControlDropV2, biqResolveSundry, biqRecomputeControlDrops, biqApplyCustomerDefaults, biqVariantSpec, biqMergeTemplate, biqTemplateFor2, biqAssignSundryCodes, biqResolveCustomer, biqSuggestCustomer, biqCanonicalCustomerName,
     biqBuildDiscernment, BIQ_DISCERN_SCHEMA, biqBuildDiscernPrompt, biqApplyDiscernment, biqAcceptSuggestion, biqLearnFromAI,
-    biqApplyShutterConfig, biqApplyOptionDefaults, biqFoldOptionSynonyms, biqApplyBracketPairs, biqEmittedVariants, biqCopyOptions, biqInferControls, biqApplyControlMatrix, biqCanonicalize,
+    biqApplyShutterConfig, biqApplyOptionDefaults, biqFoldOptionSynonyms, biqApplyBracketPairs, biqEmittedVariants, biqDroppedVariants, biqCopyOptions, biqInferControls, biqApplyControlMatrix, biqCanonicalize,
     biqStampOriginals, biqApplyFormatProfile, biqLearnFormat,
     biqParseBlindGuysRows, biqNormalizeBlindGuys,
     biqParseMatheoItems, biqNormalizeMatheo,
@@ -376,7 +376,7 @@ function renderItems() {
             + `<td>${inp('control1', it.control1, '', 76)}<br>${prodTag(i,'control1',r1)}${aiChip(it,'control1')}</td>`
             + `<td>${inp('control2', it.control2, '', 76)}<br>${prodTag(i,'control2',r2)}${aiChip(it,'control2')}</td>`
             + `<td>${inp('controlDrop', it.controlDrop, '', 52)}</td>`
-            + `<td class="whitespace-nowrap"><button class="biq-btn-sm" data-biq-togglevars="${i}">${it.open ? '▾' : '▸'} opts (${it.variants.filter(v => v[1]).length})</button> <button class="biq-btn-sm biq-btn-danger" data-biq-delitem="${i}">✕</button></td>`
+            + (() => { const nd = biqDroppedVariants(MAPS, it).length; return `<td class="whitespace-nowrap"><button class="biq-btn-sm" data-biq-togglevars="${i}" title="${nd ? nd + ' option(s) will NOT import — open to fix' : ''}">${it.open ? '▾' : '▸'} opts (${it.variants.filter(v => v[1]).length})${nd ? ` <span class="text-red-700 font-bold">✗${nd}</span>` : ''}</button> <button class="biq-btn-sm biq-btn-danger" data-biq-delitem="${i}">✕</button></td>`; })()
             + '</tr>';
         if (flags.length) {
             html += `<tr class="biq-flagrow"><td></td><td colspan="12">` + flags.map(f =>
@@ -384,16 +384,18 @@ function renderItems() {
         }
         if (it.open) {
             const spec = biqVariantSpec(MAPS, it.blindType) || [];
+            const droppedSet = new Set(biqDroppedVariants(MAPS, it).map(d => biqLc(d.k) + '=' + biqLc(d.v)));
             html += `<tr><td colspan="13"><div class="biq-varbox">`;
             it.variants.forEach((v, vi) => {
                 const so = spec.find(o => biqLc(o.k) === biqLc(v[0]));
+                const isDropped = droppedSet.has(biqLc(v[0]) + '=' + biqLc(v[1]));
                 let dl = '';
                 if (so && so.values && so.values.length) {
                     const dlid = `biq-dl-v-${i}-${vi}`;
                     dl = ` list="${dlid}"></input><datalist id="${dlid}">${so.values.map(x => `<option value="${escH(x)}">`).join('')}</datalist`;
                 }
-                html += `<div class="flex gap-1 mb-1"><input class="biq-in biq-vk${so && so.req ? ' font-semibold' : ''}" value="${escH(v[0])}" data-biq-var="${i}:${vi}:0" placeholder="Option" title="${so && so.req ? 'Required option' : ''}">`
-                    + `<input class="biq-in flex-1" value="${escH(v[1])}" data-biq-var="${i}:${vi}:1" placeholder="${so && so.values ? escH(so.values.slice(0, 3).join(' / ')) : '(empty = blank in XML)'}"${dl}>`
+                html += `<div class="flex gap-1 mb-1"><input class="biq-in biq-vk${so && so.req ? ' font-semibold' : ''}${isDropped ? ' border-red-500 bg-red-50' : ''}" value="${escH(v[0])}" data-biq-var="${i}:${vi}:0" placeholder="Option" title="${so && so.req ? 'Required option' : (isDropped ? 'Will NOT import — not a valid option/value for this blind type' : '')}">`
+                    + `<input class="biq-in flex-1${isDropped ? ' border-red-500 bg-red-50 text-red-700 font-semibold' : ''}" value="${escH(v[1])}" data-biq-var="${i}:${vi}:1" placeholder="${so && so.values ? escH(so.values.slice(0, 3).join(' / ')) : '(empty = blank in XML)'}" title="${isDropped ? 'Will NOT import — fix the value or move it to the item notes' : ''}"${dl}>`
                     + `<button class="biq-btn-sm biq-btn-danger" data-biq-delvar="${i}:${vi}">✕</button></div>`;
             });
             html += `<button class="biq-btn-sm" data-biq-addvar="${i}">+ option</button>`

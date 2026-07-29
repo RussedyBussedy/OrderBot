@@ -340,6 +340,27 @@ export function biqEmittedVariants(mappings, it) {
         return true;
     });
 }
+// Companion to biqEmittedVariants: everything the emit gate will WITHHOLD from BlindIQ, and why.
+// July 2026 lesson (order BDO665087): cassettes, fabric inserts, a valance and a smart plug were
+// silently discarded here and never produced. Anything on this list must be shown to the user —
+// problems panel, red in the items table and the PDF preview — never silently lost.
+// "No"/"None"/empty values are not losses (absence = default in BlindIQ), nor are known optional
+// keys sitting at their default.
+export function biqDroppedVariants(mappings, it) {
+    const spec = biqVariantSpec(mappings, it.blindType);
+    if (!spec) return [];
+    const out = [];
+    it.variants.forEach(v => {
+        const val = biqNorm(v[1]);
+        if (!biqNorm(v[0]) || !val || /^(no|none|false)$/i.test(val)) return;
+        const o = spec.find(s => biqLc(s.k) === biqLc(v[0]));
+        if (!o) { out.push({ k: v[0], v: v[1], why: 'not a ' + (it.blindType || 'known') + ' option in BlindIQ' }); return; }
+        const allowed = (o.values || []).map(biqLc);
+        if (allowed.length && !allowed.includes(biqLc(val)))
+            out.push({ k: o.k, v: v[1], why: 'value not in BlindIQ\'s list (' + (o.values || []).slice(0, 5).join(' / ') + ((o.values || []).length > 5 ? ' …' : '') + ')' });
+    });
+    return out;
+}
 
 // ---------- fabric split ("5 Screen Charcoal Grey" -> range + colour) ----------
 export function biqSplitFabric(mappings, fabric, blindTypeName) {
@@ -912,7 +933,7 @@ function biqTbdDrive(s) { const t = biqLc(s || ''); for (const [re, v] of BIQ_TB
 // Hold Downs stays an option; the rest become lines. Every one becomes a line so nothing is
 // lost — the sundry ID is filled in when the name resolves confidently and left blank (and so
 // flagged for the capturer) when it doesn't, rather than guessed onto the wrong part.
-const BIQ_TBD_SUNDRY_KEYS = /^(motor|adaptor|adapter|charger|remote|wall\s*switch|smart\s*hub|wind\s*sensor|crank\s*handle|pull\s*pole|accessory)$/i;
+const BIQ_TBD_SUNDRY_KEYS = /^(motor|adaptor|adapter|charger|remote|wall\s*switch|smart\s*hub|smart\s*plug\b.*|wind\s*sensor|crank\s*handle|pull\s*pole|accessory)$/i;
 // TBD shorthand -> the catalogue's long-form vocabulary (each mapping evidence-backed against
 // the sundries DB): 1TD = One Touch Dual, ZB = Zigbee, M&T = Matter (the smart-home protocol —
 // DB: "one touch dual matter motor 220v ac 2nm"), WF = Wire Free.
@@ -1100,14 +1121,20 @@ export function biqNormalizeTbd(mappings, p) {
         const opts = biqTbdOptions(r.options || '');
         it.variants = biqTemplateFor2(mappings, it.blindType || 'roller');
         let leftEnd = '', rightEnd = '', joined = '';
-        const seen = {}, extra = [], hardware = [];
+        const seen = {}, extra = [], hardware = [], valance = [];
         opts.forEach(([k, v]) => {
             const kl = biqLc(k);
             if (kl === 'left end') { leftEnd = v; return; }
             if (kl === 'right end') { rightEnd = v; return; }
             if (kl === 'joined to') { joined = v; return; }
+            // A valance can't ride on a roller line — BlindIQ orders it as its own valance line.
+            // Collect the whole block, carry it in the item notes (travels in COI_Order_Notes)
+            // and let collectProblems flag it for the capturer. (July test: a Linear 150mm
+            // valance died silently here and never got produced.)
+            if (/^valance\b/.test(kl)) { valance.push(k + '=' + v); return; }
             // motorisation hardware -> its own sundry line, not a variant option. A Yes/No
-            // toggle (Pull Pole=Yes) names the part in its KEY; the rest name it in the value.
+            // toggle (Pull Pole=Yes, Smart Plug ZB=Yes) names the part in its KEY; the rest
+            // name it in the value.
             if (BIQ_TBD_SUNDRY_KEYS.test(kl)) {
                 const txt = biqTbdExpand(/^(yes|true)$/i.test(biqNorm(v)) ? k : v);
                 if (txt && !/^(no|false|none)$/i.test(txt)) hardware.push(txt);
@@ -1120,6 +1147,10 @@ export function biqNormalizeTbd(mappings, p) {
             biqSetVar(it.variants, k, v);                               // already BlindIQ-shaped
         });
         if (extra.length) it.notes = (it.notes ? it.notes + ' | ' : '') + 'Also: ' + extra.join(' | ');
+        if (valance.length) {
+            it.notes = (it.notes ? it.notes + ' | ' : '') + 'VALANCE (capture as its own line): ' + valance.join(' | ');
+            it._valance = valance.slice();
+        }
         // aggregates duplicates across lines, so two blinds on the same motor give qty 2
         hardware.forEach(txt => biqAddMotorSundry(mappings, o, txt, +it.qty || 1, true));
         // Controls: prefer the explicit Left End / Right End options; fall back to the
@@ -1188,7 +1219,9 @@ export function biqOrderPreviewHtml(mappings, order) {
         const rt = biqResolve(mappings, 'blindTypes', it.blindType), rr = biqResolveRange(mappings, it.blindType, it.range),
             rc = biqResolveColour(mappings, it.range, it.colour), rf = biqResolve(mappings, 'fixes', it.fix),
             r1 = biqResolve(mappings, 'control1', it.control1), r2 = biqResolve(mappings, 'control2', it.control2);
-        const opts = biqEmittedVariants(mappings, it).map(v => H(v[0]) + '=' + H(v[1])).join(' | ');
+        const emitted = biqEmittedVariants(mappings, it).map(v => H(v[0]) + '=' + H(v[1]));
+        const withheld = biqDroppedVariants(mappings, it).map(d => '<span class="bad">✗ ' + H(d.k) + '=' + H(d.v) + '</span>');
+        const opts = emitted.concat(withheld).join(' | ');
         return `<tr class="item">
   <td>${H(it.code || String.fromCharCode(97 + (i % 26)))}</td><td>${H(it.qty)}</td><td>${H(it.location)}</td>
   <td>${mark(it.blindType, rt)}</td><td>${mark(it.range, rr)}</td><td>${mark(it.colour, rc)}</td>
@@ -1242,7 +1275,7 @@ ${order.notes ? '<p style="margin:2mm 0 0"><b>Order notes:</b> ' + H(order.notes
 </tr></thead><tbody>${rows}</tbody></table>
 ${(order.sundries || []).length ? `<h2>Sundries (${order.sundries.length})</h2>
 <table class="items"><thead><tr><th>Code</th><th>Qty</th><th>Type ID</th><th>Sundry ID</th><th>Description / notes</th></tr></thead><tbody>${sunRows}</tbody></table>` : ''}
-<div class="foot"><span>Generated by OrderBot — BlindIQ import preview. Red values are not yet mapped to BlindIQ IDs.</span><span>${H(new Date().toISOString().slice(0, 10))}</span></div>
+<div class="foot"><span>Generated by OrderBot — BlindIQ import preview. Red values are not yet mapped to BlindIQ IDs; red ✗ options will NOT import until corrected.</span><span>${H(new Date().toISOString().slice(0, 10))}</span></div>
 </body></html>`;
 }
 
@@ -1465,6 +1498,11 @@ export function biqCollectProblems(mappings, order) {
             }
         });
         if (it._bracketOdd) probs.push({ t: w + 'flagged as ' + it._bracketOdd + ' bracket but has no matching pair — couple it with its partner line (or clear the flag).' });
+        // Options the emit gate would withhold — surfaced here so they are FIXED, not lost.
+        biqDroppedVariants(mappings, it).forEach(d =>
+            probs.push({ t: w + 'option "' + d.k + '=' + d.v + '" will NOT import — ' + d.why + '. Correct the value or move it to the item notes.' }));
+        if (it._valance && it._valance.length)
+            probs.push({ t: w + 'has a VALANCE (' + it._valance.join(', ') + ') — BlindIQ needs this captured as its own valance line. Details are carried in the item notes.' });
         const spec = biqVariantSpec(mappings, it.blindType);
         if (spec) spec.forEach(o => {
             if (o.req) { const f = it.variants.find(v => biqLc(v[0]) === biqLc(o.k));
@@ -1911,6 +1949,40 @@ export function biqFoldOptionSynonyms(mappings, order) {
             }
         });
     });
+    biqFoldCassette(mappings, order);
+}
+
+// Dealers (TBD software especially) write a cassette as plain keys — "Cassette=Yes",
+// "Cassette Colour=Black", "Fabric Insert=Yes" — while BlindIQ's option is a single
+// colour-valued key ("Sys 40 70mm Cassette=Black") plus a separate insert toggle
+// ("Fabric Insert for 70mm Cassette=Yes"). Fold the dealer keys onto the blind type's own
+// cassette options. Template-aware: works for any blind type whose spec has a colour-valued
+// *Cassette* option, and leaves the raw keys (to be flagged, never dropped) where it doesn't.
+// A Cassette=Yes with a missing/unknown colour keeps the raw value so the emit gate flags it.
+export function biqFoldCassette(mappings, order) {
+    (order ? order.items : []).forEach(it => {
+        const spec = biqVariantSpec(mappings, it.blindType); if (!spec) return;
+        const isYes = s => /^(yes|true)$/i.test(biqNorm(s));
+        const idxOf = re => it.variants.findIndex(v => re.test(biqLc(v[0])));
+        const colourCassette = spec.find(o => /cassette/i.test(o.k) && (o.values || []).length
+            && !(o.values || []).every(x => /^(yes|no)$/i.test(x)));
+        const ci = idxOf(/^cassette$/), coli = idxOf(/^cassette\s+colou?r$/);
+        if (colourCassette && (ci >= 0 || coli >= 0)) {
+            const on = ci >= 0 ? isYes(it.variants[ci][1]) : true;   // a colour alone implies a cassette
+            const colour = coli >= 0 ? biqNorm(it.variants[coli][1]) : '';
+            if (on) {
+                const match = (colourCassette.values || []).find(x => biqLc(x) === biqLc(colour));
+                biqSetVar(it.variants, colourCassette.k, match || colour || 'Yes');
+            }
+            [ci, coli].filter(x => x >= 0).sort((a, b) => b - a).forEach(x => it.variants.splice(x, 1));
+        }
+        const fii = idxOf(/^fabric\s+insert$/);
+        const fiOpt = spec.find(o => /fabric\s+insert/i.test(o.k));
+        if (fii >= 0 && fiOpt && biqLc(fiOpt.k) !== 'fabric insert') {
+            if (isYes(it.variants[fii][1])) biqSetVar(it.variants, fiOpt.k, 'Yes');
+            it.variants.splice(fii, 1);
+        }
+    });
 }
 
 // Fill omitted options with sensible defaults so the capturer sees the real standard:
@@ -2114,6 +2186,11 @@ function biqReSide(ctrlText, side) {
 export function biqApplyIntermediatePair(order, i, j) {
     [i, j].forEach(idx => {
         const it = order.items[idx]; if (!it) return;
+        // If the document already states which side carries the shared bracket, trust it.
+        // (July test: "Lh Pin / Rh Intermediate" reached this fallback and had its explicit
+        // Pin overwritten, producing an impossible double-intermediate that went to production.)
+        const intL = /intermediate/i.test(it.control1 || ''), intR = /intermediate/i.test(it.control2 || '');
+        if (intL !== intR) return;
         const s = biqDriveSide(it);
         if (s === 'R') it.control1 = 'Lh Intermediate';            // drive right -> left is shared
         else if (s === 'L') it.control2 = 'Rh Intermediate';       // drive left  -> right is shared
@@ -2131,19 +2208,25 @@ export function biqApplyIntermediatePair(order, i, j) {
 // outer side is a Pin. i = first/left line, j = second/right line. Coupled Bracket Yes on i, No on j.
 export function biqApplyCoupledPair(order, i, j) {
     const a = order.items[i], b = order.items[j]; if (!a || !b) return;
-    const sa = biqDriveSide(a), sb = biqDriveSide(b);
-    let opIsA = (sa && sa !== 'B');
-    if (!(sa && sa !== 'B') && (sb && sb !== 'B')) opIsA = false;
-    const driveOf = (it, s) => (s === 'L') ? it.control1 : (s === 'R') ? it.control2
-        : (/chain|motor/i.test(biqLc(it.control1)) ? it.control1 : it.control2);
-    a.control2 = 'Rh Coupled';                                     // a inner (right)
-    b.control1 = 'Lh Coupled';                                     // b inner (left)
-    if (opIsA) {
-        a.control1 = biqReSide(driveOf(a, sa) || 'Chain', 'L');    // a outer left = drive
-        b.control2 = 'Rh Pin';                                     // b outer right = pin
-    } else {
-        b.control2 = biqReSide(driveOf(b, sb) || 'Chain', 'R');    // b outer right = drive
-        a.control1 = 'Lh Pin';                                     // a outer left = pin
+    // Same principle as the intermediate guard: when BOTH lines already state their Coupled
+    // side (TBD's "Left End=Coupled / Right End=Control"), the document has fully specified
+    // the geometry — only cost the bracket, never reshuffle the stated controls.
+    const stated = it => /coupled/i.test(it.control1 || '') !== /coupled/i.test(it.control2 || '');
+    if (!(stated(a) && stated(b))) {
+        const sa = biqDriveSide(a), sb = biqDriveSide(b);
+        let opIsA = (sa && sa !== 'B');
+        if (!(sa && sa !== 'B') && (sb && sb !== 'B')) opIsA = false;
+        const driveOf = (it, s) => (s === 'L') ? it.control1 : (s === 'R') ? it.control2
+            : (/chain|motor/i.test(biqLc(it.control1)) ? it.control1 : it.control2);
+        a.control2 = 'Rh Coupled';                                 // a inner (right)
+        b.control1 = 'Lh Coupled';                                 // b inner (left)
+        if (opIsA) {
+            a.control1 = biqReSide(driveOf(a, sa) || 'Chain', 'L');// a outer left = drive
+            b.control2 = 'Rh Pin';                                 // b outer right = pin
+        } else {
+            b.control2 = biqReSide(driveOf(b, sb) || 'Chain', 'R');// b outer right = drive
+            a.control1 = 'Lh Pin';                                 // a outer left = pin
+        }
     }
     biqSetVar(a.variants, 'Coupled Bracket', 'Yes');
     biqSetVar(b.variants, 'Coupled Bracket', 'No');

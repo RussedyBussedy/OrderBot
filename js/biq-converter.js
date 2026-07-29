@@ -1228,9 +1228,14 @@ export function biqExpandValances(mappings, order) {
                 if (cands.length === 1) { it._origRange = it.range; it.range = cands[0]; }
             }
         }
-        // No legacy fallback here: a valance with no DB template gets NO options (details go to
-        // notes) rather than inheriting roller-shaped keys that don't exist on a valance.
-        const spec = biqVariantSpec(mappings, it.blindType) || [];
+        // No legacy fallback to roller-shaped keys. But "Element Valance" (27) carries no option
+        // template in the mappings extract while the generic "Valance" (14) does, and BlindIQ uses
+        // the same vocabulary for both — proven by order BDO665443, where Type of Blind / Val
+        // Returns / End Cap Colour / LH Side / RH Side were accepted verbatim. So borrow the
+        // sibling valance template when the chosen type has none of its own; otherwise the
+        // capturer's returns and end caps are silently lost (which is exactly what happened).
+        const spec = biqVariantSpec(mappings, it.blindType)
+            || biqVariantSpec(mappings, use === 'Element Valance' ? 'Valance' : 'Element Valance') || [];
         it.variants = spec.map(s => [s.k, s.def || '']);
         const used = new Set(['range', 'colour', 'width', 'fix']);
         const matchVal = (v, o) => {
@@ -1264,6 +1269,12 @@ export function biqExpandValances(mappings, order) {
             + (leftovers.length ? ' | ' + leftovers.join(' | ') : '');
         order.items.push(it);
         src._valanceLine = it.code;
+        // Point the parent's note AT the new line instead of repeating the spec on it. Leaving the
+        // full valance detail on the blind is what made a capturer type those options onto the
+        // roller (BDO665443 item 4) while the real valance line went out blank.
+        const cut = biqNorm(src.notes).indexOf('VALANCE (capture as its own line)');
+        if (cut >= 0) src.notes = biqNorm(src.notes.slice(0, cut).replace(/\s*\|\s*$/, ''));
+        src.notes = (src.notes ? src.notes + ' | ' : '') + 'Valance for this blind is line ' + it.code + ' (do not add it here).';
     });
 }
 

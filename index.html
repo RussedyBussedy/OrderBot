@@ -50,6 +50,16 @@
         .bd-btn-ink { background: var(--bd-ink); color: var(--bd-paper); font-weight: 700; border-radius: 10px; }
         .bd-btn-ink:hover { background: #2e2e2b; }
 
+        /* View switcher (header pills: Orders / Drawings) */
+        #drawings-view.hidden { display: none; } /* guaranteed even before/without Tailwind */
+        .view-nav { display: flex; align-items: center; gap: 4px; padding: 4px; border-radius: 12px;
+                    background: rgba(244,243,241,.07); border: 1px solid rgba(162,157,132,.35); }
+        .view-pill { font: 700 .74rem 'PT Sans', sans-serif; letter-spacing: .14em; text-transform: uppercase;
+                     color: var(--bd-sage); padding: .45rem 1rem; border-radius: 9px; border: 0; background: transparent;
+                     cursor: pointer; transition: color .15s ease, background .15s ease; }
+        .view-pill:hover { color: var(--bd-paper); }
+        .view-pill-active, .view-pill-active:hover { background: var(--bd-paper); color: var(--bd-ink); }
+
         input[type="text"], textarea, select {
             border-color: var(--bd-line-strong) !important;
         }
@@ -164,7 +174,7 @@
 <div id="top-progress-bar"></div>
 
     <div class="container mx-auto p-4 md:p-8">
-        <header class="bd-header sticky top-0 z-10 p-4 md:px-6 rounded-2xl mb-10 flex items-center justify-between">
+        <header class="bd-header sticky top-0 z-10 p-4 md:px-6 rounded-2xl mb-10 flex items-center justify-between flex-wrap gap-y-3">
             <div class="flex items-center gap-4">
                 <svg class="w-12 h-12" viewBox="0 0 64 64" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
                     <defs><clipPath id="bd-logo-clip"><circle cx="32" cy="32" r="29"/></clipPath></defs>
@@ -186,6 +196,10 @@
                     <p class="bd-tagline">REFLECT YOUR STYLE</p>
                 </div>
             </div>
+            <nav id="view-nav" class="view-nav" aria-label="Switch view">
+                <button id="nav-orders" type="button" class="view-pill view-pill-active" aria-pressed="true">Orders</button>
+                <button id="nav-drawings" type="button" class="view-pill" aria-pressed="false">Drawings</button>
+            </nav>
             <div class="text-right">
                 <h2 class="bd-app">OrderBot</h2>
                 <p class="bd-sub">AI order checking</p>
@@ -338,6 +352,21 @@
 
             <p class="text-center text-xs mb-6" style="color: var(--bd-grey); letter-spacing: .08em;">BLIND DESIGNS · REFLECT YOUR STYLE</p>
         </main>
+
+        <!-- ============ Drawings · Bend & Blind Visualiser (staff) ============ -->
+        <section id="drawings-view" class="hidden" aria-label="Factory drawings">
+            <div class="flex items-center justify-between mb-2 px-1">
+                <p class="bd-overline" style="margin-bottom:0;">Factory drawings — Bend &amp; Blind Visualiser</p>
+                <a id="drawings-fullscreen" href="#" target="_blank" rel="noopener"
+                   class="text-xs font-bold" style="color: var(--bd-olive); letter-spacing: .1em;">OPEN FULL SCREEN ↗</a>
+            </div>
+            <div class="bd-card">
+                <iframe id="drawings-frame" title="Bend and Blind Visualiser"
+                        style="display:block; width:100%; border:0; height: calc(100vh - 200px); min-height: 620px;"></iframe>
+            </div>
+            <p class="text-center text-xs mt-4 mb-6" style="color: var(--bd-grey); letter-spacing: .08em;">
+                If printing misbehaves here, use OPEN FULL SCREEN and print from that tab.</p>
+        </section>
     </div>
 
     <!-- Toast notification container -->
@@ -3124,6 +3153,55 @@ ${feedbackExamples}
         setupMotorDropZone();
         setupTubeDropZone();
 
+    </script>
+
+    <script>
+    /* ============ Drawings tab — Bend & Blind Visualiser embed ============
+       Embeds the ENCRYPTED visualiser (bd-tools). The decryption key is NOT in
+       this file and must never be committed here: the staff SharePoint page's
+       embed src carries it in the URL FRAGMENT as #dk=<key>&dv=<version> and
+       this script forwards it into the iframe as #k= (fragments never reach a
+       server). Anyone on the bare public URL gets the visualiser's passphrase
+       screen instead. dv = bd-tools cache-buster (?v=) so rotations only touch
+       the SharePoint embed, not this repo. Standalone plain script on purpose —
+       independent of the app module above. */
+    (function () {
+        'use strict';
+        var BASE = 'https://russedybussedy.github.io/bd-tools/';
+        function visualiserSrc() {
+            var h = location.hash || '';
+            var k = (h.match(/[#&]dk=([A-Za-z0-9_-]+)/) || [])[1] || '';
+            var v = (h.match(/[#&]dv=(\d+)/) || [])[1] || '1';
+            return BASE + '?v=' + v + (k ? '#k=' + k : '');
+        }
+        function init() {
+            var mainEl = document.querySelector('main');
+            var drawings = document.getElementById('drawings-view');
+            var frame = document.getElementById('drawings-frame');
+            var fullscreen = document.getElementById('drawings-fullscreen');
+            var btnOrders = document.getElementById('nav-orders');
+            var btnDrawings = document.getElementById('nav-drawings');
+            if (!mainEl || !drawings || !frame || !btnOrders || !btnDrawings) return;
+            fullscreen.href = visualiserSrc();
+            function setPill(btn, on) {
+                btn.classList.toggle('view-pill-active', on);
+                btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+            }
+            function show(view) {
+                var d = view === 'drawings';
+                if (d && !frame.getAttribute('src')) frame.src = visualiserSrc(); // lazy-load on first open
+                mainEl.classList.toggle('hidden', d);
+                drawings.classList.toggle('hidden', !d);
+                setPill(btnOrders, !d);
+                setPill(btnDrawings, d);
+                window.scrollTo(0, 0);
+            }
+            btnOrders.addEventListener('click', function () { show('orders'); });
+            btnDrawings.addEventListener('click', function () { show('drawings'); });
+        }
+        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+        else init();
+    })();
     </script>
 </body>
 </html>

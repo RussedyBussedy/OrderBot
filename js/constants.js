@@ -21,6 +21,7 @@ export const BLIND_TYPES_REQUIRING_CONTROL_VALIDATION = [
 
 export const BLIND_TYPES_REQUIRING_DUAL_CONTROL = [
     'element roller sys 40',
+    'roller system 40',
     'roller system 55',
     'element double roller',
     'outdoor free hang',

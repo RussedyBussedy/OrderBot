@@ -123,6 +123,8 @@ After Gemini returns results, the frontend runs these validations locally:
 3. **Control validation** — specific blind types require chain/motor/dual keywords
 4. **Dual control validation** — some blind types require both Control 1 and Control 2 populated
 5. **Motor torque validation** — calculates required torque from dimensions + fabric weight + bar weight; validates against motor specs
+6. **One Touch Dual rule** (Paul, 2026-08-05) — a System 40 roller blind taking a One Touch Dual motor (1.1/2/3Nm family; thinner motor head) must be spec'd "LH DUAL"/"RH DUAL", NOT "LH Motor"/"RH Motor" (plain-motor spec → blind made too narrow); the reverse (DUAL spec, no One Touch Dual motors ordered) is also flagged
+7. **Critical-field surfacing** (Paul, 2026-08-05) — mismatches/omissions on Product Type, Range, Colour, QTY, Width, Drop, Control 1/2 (`CRITICAL_FIELDS` in `js/constants.js`) get the strongest cell highlight (`.critical-cell`), a CRITICAL FIELD CHECK summary at the top of every report, and an end-of-run popup (`#critical-modal`) listing the affected line items per order
 
 ## Improvement Phases (Planned)
 

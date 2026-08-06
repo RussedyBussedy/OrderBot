@@ -97,6 +97,10 @@
         .spec-match { color: #4e7d62; }
         .spec-mismatch { color: #a4442c; font-weight: 700; }
         .spec-low-confidence { color: #96702e; }
+        /* CRITICAL fields (Paul 2026-08-05): strongest highlight on mismatched critical cells */
+        .critical-cell { outline: 2px solid #a4442c; outline-offset: -2px; border-radius: 4px; animation: critpulse 1.2s ease-in-out 3; }
+        @keyframes critpulse { 50% { background-color: #f6d5c9; } }
+        @media (prefers-reduced-motion: reduce) { .critical-cell { animation: none; } }
 
         .tooltip {
             position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%);
@@ -462,6 +466,25 @@
         </div>
     </div>
 
+    <!-- Critical-errors dialog (Paul, 2026-08-05): pops after a comparison run when
+         critical fields (Product Type / Range / Colour / QTY / Width / Drop / Controls)
+         have mismatches, or hard validation errors were raised. -->
+    <div id="critical-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden items-center justify-center p-4 modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="critical-modal-title">
+        <div class="modal-content bg-white rounded-lg shadow-xl w-full max-w-2xl">
+            <div class="p-6 border-b border-slate-200 flex items-start gap-3">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8 shrink-0" style="color:#a4442c" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.21 3.03-1.742 3.03H4.42c-1.532 0-2.492-1.696-1.742-3.03l5.58-9.92zM10 13a1 1 0 110-2 1 1 0 010 2zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" /></svg>
+                <div>
+                    <h3 id="critical-modal-title" class="bd-serif text-xl font-bold" style="color:#a4442c">Critical field errors found</h3>
+                    <p class="text-sm text-slate-500">These line items have errors on critical fields. Check them before the order is released.</p>
+                </div>
+            </div>
+            <div id="critical-modal-list" class="p-6 max-h-[60vh] overflow-y-auto space-y-3 text-sm"></div>
+            <div class="px-6 py-4 bg-slate-50 rounded-b-lg flex justify-end">
+                <button id="critical-modal-close" class="bd-btn-primary py-2 px-4">Review the report</button>
+            </div>
+        </div>
+    </div>
+
     <div id="confirm-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden items-center justify-center p-4 modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="confirm-modal-title">
         <div class="modal-content bg-white rounded-lg shadow-xl w-full max-w-sm">
             <div class="p-6 text-center">
@@ -505,7 +528,7 @@
         import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, addDoc, getDocs, query, where, orderBy, limit, startAfter, deleteDoc, doc, writeBatch, getDoc, setDoc, updateDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { firebaseConfig, PROXY_API_URL, PROMPT_VERSION, EXTRACTION_MODEL, COMPARISON_MODEL } from './js/config.js';
-        import { BLIND_TYPE_EXCLUSIONS_FOR_COLOUR_CHECK, BLIND_TYPES_REQUIRING_CONTROL_VALIDATION, BLIND_TYPES_REQUIRING_DUAL_CONTROL, CACHE_TTL_MS } from './js/constants.js';
+        import { BLIND_TYPE_EXCLUSIONS_FOR_COLOUR_CHECK, BLIND_TYPES_REQUIRING_CONTROL_VALIDATION, BLIND_TYPES_REQUIRING_DUAL_CONTROL, CRITICAL_FIELDS, CACHE_TTL_MS } from './js/constants.js';
         import { initBiqConverter } from './js/biq-converter-ui.js';
 
         // firebaseConfig, PROXY_API_URL, PROMPT_VERSION imported from ./js/config.js
@@ -643,7 +666,13 @@
                 allDomElements.cancelFeedbackBtn.click();
             } else if (allDomElements.confirmModal.style.display === 'flex') {
                 allDomElements.confirmModalCancel.click();
+            } else {
+                const criticalModal = document.getElementById('critical-modal');
+                if (criticalModal && criticalModal.style.display === 'flex') criticalModal.style.display = 'none';
             }
+        });
+        document.getElementById('critical-modal-close').addEventListener('click', () => {
+            document.getElementById('critical-modal').style.display = 'none';
         });
 
         // BLIND_TYPE_EXCLUSIONS_FOR_COLOUR_CHECK, BLIND_TYPES_REQUIRING_CONTROL_VALIDATION,
@@ -919,6 +948,17 @@
             batchStatus.textContent = 'All comparisons complete.';
             renderSummaryReport(summaryResultsCache);
             allDomElements.newComparisonBtn.classList.remove('hidden');
+            // Fresh runs only (not history): pop the critical-errors dialog (Paul, 2026-08-05)
+            try {
+                const aggregated = [];
+                summaryResultsCache.forEach(r => {
+                    if (r.status !== 'success') return;
+                    const ci = collectCriticalIssues(r.data);
+                    const cg = collectSundryFails(r.data);
+                    if (ci.length || cg.length) aggregated.push({ order: r.data.bdoOrderNumber || 'Unknown Order', ci, cg });
+                });
+                if (aggregated.length) showCriticalModal(aggregated);
+            } catch (err) { console.error('Critical-errors dialog failed:', err); }
         }
 
         function selectRelevantFeedback(allFeedback, contextTerms) {
@@ -1590,6 +1630,69 @@ ${feedbackExamples}
             });
         }
 
+        // --- CRITICAL FIELD sweep (Paul, 2026-08-05) ---
+        // The order capturers' critical fields: Product Type, Range, Colour, QTY, Width,
+        // Drop (+ the Controls, per the One Touch Dual incident). This gathers, per line
+        // item, every MISMATCH/OMISSION on those fields plus every hard validation error,
+        // for the top-of-report summary and the end-of-run popup.
+        const CRITICAL_FIELD_LABELS = { blindType: 'Blind Type', range: 'Range', colour: 'Colour', qty: 'QTY', width: 'Width', drop: 'Drop', control1: 'Control 1', control2: 'Control 2' };
+        function collectCriticalIssues(data) {
+            const issues = [];
+            (data.lineItems || []).forEach((item, idx) => {
+                const problems = [];
+                Object.entries(CRITICAL_FIELD_LABELS).forEach(([key, label]) => {
+                    const f = item[key];
+                    if (f && f.result === 'MISMATCH') problems.push(`${label} MISMATCH (Blind IQ "${f.blindIQValue}" vs customer "${f.customerValue}")`);
+                    else if (f && f.result === 'OMISSION') problems.push(`${label} OMISSION (missing from one document)`);
+                });
+                ['fabricValidation', 'colourValidation', 'controlValidation', 'torqueValidation', 'minWidthValidation', 'chainValidation', 'valanceValidation'].forEach(k => {
+                    const v = item[k];
+                    if (v && v.message && (v.type === undefined || v.type === 'error')) problems.push(v.message);
+                });
+                (Array.isArray(item.motorValidation) ? item.motorValidation : []).forEach(m => problems.push(m));
+                if (problems.length) issues.push({ line: idx + 1, item: item.item?.blindIQValue || '', location: item.location?.blindIQValue || '', problems });
+            });
+            return issues;
+        }
+        function collectSundryFails(data) {
+            const fails = [];
+            (data.sundries || []).forEach(sundry => {
+                (sundry.validationLog || []).forEach(log => {
+                    if (log.status === 'FAIL') fails.push(`Sundry "${sundry.item?.blindIQValue}" — ${log.check}: ${log.details}`);
+                });
+            });
+            return fails;
+        }
+        function criticalSummaryHtml(data) {
+            const issues = collectCriticalIssues(data);
+            const fails = collectSundryFails(data);
+            if (!issues.length && !fails.length) return '';
+            return `<div class="mb-4 p-3 rounded-lg" style="border:2px solid #a4442c;background:#fdf1ec">
+                <div class="font-bold flex items-center gap-2" style="color:#a4442c">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.21 3.03-1.742 3.03H4.42c-1.532 0-2.492-1.696-1.742-3.03l5.58-9.92zM10 13a1 1 0 110-2 1 1 0 010 2zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" /></svg>
+                    CRITICAL FIELD CHECK — ${issues.length ? `${issues.length} line item${issues.length === 1 ? '' : 's'} need attention` : 'sundry errors found'}
+                </div>
+                <ul class="text-sm mt-2 space-y-1" style="color:#7c3322">
+                    ${issues.map(ci => `<li>&bull; <b>Line ${ci.line}${ci.location ? ' — ' + ci.location : ''}</b>: ${ci.problems.join('; ')}</li>`).join('')}
+                    ${fails.map(f => `<li>&bull; ${f}</li>`).join('')}
+                </ul>
+            </div>`;
+        }
+        function showCriticalModal(aggregated) {
+            const listEl = document.getElementById('critical-modal-list');
+            const modalEl = document.getElementById('critical-modal');
+            if (!listEl || !modalEl) return;
+            listEl.innerHTML = aggregated.map(entry => `
+                <div class="border border-slate-200 rounded-lg p-3">
+                    <div class="font-bold text-slate-800 mb-1">${entry.order}</div>
+                    <ul class="space-y-1" style="color:#7c3322">
+                        ${entry.ci.map(ci => `<li>&bull; <b>Line ${ci.line}${ci.location ? ' — ' + ci.location : ''}</b>: ${ci.problems.join('; ')}</li>`).join('')}
+                        ${entry.cg.map(f => `<li>&bull; ${f}</li>`).join('')}
+                    </ul>
+                </div>`).join('');
+            openModal(modalEl);
+        }
+
         function renderReportTable(data) {
             const getIndicator = (result) => ({ 'MISMATCH': '🔴', 'OMISSION': '🟡', 'MATCH': '🟢', 'NOTE': '🔵' }[result] || '');
             
@@ -1609,6 +1712,8 @@ ${feedbackExamples}
                 let textClasses = 'text-sm text-slate-800';
                 let tooltip = '';
                 let statusBadge = '';
+                const isCriticalField = CRITICAL_FIELDS.includes(fieldName);
+                if (isCriticalField && (isMismatch || isOmission)) cellClasses += ' critical-cell';
 
                 if (isMismatch) {
                     cellClasses += ' bg-red-50';
@@ -1646,6 +1751,7 @@ ${feedbackExamples}
 
             const cn = data.customerOrderNumber || { customerValue: 'N/A', blindIQValue: 'N/A', result: 'OMISSION' };
             const orderNumberRow = `
+                ${criticalSummaryHtml(data)}
                 ${globalValidationHtml}
                 <div class="mb-4 p-4 rounded-lg ${cn.result === 'MATCH' ? 'bg-green-100' : 'bg-red-100'}">
                     <div class="flex items-center gap-3 mb-1">
@@ -2688,7 +2794,43 @@ ${feedbackExamples}
             if (coverageProblems.length > 0) {
                 data.motorValidation = { global: `Motor Alert: ${coverageProblems.join('; ')}.` };
             }
-            
+
+            // --- ONE TOUCH DUAL control-spec rule (Paul, 2026-08-05) ---
+            // The One Touch Dual motor family (1.1Nm / 2Nm / 3Nm) has a THINNER motor head
+            // than other motors, so a System 40 roller blind taking one MUST be specified
+            // "LH Dual" / "RH Dual" (its own width deduction) — NOT the generic "LH Motor" /
+            // "RH Motor". A plain-motor spec makes the blind TOO NARROW. Ring the big bell.
+            const isSys40Type = t => /\bsys(?:tem)?\.?\s*40\b/.test(t || '');
+            const isOneTouchDualDesc = d => (d || '').includes('one touch') && (d || '').includes('dual');
+            const dualMotorCount = orderedMotors.filter(m => isOneTouchDualDesc((m.sundry.item.blindIQValue || '').toLowerCase())).length;
+            const sys40Motorised = motorizedBlinds.filter(b => isSys40Type((b.blindType?.blindIQValue || '').toLowerCase()));
+            const ctlText = b => (((b.control1?.blindIQValue) || '') + ' ' + ((b.control2?.blindIQValue) || '')).toLowerCase();
+
+            if (dualMotorCount > 0) {
+                const plainSpecd = sys40Motorised.filter(b => ctlText(b).includes('motor') && !ctlText(b).includes('dual'));
+                const definitive = dualMotorCount >= sys40Motorised.length; // every Sys 40 motorised blind takes a Dual
+                plainSpecd.forEach(b => {
+                    const sideMatch = ctlText(b).match(/\b[lr]h\b/i);
+                    const side = sideMatch ? sideMatch[0].toUpperCase() : '';
+                    const msg = definitive
+                        ? `One Touch Dual Alert: this order's motors are ONE TOUCH DUAL (thinner motor head) — the control must be specified ${side ? side + ' DUAL' : 'LH DUAL / RH DUAL'}, not ${side ? side + ' Motor' : 'LH/RH Motor'}. A plain-motor spec makes the blind TOO NARROW.`
+                        : `One Touch Dual Alert: the sundries include ${dualMotorCount} ONE TOUCH DUAL motor${dualMotorCount === 1 ? '' : 's'} (thinner motor head) — if this blind takes one, its control must read ${side ? side + ' DUAL' : 'LH DUAL / RH DUAL'} (not plain Motor) or the blind will be made TOO NARROW. Confirm which blinds take the Dual motors.`;
+                    if (!b.controlValidation) b.controlValidation = { type: 'error', message: msg };
+                    else b.controlValidation.message += ' ' + msg;
+                    if (b.control1 && ((b.control1.blindIQValue || '').toLowerCase().includes('motor'))) b.control1.result = 'MISMATCH';
+                    if (b.control2 && ((b.control2.blindIQValue || '').toLowerCase().includes('motor'))) b.control2.result = 'MISMATCH';
+                });
+            } else if (motorCount > 0) {
+                // Reverse check: a Sys 40 blind spec'd DUAL, but none of the ordered motors
+                // are One Touch Dual — the DUAL deduction with a standard motor head is
+                // equally wrong (blind comes out the wrong width). Flag it.
+                sys40Motorised.filter(b => ctlText(b).includes('dual')).forEach(b => {
+                    const msg = `One Touch Dual Alert: control is specified DUAL but none of the ordered motors are ONE TOUCH DUAL — a DUAL spec with a standard motor gives the wrong width deduction. Check the motor or the control spec.`;
+                    if (!b.controlValidation) b.controlValidation = { type: 'error', message: msg };
+                    else b.controlValidation.message += ' ' + msg;
+                });
+            }
+
             motorizedBlinds.forEach(blind => {
                 blind.calculatedArea = (parseInt(blind.width?.blindIQValue) / 1000) * (parseInt(blind.drop?.blindIQValue) / 1000);
             });

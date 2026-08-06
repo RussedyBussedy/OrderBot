@@ -28,4 +28,9 @@ export const BLIND_TYPES_REQUIRING_DUAL_CONTROL = [
     'vision blind'
 ];
 
+// Fields the order capturers treat as CRITICAL (Paul, 2026-08-05): mismatches or
+// omissions here get the strongest highlighting, the top-of-report summary, and the
+// end-of-run popup. Keys match the line-item field names used in renderReportTable.
+export const CRITICAL_FIELDS = ['blindType', 'range', 'colour', 'qty', 'width', 'drop', 'control1', 'control2'];
+
 export const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes

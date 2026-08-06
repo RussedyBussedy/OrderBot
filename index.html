@@ -2642,15 +2642,10 @@ ${feedbackExamples}
         }
 
         // Rule: when the customer order instructs that ALL blinds must have valances,
-        // every blind line needs its valance. A valance ordered AS PART OF THE BLIND
-        // (a cassette blind, or a valance/cassette in the blind line's specifications)
-        // satisfies the requirement with NO size check — the factory makes it to suit
-        // the blind (Russel, 2026-08-06, after Sharon's cassette-order false alarms).
-        // Only a STANDALONE valance line (linear / half round / pelmet, its own line
-        // item) is width-matched: it must be 10-15mm MORE than the blind's width
-        // (corrected 2026-08-06 from 20-25mm). Valance type differences are NOT
-        // flagged (the type choice is established by the data capturer when the
-        // customer didn't express one).
+        // every blind line needs a matching valance (any type: linear / half round /
+        // 70mm open cassette / pelmet / fascia) whose width is 20-25mm MORE than the
+        // blind's width. Valance type differences are NOT flagged (the type choice is
+        // established by the data capturer when the customer didn't express one).
         const VALANCE_KEYWORDS = /valance|pelmet|fascia|cassette/i;
         function validateValances(data) {
             if (!data.valanceInstruction || data.valanceInstruction.required !== true) return;
@@ -2660,14 +2655,7 @@ ${feedbackExamples}
                 return m ? parseFloat(m[1]) : null;
             };
             const textOf = f => ((f?.blindIQValue || '') + ' ' + (f?.customerValue || ''));
-            // Standalone valance line = valance wording AND no blind-sized drop. A
-            // cassette BLIND ("... Cassette" in the type, drop 1720 etc.) is a blind,
-            // not a loose valance — its cassette is integrated.
-            const isValanceLine = it => {
-                if (!VALANCE_KEYWORDS.test(textOf(it.blindType) + ' ' + textOf(it.item) + ' ' + textOf(it.range) + ' ' + textOf(it.location))) return false;
-                const d = parseMm(it.drop?.blindIQValue) ?? parseMm(it.drop?.customerValue);
-                return d == null || d < 200;
-            };
+            const isValanceLine = it => VALANCE_KEYWORDS.test(textOf(it.blindType) + ' ' + textOf(it.item) + ' ' + textOf(it.range) + ' ' + textOf(it.location));
 
             const blinds = [], valances = [];
             for (const it of lineItems) (isValanceLine(it) ? valances : blinds).push(it);
@@ -2692,16 +2680,24 @@ ${feedbackExamples}
                 let bq = parseInt(String(b.qty?.blindIQValue ?? b.qty?.customerValue ?? '1').replace(/\D/g, ''), 10);
                 if (!Number.isFinite(bq) || bq < 1) bq = 1;
                 if (bq > 50) bq = 50;
-                // Valance ordered as part of the blind: a cassette/valance in the blind
-                // line's specifications OR in the blind type/range itself. Requirement
-                // satisfied — NO size check (the factory sizes it to the blind).
-                if (specValance(b) || VALANCE_KEYWORDS.test(textOf(b.blindType) + ' ' + textOf(b.range))) continue;
-
                 if (bw == null) {
                     b.valanceValidation = { type: 'warning', message: 'Valance Alert: could not read this blind’s width, so its valance could not be checked.' };
                     problems++; continue;
                 }
-                const lo = bw + 10, hi = bw + 15;
+                const lo = bw + 20, hi = bw + 25;
+
+                const spec = specValance(b);
+                if (spec) {
+                    const sw = parseMm(spec.specComparison?.blindIQValue);
+                    if (sw == null) {
+                        b.valanceValidation = { type: 'warning', message: `Valance Alert: valance specified ("${spec.specName}") but no size stated — must be ${lo}–${hi}mm for this ${bw}mm blind.` };
+                        problems++;
+                    } else if (sw < lo || sw > hi) {
+                        b.valanceValidation = { type: 'error', message: `Valance Alert: valance is ${sw}mm but must be 20–25mm larger than the ${bw}mm blind (${lo}–${hi}mm).` };
+                        problems++;
+                    }
+                    continue;
+                }
 
                 let matched = 0, nearest = null;
                 for (let n = 0; n < bq; n++) {
@@ -2711,7 +2707,7 @@ ${feedbackExamples}
                 if (matched >= bq) continue;
                 for (const p of pool) {
                     if (p.used || p.width == null) continue;
-                    if (nearest == null || Math.abs(p.width - (bw + 12.5)) < Math.abs(nearest - (bw + 12.5))) nearest = p.width;
+                    if (nearest == null || Math.abs(p.width - (bw + 22.5)) < Math.abs(nearest - (bw + 22.5))) nearest = p.width;
                 }
                 b.valanceValidation = {
                     type: 'error',
@@ -2726,7 +2722,7 @@ ${feedbackExamples}
             if (problems > 0) {
                 data.valanceValidation = { global: `Valance Alert: the customer order requires valances on ALL blinds (${(data.valanceInstruction.evidence || '').trim() || 'instruction detected'}) — ${problems} blind(s) failed the valance check.` };
             } else if (blinds.length > 0) {
-                data.valanceValidation = { globalOk: `Valance check passed: all ${blinds.length} blind(s) have their valance (integrated cassettes/valances accepted as part of the blind; standalone valances 10–15mm larger).` + (spare > 0 ? ` ${spare} spare valance(s) on the order.` : '') };
+                data.valanceValidation = { globalOk: `Valance check passed: all ${blinds.length} blind(s) have a valance 20–25mm larger than the blind.` + (spare > 0 ? ` ${spare} spare valance(s) on the order.` : '') };
             }
         }
 

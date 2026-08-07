@@ -149,6 +149,12 @@ Customers order valances/motors ON the blind line; BlindIQ orders them separatel
 - **Standalone valance rows** in dealer docs (e.g. Lifestyle) become real Valance line items when a width is readable; otherwise they stay in order notes.
 - Wired on every deterministic parser (Blind Guys roller/DRB incl. the full v8 valance column group + End Cap/LH/RH Side, BD order form, TBD as before, Lifestyle) and the AI path (extraction prompt instructs Valance Type/Colour/Width option keys). Unknown blind types are never touched — flagging handles them.
 
+Shakedown fixes from the first live order (Breed J0000509-4, Russel 2026-08-07):
+
+- **Valance-ONLY rows** (no blind type, no fabric, no drop, valance columns filled — "Spare Bathroom Valance only") are rebuilt IN PLACE as the valance product: no phantom roller, no extra line. The row's own Finished Width IS the valance width; a conflicting Valance Width cell is noted "doc Valance Width=N — confirm", never silently preferred.
+- **Valance width cells must be purely numeric** to count: Blind Guys' dropdown text "Standard (15mm wider than blind width)" once digit-stripped to a 15mm valance. "Standard" wording (which matches our +15 auto-size exactly) is consumed silently; any other non-numeric wording rides to the notes.
+- **Shared-bracket options use the blind type's OWN key name**: BlindIQ names it "Intermediate Bracket"+"Coupled Bracket" (Element Roller Sys 40), "Intermediate/Coupled  Bracket" (Roller System 40, double space sic), "Intermediate" (Element Vision). `biqBracketOptionKey` resolves per spec, so the pairing engine's option always imports instead of flagging "not a valid option".
+
 ## Improvement Phases (Planned)
 
 See the planning document. Phases in priority order:

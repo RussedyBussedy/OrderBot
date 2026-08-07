@@ -169,41 +169,96 @@ export function biqResolveSundry(mappings, text) {
 // the key; a single hit resolves, several hits stay unresolved (operator picks —
 // e.g. adapter kits that come in colour variants).
 export function biqFuzzySundry(mappings, text) {
-    const exact = biqResolveSundry(mappings, text);
+    // Exact key, and exact key + " #" — the catalogue carries "#"-marked entries
+    // ("Motors Lift Assisting Spring L #", "Motors System 55 Motor Pack White
+    // (55 Bracket) #") whose names dealers copy WITHOUT the marker.
+    const exact = biqResolveSundry(mappings, text) || biqResolveSundry(mappings, text + ' #');
     if (exact) return Object.assign({ desc: biqLc(text), exact: true }, exact);
     const stop = new Set(['for', 'the', 'and', 'with', 'x']);
-    // Single-digit tokens are kept: they distinguish real parts ("smoove origin 4" vs "origin 2",
-    // "ysia 1" vs "ysia 5"). Dropping them made those permanently ambiguous. They match on word
-    // boundaries (not substring), so "4" can never match inside "40".
-    const tokens = biqLc(text).split(/[^a-z0-9.:]+/).filter(t => (t.length > 1 || /^\d$/.test(t)) && !stop.has(t));
+    // Single-character tokens are kept: digits distinguish real parts ("smoove
+    // origin 4" vs "origin 2", "ysia 1" vs "ysia 5"), letters distinguish sides
+    // ("lift assisting spring L" vs "R"). They match on word boundaries (not
+    // substring), so "4" can never match inside "40" nor "l" inside "lift".
+    const tokens = biqLc(text).split(/[^a-z0-9.:]+/).filter(t => (t.length > 1 || /^[a-z0-9]$/.test(t)) && !stop.has(t));
     if (!tokens.length) return null;
-    const tokMatch = (k, t) => t.length > 1 ? k.includes(t) : new RegExp('(^|[^0-9.])' + t + '($|[^0-9.])').test(k);
+    const tokMatch = (k, t) => t.length > 1 ? k.includes(t)
+        : /^\d$/.test(t) ? new RegExp('(^|[^0-9.])' + t + '($|[^0-9.])').test(k)
+        : new RegExp('(^|[^a-z0-9])' + t + '($|[^a-z0-9])').test(k);
+    // Minimal-superset tiebreak: when several entries match, and exactly one of
+    // them adds NO tokens beyond what the others also carry ("Mercure 3nm/30"
+    // vs "Wood Ven Mercure 3nm/30 Ext Receiver"), the plain entry is what the
+    // dealer named — pick it. Colour-only families (base/white/black adaptor
+    // kits) are deliberately left ambiguous so the white-default rule decides.
+    const tokensOfKey = k => k.split(/[^a-z0-9.:]+/).filter(t => (t.length > 1 || /^[a-z0-9]$/.test(t)) && !stop.has(t));
+    const COLOUR_TOKENS = ['white', 'black', 'grey', 'gray', 'beige', 'anthracite', 'silver', 'cream', 'charcoal', 'bronze', 'natural'];
+    const pickMinimal = (hitKeys, tokOf) => {
+        const sets = hitKeys.map(k => ({ k, s: new Set(tokOf(k)) }));
+        const minimal = sets.filter(a => sets.every(b => b === a || [...a.s].every(t => b.s.has(t))));
+        if (minimal.length !== 1) return null;
+        const m = minimal[0];
+        const colourOnly = sets.every(b => b === m || [...b.s].filter(t => !m.s.has(t)).every(t => COLOUR_TOKENS.includes(t)));
+        return colourOnly ? null : m.k;
+    };
+    // Alias dedupe: several catalogue keys can name the SAME item ("Sonesse
+    // 30/28 Mag Charger" and "... Magnetic Adpater Charger USB-C" share one id)
+    // — matching more than one alias of a single item is not ambiguity.
+    const oneId = ks => { const ids = new Set(ks.map(k => String(mappings.sundries[k].sundry))); return ids.size === 1 ? ks[0] : null; };
     const hits = Object.keys(mappings.sundries || {}).filter(k => tokens.every(t => tokMatch(k, t)));
     if (hits.length === 1) { const e = mappings.sundries[hits[0]]; return { sundry: e.sundry, type: e.type, desc: hits[0], exact: false }; }
-    if (hits.length > 1) return { ambiguous: hits.length };
+    if (hits.length > 1) {
+        const mk = oneId(hits) || pickMinimal(hits, tokensOfKey);
+        if (mk) { const e = mappings.sundries[mk]; return { sundry: e.sundry, type: e.type, desc: mk, exact: false }; }
+        return { ambiguous: hits.length };
+    }
     // second pass: gentle spelling synonyms (li-ion <-> lithium ion, "2.0nm" <-> "2nm")
     // "adaptor" family: BlindIQ itself carries typo'd entries ("Sys 55 Motor
     // Adpator Kit...", "... Adpater Kit ...") — normalize all spellings on both
     // sides so correctly-spelled dealer text can still find them.
-    const canon = str => str.replace(/li-ion/g, 'lithiumion').replace(/lithium\s+ion/g, 'lithiumion').replace(/(\d)\.0\s*nm/g, '$1nm').replace(/\s+nm/g, 'nm').replace(/\badp?at[oe]r\b|\badapt[oe]r\b/g, 'adaptor');
-    const ctokens = canon(biqLc(text)).split(/[^a-z0-9.:]+/).filter(t => t.length > 1 && !stop.has(t));
-    const chits = Object.keys(mappings.sundries || {}).filter(k => { const ck = canon(k); return ctokens.every(t => ck.includes(t)); });
+    // Torque/speed ratios: "15Nm/17" <-> "15/17" (BlindIQ's motors entries write
+    // the ratio bare, its duplicate type-23 entries write Nm; dealers use either).
+    const canon = str => str.replace(/li-ion/g, 'lithiumion').replace(/lithium\s+ion/g, 'lithiumion').replace(/(\d)\.0\s*nm/g, '$1nm').replace(/\s+nm/g, 'nm').replace(/(\d)\s*nm\s*\//g, '$1/').replace(/\badp?at[oe]r\b|\badapt[oe]r\b/g, 'adaptor');
+    // Same token rules as pass 1 (single digits/letters kept, boundary-matched):
+    // dropping them here made "Sonesse 40 RTS 3Nm/30" collide with the
+    // "40/30/28" charger once the Nm canon stripped the ratio marker.
+    const ctokens = canon(biqLc(text)).split(/[^a-z0-9.:]+/).filter(t => (t.length > 1 || /^[a-z0-9]$/.test(t)) && !stop.has(t));
+    const chits = Object.keys(mappings.sundries || {}).filter(k => { const ck = canon(k); return ctokens.every(t => tokMatch(ck, t)); });
     if (chits.length === 1) { const e = mappings.sundries[chits[0]]; return { sundry: e.sundry, type: e.type, desc: chits[0], exact: false }; }
-    if (chits.length > 1) return { ambiguous: chits.length };
+    if (chits.length > 1) {
+        const mk = oneId(chits) || pickMinimal(chits, k => tokensOfKey(canon(k)));
+        if (mk) { const e = mappings.sundries[mk]; return { sundry: e.sundry, type: e.type, desc: mk, exact: false }; }
+        return { ambiguous: chits.length };
+    }
     return null;
+}
+// BlindIQ motor orders: the capturer first picks the sundry TYPE, then the item
+// linked to it. Motor/remote/accessory sundries must therefore resolve to items
+// under the seven motor sundry types below (Russel 2026-08-07). The "Motors …"
+// entries under type 13 "components motor" are factory component records, NOT
+// orderable motor sundries — excluded from motor resolution entirely.
+export const BIQ_MOTOR_ORDER_TYPES = ['motors somfy rts', 'motors motion', 'motors one touch +',
+    'motors one touch dual', 'motors somfy zigbee', 'motors somfy io', 'motors shawsmart'];
+// Filtered mappings view holding only motor-order-type sundries. Falls back to
+// the full view when sundryTypes hasn't loaded (seeds/offline) so nothing breaks.
+export function biqMotorSundryView(mappings) {
+    const ids = new Set(BIQ_MOTOR_ORDER_TYPES.map(n => String((mappings.sundryTypes || {})[n])).filter(s => s && s !== 'undefined'));
+    if (!ids.size) return mappings;
+    const sundries = {};
+    for (const [k, e] of Object.entries(mappings.sundries || {})) if (ids.has(String(e.type))) sundries[k] = e;
+    return Object.keys(sundries).length ? { sundries } : mappings;
 }
 // Turn motorisation text (motor / remote / adapter) into an order sundry line,
 // aggregating duplicates by description.
-export function biqAddMotorSundry(mappings, order, text, qty, preferMotors) {
+export function biqAddMotorSundry(mappings, order, text, qty, motorContext) {
     const t = biqNorm(text); if (!t) return;
     const existing = order.sundries.find(su => biqLc(su.notes) === biqLc(t) || (su._src && biqLc(su._src) === biqLc(t)));
     if (existing) { existing.qty = String((+existing.qty || 0) + (+qty || 1)); return; }
-    // Many parts exist twice: "motors <name>" (type 13) and a bare "<name>" (type 23/65/66).
-    // preferMotors picks the motors-prefixed entry when there is one.
+    // motorContext restricts resolution to the seven BlindIQ motor sundry types,
+    // which also removes the old type-13 "Motors <name>" duplicate ambiguity.
     // The variant ladder bridges dealer shorthand to catalogue phrasing WITHOUT loosening the
     // unique-match rule: "16ch" -> "16 channel" (one touch remotes), "4ch" -> "4" (smoove origin),
     // and a parenthetical-stripped form ("Tahoma Switch Pro (ZB)" -> "Tahoma Switch Pro").
     // First variant that yields a unique hit wins; anything still unmatched stays blank + flagged.
+    const view = motorContext ? biqMotorSundryView(mappings) : mappings;
     const variants = [];
     // Dealer sheets append marketing tails the catalogue never carries —
     // "... (max width 4000mm) Available in white, black and grey" (Blind Guys
@@ -227,11 +282,9 @@ export function biqAddMotorSundry(mappings, order, text, qty, preferMotors) {
         }
     }
     let hit = null;
-    outer: for (const v of variants) {
-        for (const cand of (preferMotors ? ['motors ' + v, v] : [v])) {
-            const h = biqFuzzySundry(mappings, cand);
-            if (h && h.sundry != null) { hit = h; break outer; }
-        }
+    for (const v of variants) {
+        const h = biqFuzzySundry(view, v);
+        if (h && h.sundry != null) { hit = h; break; }
     }
     // Colour-variant parts (adaptor kits etc.) with NO colour in the order text:
     // default to the WHITE variant (Russel 2026-08-07) — retry with " white"
@@ -240,11 +293,9 @@ export function biqAddMotorSundry(mappings, order, text, qty, preferMotors) {
     // variant, e.g. grey) never gets overridden — those stay flagged.
     let whiteAssumed = false;
     if (!hit && !/\b(white|black|grey|gray|beige|anthracite|silver|cream|charcoal|bronze|natural)\b/i.test(noTail)) {
-        outer2: for (const v of variants) {
-            for (const cand of (preferMotors ? ['motors ' + v + ' white', v + ' white'] : [v + ' white'])) {
-                const h = biqFuzzySundry(mappings, cand);
-                if (h && h.sundry != null) { hit = h; whiteAssumed = true; break outer2; }
-            }
+        for (const v of variants) {
+            const h = biqFuzzySundry(view, v + ' white');
+            if (h && h.sundry != null) { hit = h; whiteAssumed = true; break; }
         }
     }
     const su = { code: '', qty: String(+qty || 1), type: '', sundry: '', notes: t, _src: t };

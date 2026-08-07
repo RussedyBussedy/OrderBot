@@ -2608,12 +2608,37 @@ export function biqApplyCoupledPair(mappings, order, i, j) {
 export function biqApplyBracketPairs(mappings, order) {
     const items = (order && order.items) || [];
     items.forEach(it => { delete it._bracketOdd; delete it._bracketRole; });
+    // Fold bracket options onto each blind type's OWN key and clean phantoms
+    // FIRST: a dealer's literal "Intermediate Bracket=Yes", or a row left behind
+    // after the blind type resolved to a product that spells it differently
+    // ("Intermediate/Coupled  Bracket"), must become the type's real option —
+    // never a phantom BlindIQ won't import (Breed follow-up, Russel 2026-08-07).
+    // A Yes value carries over to the real key; No/blank phantoms just drop
+    // (absence = No in BlindIQ). Runs every refresh, so it self-heals.
+    items.forEach(it => {
+        const spec = biqVariantSpec(mappings, it.blindType);
+        if (!spec) return;
+        const specKeys = new Set(spec.map(o => biqLc(o.k)));
+        for (let x = it.variants.length - 1; x >= 0; x--) {
+            const [k, v] = it.variants[x];
+            if (!/interm|coupl/i.test(k) || specKeys.has(biqLc(k))) continue;
+            it.variants.splice(x, 1);
+            const kind = /coupl/i.test(k) && !/interm/i.test(k) ? 'coupled' : 'intermediate';
+            if (biqNorm(v) && !/^(no|none|false)$/i.test(biqNorm(v))) {
+                const real = biqBracketOptionKey(mappings, it, kind);
+                if (specKeys.has(biqLc(real))) biqSetVar(it.variants, real, biqNorm(v));
+            }
+        }
+    });
     const consumed = new Set();
     const flag = it => {
-        const optYes = key => it.variants.some(v => biqLc(v[0]) === key && biqLc(v[1]) === 'yes');
+        // any bracket-family key set to Yes counts, whatever this type calls it;
+        // a combined "Intermediate/Coupled" Yes with no other signal is treated
+        // as intermediate (drives stay independent — the safer geometry).
+        const keyYes = re => it.variants.some(v => re.test(biqLc(v[0])) && biqLc(v[1]) === 'yes');
         const note = biqNorm(it.notes);
-        if (/\bcoupl/i.test(note) || optYes('coupled bracket')) return 'coupled';
-        if (/\b(centre|center|middle|intermediate)\s+brackets?\b/i.test(note) || optYes('intermediate bracket')
+        if (/\bcoupl/i.test(note) || (keyYes(/coupl/) && !keyYes(/interm/))) return 'coupled';
+        if (/\b(centre|center|middle|intermediate)\s+brackets?\b/i.test(note) || keyYes(/interm/)
             || it.variants.some(v => /\b(centre|center|middle)\s+brackets?\b/i.test(biqLc(v[0])))) return 'intermediate';
         return null;
     };

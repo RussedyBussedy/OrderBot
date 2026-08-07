@@ -555,6 +555,14 @@ function biqBgRoller(mappings, o, it, raw, doubleRoller, product) {
     const vstage = [];
     valCols.forEach(([col, kk]) => { const v = cleanVal(raw[col]); if (v && !vstage.some(s => s.startsWith('Valance ' + kk + '='))) vstage.push('Valance ' + kk + '=' + v); });
     if (vstage.some(s => /^Valance (Type|Colour|Width|Custom Width)=/i.test(s))) it._valance = vstage;
+    // A valance-ONLY row: no blind type, no fabric, no drop — the row IS the valance
+    // ("Spare Bathroom Valance only", Breed order J0000509-4). biqExpandValances
+    // rebuilds this line in place as the valance product instead of leaving a
+    // phantom roller plus a separate valance line with the wrong width.
+    if (vstage.length && !cleanVal(raw['Type']) && !cleanVal(raw['Fabric']) && !cleanVal(raw['Finished Height'])) {
+        it._valanceOnlyRow = true;
+        it._valance = vstage;
+    }
     const skip = new Set(['Item #', 'Location', 'Finished Width', 'Finished Height', 'Qty', 'Type', 'LH Control', 'RH Control', 'Control Length', 'Mechanism Colour', 'Bottom Bar Colour', 'Fabric', 'Fixing', 'Roll', 'Line Notes', 'Express', 'Front Blind Fabric', 'Back Blind Fabric', 'Configuration Front Blind', 'Configuration Back Blind', 'Cassette Colour', 'Fabric Insert Cassette', 'Roll Type Front', 'Roll Type Back', 'Steel Ball Chain', 'Remove Bracket Covers', 'Plastic Bottom Bar', 'Chain Tidy', 'Wired Side Guides', 'Fabric Only', 'Fabric Insert', 'System 40 70mm Cassette', 'Closed Cassette', 'Motor', 'Motor Type', 'Remotes', 'Accessory', 'Accessories', 'Valance Type', 'Valance Colour', 'Valance Width', 'Custom Valance Width', 'Valance Fix', 'Valance Returns', 'Top Board (for Face Fix):', 'Top Board (for Face Fix)', 'Mitre Valance LH', 'Mitre Valance RH', 'End Cap Colour', 'LH Side', 'RH Side']);
     for (const [k, v] of Object.entries(raw)) {
         if (skip.has(k)) continue; const cv = cleanVal(v); if (cv) biqSetVar(it.variants, k, cv);
@@ -1421,10 +1429,14 @@ export function biqExpandValances(mappings, order) {
         if (resolvedRange && biqLc(resolvedRange) !== biqLc(wantRange)) { it._origRange = wantRange; it.range = resolvedRange; }
         else if (resolvedRange) it.range = resolvedRange;
         it.colour = kv['colour'] || '';
-        it.width = (kv['custom width'] || kv['width'] || '').replace(/[^\d]/g, '');
+        // A usable width is a PURE number (with optional mm) — Blind Guys' Valance Width
+        // dropdown can say "Standard (15mm wider than blind width)", and stripping the
+        // words out of that once produced a 15mm-wide valance (Breed order J0000509-4).
+        const numOnly = s => { const m = String(s || '').match(/^\s*(\d{2,5})\s*(?:mm)?\s*$/i); return m ? m[1] : ''; };
+        it.width = numOnly(kv['custom width']) || numOnly(kv['width']);
         if (!it.width) {
             const bw = parseInt(src.width, 10);
-            if (bw) { it.width = String(bw + 15); it._autoWidth = true; }   // blind + 15mm (Russel 2026-08-07)
+            if (bw) { it.width = String(bw + 15); it._autoWidth = true; }   // blind + 15mm (Russel 2026-08-07; matches the sheet's own "Standard (15mm wider)")
         }
         const dm = (kv['range'] || '').match(/(\d{2,4})\s*mm/i)
             || (kv['size'] || '').match(/(\d{2,4})\s*mm/i) || (kv['size'] || '').match(/^(\d{2,4})$/);
@@ -1439,7 +1451,12 @@ export function biqExpandValances(mappings, order) {
         const spec = biqVariantSpec(mappings, it.blindType)
             || biqVariantSpec(mappings, use === 'Element Valance' ? 'Valance' : 'Element Valance') || [];
         it.variants = spec.map(s => [s.k, s.def || '']);
-        const used = new Set(['range', 'colour', 'width', 'fix', 'custom width', 'size']);
+        const used = new Set(['range', 'colour', 'fix', 'size']);
+        // width wording is consumed when numeric or the known "Standard (+15)" dropdown;
+        // any OTHER text (unexpected sizing wording) flows to the notes for the capturer
+        ['custom width', 'width'].forEach(k => {
+            if (kv[k] == null || numOnly(kv[k]) || /standard/i.test(kv[k])) used.add(k);
+        });
         if (kv['type'] && kv['range'] === kv['type']) used.add('type');
         const matchVal = (v, o) => {
             const vals = o.values || [];
@@ -1470,6 +1487,27 @@ export function biqExpandValances(mappings, order) {
             if (real) biqSetVar(it.variants, tob.k, real);
         }
         const leftovers = Object.keys(kv).filter(k => !used.has(k)).map(k => k + '=' + kv[k]);
+        if (src._valanceOnlyRow) {
+            // The ROW is the valance ("... Valance only" lines): rebuild it in place.
+            // Its own Finished Width IS the valance width — a conflicting Valance Width
+            // cell is noted for confirmation, never silently preferred (Breed 0006:
+            // Finished Width 665 vs Valance Width 650 -> 665 with a confirm note).
+            const rowW = String(parseInt(src.width, 10) || '');
+            const docW = it._autoWidth ? '' : it.width;
+            const conflict = (rowW && docW && docW !== rowW) ? 'doc Valance Width=' + docW + ' — confirm' : '';
+            src.blindType = it.blindType;
+            src.range = it.range; if (it._origRange) src._origRange = it._origRange;
+            src.colour = it.colour;
+            src.width = rowW || it.width;
+            src.drop = it.drop; src.fix = it.fix || src.fix;
+            src.variants = it.variants; src.controlDrop = '0';
+            src.control1 = ''; src.control2 = '';
+            src.notes = [biqNorm(src.notes || ''), 'Valance-only line',
+                it._origRange ? 'doc range: ' + it._origRange : '',
+                conflict, leftovers.join(' | ')].filter(Boolean).join(' | ');
+            src._valanceLine = src.code;                       // consumed — never re-expanded
+            return;
+        }
         it.notes = 'Valance for blind ' + (src.location || src.code)
             + (it._origRange ? ' | doc range: ' + it._origRange : '')
             + (it._autoWidth ? ' | width auto-sized: blind +15mm — confirm' : '')
@@ -2499,10 +2537,23 @@ function biqReSide(ctrlText, side) {
     const t = biqNorm(ctrlText).replace(/^(lh|rh)\s+/i, '').trim() || 'Chain';
     return (side === 'L' ? 'Lh ' : 'Rh ') + t;
 }
+// The shared-bracket option's exact name varies per blind type in BlindIQ —
+// "Intermediate Bracket" + "Coupled Bracket" (Element Roller Sys 40), a single
+// "Intermediate/Coupled  Bracket" (Roller System 40, double space and all),
+// "Intermediate" (Element Vision). Target the blind type's OWN spec key so the
+// option actually imports (Breed order J0000509-4 flagged the literal key as
+// not-importable, Russel 2026-08-07). Falls back to the literal name when the
+// spec is unknown.
+function biqBracketOptionKey(mappings, it, kind) {
+    const spec = biqVariantSpec(mappings, it.blindType) || [];
+    const re = kind === 'coupled' ? /coupl/i : /interm/i;
+    const o = spec.find(s => re.test(s.k));
+    return o ? o.k : (kind === 'coupled' ? 'Coupled Bracket' : 'Intermediate Bracket');
+}
 // INTERMEDIATE bracket: two blinds share a bracket but operate independently (two drives).
 // Each blind keeps its own drive; its non-drive (inner/shared) side becomes "[side] Intermediate".
 // Bracket is costed once: Intermediate Bracket = Yes on the first line, No on the second.
-export function biqApplyIntermediatePair(order, i, j) {
+export function biqApplyIntermediatePair(mappings, order, i, j) {
     [i, j].forEach(idx => {
         const it = order.items[idx]; if (!it) return;
         // If the document already states which side carries the shared bracket, trust it.
@@ -2518,14 +2569,14 @@ export function biqApplyIntermediatePair(order, i, j) {
         else if (/pin/i.test(it.control2)) it.control2 = 'Rh Intermediate';
         else it.control1 = 'Lh Intermediate';
     });
-    biqSetVar(order.items[i].variants, 'Intermediate Bracket', 'Yes');
-    biqSetVar(order.items[j].variants, 'Intermediate Bracket', 'No');
+    biqSetVar(order.items[i].variants, biqBracketOptionKey(mappings, order.items[i], 'intermediate'), 'Yes');
+    biqSetVar(order.items[j].variants, biqBracketOptionKey(mappings, order.items[j], 'intermediate'), 'No');
     order.items[i]._bracketRole = 'intermediate-1'; order.items[j]._bracketRole = 'intermediate-2';
 }
 // COUPLED bracket: two blinds joined, operated by ONE drive on one outer end. The two inner sides
 // are "Coupled"; the operating blind's outer side keeps its drive (chain/motor); the partner's
 // outer side is a Pin. i = first/left line, j = second/right line. Coupled Bracket Yes on i, No on j.
-export function biqApplyCoupledPair(order, i, j) {
+export function biqApplyCoupledPair(mappings, order, i, j) {
     const a = order.items[i], b = order.items[j]; if (!a || !b) return;
     // Same principle as the intermediate guard: when BOTH lines already state their Coupled
     // side (TBD's "Left End=Coupled / Right End=Control"), the document has fully specified
@@ -2547,8 +2598,8 @@ export function biqApplyCoupledPair(order, i, j) {
             a.control1 = 'Lh Pin';                                 // a outer left = pin
         }
     }
-    biqSetVar(a.variants, 'Coupled Bracket', 'Yes');
-    biqSetVar(b.variants, 'Coupled Bracket', 'No');
+    biqSetVar(a.variants, biqBracketOptionKey(mappings, a, 'coupled'), 'Yes');
+    biqSetVar(b.variants, biqBracketOptionKey(mappings, b, 'coupled'), 'No');
     a._bracketRole = 'coupled-1'; b._bracketRole = 'coupled-2';
 }
 // Detect/apply shared brackets across the order. Manual "couple with next line" (it._bracketWith)
@@ -2569,7 +2620,7 @@ export function biqApplyBracketPairs(mappings, order) {
     for (let i = 0; i < items.length; i++) {                       // manual: couple with next line
         const m = items[i]._bracketWith;
         if (m && i + 1 < items.length && !consumed.has(i) && !consumed.has(i + 1)) {
-            if (m === 'coupled') biqApplyCoupledPair(order, i, i + 1); else biqApplyIntermediatePair(order, i, i + 1);
+            if (m === 'coupled') biqApplyCoupledPair(mappings, order, i, i + 1); else biqApplyIntermediatePair(mappings, order, i, i + 1);
             consumed.add(i); consumed.add(i + 1);
         }
     }
@@ -2580,7 +2631,7 @@ export function biqApplyBracketPairs(mappings, order) {
         while (j < items.length && !consumed.has(j) && flag(items[j]) === f) { run.push(j); j++; }
         let k = 0;
         for (; k + 1 < run.length; k += 2) {
-            if (f === 'coupled') biqApplyCoupledPair(order, run[k], run[k + 1]); else biqApplyIntermediatePair(order, run[k], run[k + 1]);
+            if (f === 'coupled') biqApplyCoupledPair(mappings, order, run[k], run[k + 1]); else biqApplyIntermediatePair(mappings, order, run[k], run[k + 1]);
             consumed.add(run[k]); consumed.add(run[k + 1]);
         }
         if (k < run.length) { items[run[k]]._bracketOdd = f; consumed.add(run[k]); }

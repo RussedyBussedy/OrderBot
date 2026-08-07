@@ -543,7 +543,19 @@ function biqBgRoller(mappings, o, it, raw, doubleRoller, product) {
     if (remoteTxt) biqAddMotorSundry(mappings, o, remoteTxt, 1, true);
     if (accTxt) biqAddMotorSundry(mappings, o, accTxt, +it.qty || 1, true);
     if (!motorTxt && cleanVal(raw['Motor Type'])) it.notes = (it.notes ? it.notes + ' | ' : '') + 'Motor type: ' + cleanVal(raw['Motor Type']);
-    const skip = new Set(['Item #', 'Location', 'Finished Width', 'Finished Height', 'Qty', 'Type', 'LH Control', 'RH Control', 'Control Length', 'Mechanism Colour', 'Bottom Bar Colour', 'Fabric', 'Fixing', 'Roll', 'Line Notes', 'Express', 'Front Blind Fabric', 'Back Blind Fabric', 'Configuration Front Blind', 'Configuration Back Blind', 'Cassette Colour', 'Fabric Insert Cassette', 'Roll Type Front', 'Roll Type Back', 'Steel Ball Chain', 'Remove Bracket Covers', 'Plastic Bottom Bar', 'Chain Tidy', 'Wired Side Guides', 'Fabric Only', 'Fabric Insert', 'System 40 70mm Cassette', 'Closed Cassette', 'Motor', 'Motor Type', 'Remotes', 'Accessory', 'Accessories']);
+    // The sheet's valance column group can't ride on a roller line — BlindIQ orders a valance
+    // as its own line (Linear / Half Round under the Valance products). Stage the whole group
+    // for biqExpandValances; cleanVal already drops None/No cells so an unused group vanishes.
+    // (End Cap Colour / LH Side / RH Side are the valance end-cap columns on this sheet.)
+    const valCols = [['Valance Type', 'Type'], ['Valance Colour', 'Colour'], ['Custom Valance Width', 'Custom Width'],
+        ['Valance Width', 'Width'], ['Valance Fix', 'Fix'], ['Valance Returns', 'Returns'],
+        ['Top Board (for Face Fix):', 'Top Board'], ['Top Board (for Face Fix)', 'Top Board'],
+        ['Mitre Valance LH', 'Mitre LH'], ['Mitre Valance RH', 'Mitre RH'],
+        ['End Cap Colour', 'End Cap Colour'], ['LH Side', 'End Cap LH'], ['RH Side', 'End Cap RH']];
+    const vstage = [];
+    valCols.forEach(([col, kk]) => { const v = cleanVal(raw[col]); if (v && !vstage.some(s => s.startsWith('Valance ' + kk + '='))) vstage.push('Valance ' + kk + '=' + v); });
+    if (vstage.some(s => /^Valance (Type|Colour|Width|Custom Width)=/i.test(s))) it._valance = vstage;
+    const skip = new Set(['Item #', 'Location', 'Finished Width', 'Finished Height', 'Qty', 'Type', 'LH Control', 'RH Control', 'Control Length', 'Mechanism Colour', 'Bottom Bar Colour', 'Fabric', 'Fixing', 'Roll', 'Line Notes', 'Express', 'Front Blind Fabric', 'Back Blind Fabric', 'Configuration Front Blind', 'Configuration Back Blind', 'Cassette Colour', 'Fabric Insert Cassette', 'Roll Type Front', 'Roll Type Back', 'Steel Ball Chain', 'Remove Bracket Covers', 'Plastic Bottom Bar', 'Chain Tidy', 'Wired Side Guides', 'Fabric Only', 'Fabric Insert', 'System 40 70mm Cassette', 'Closed Cassette', 'Motor', 'Motor Type', 'Remotes', 'Accessory', 'Accessories', 'Valance Type', 'Valance Colour', 'Valance Width', 'Custom Valance Width', 'Valance Fix', 'Valance Returns', 'Top Board (for Face Fix):', 'Top Board (for Face Fix)', 'Mitre Valance LH', 'Mitre Valance RH', 'End Cap Colour', 'LH Side', 'RH Side']);
     for (const [k, v] of Object.entries(raw)) {
         if (skip.has(k)) continue; const cv = cleanVal(v); if (cv) biqSetVar(it.variants, k, cv);
     }
@@ -622,6 +634,8 @@ export function biqNormalizeBlindGuys(mappings, p) {
         o.items.push(it);
     });
     if (express) o.notes = (o.notes ? o.notes + ' | ' : '') + 'EXPRESS (3 day delivery) +10%';
+    biqStageInlineValances(mappings, o);
+    biqExpandValances(mappings, o);
     return o;
 }
 
@@ -806,6 +820,10 @@ export function biqNormalizeBDForm(mappings, p, gridByRow) {
         }
         o.items.push(it);
     });
+    // Val Type / Valance Size / Valance Return above are real options on venetians;
+    // on any product whose template doesn't carry them they become a split valance line.
+    biqStageInlineValances(mappings, o);
+    biqExpandValances(mappings, o);
     return o;
 }
 
@@ -868,8 +886,27 @@ export function biqNormalizeLifestyle(mappings, p) {
         const dl = biqLc(r.desc);
         const hasDim = /\d{3,}/.test((r.width || '') + ' ' + (r.drop || ''));
         if (/^express/.test(dl)) { express = true; return; }
-        // valances, brackets, cut-out specs and any dimensionless free-text are not blinds -> notes
-        if (/valance|specification|cut\s*out|bracket/.test(dl) || !hasDim) { o.notes = (o.notes ? o.notes + ' | ' : '') + r.desc; return; }
+        // A valance row WITH a usable width becomes a real Valance line (Russel 2026-08-07);
+        // range from the Linear / Half Round wording, colour from the trailing desc segment.
+        if (/valance/.test(dl)) {
+            const wm = String(r.width || '').match(/\d{3,}/);
+            if (wm) {
+                const it = biqBlankItem(String(++n));
+                it.qty = r.qty || '1'; it.location = r.location || '';
+                it.blindType = 'Valance'; it.width = wm[0];
+                it.range = /half\s*round/.test(dl) ? 'Half Round Valance' : /linear/.test(dl) ? 'Linear Valance' : '';
+                const dv = biqLifestyleDesc(r.desc);
+                it.colour = dv.colour || '';
+                it.controlDrop = '0';
+                it.variants = biqTemplateFor2(mappings, it.blindType);
+                it.notes = 'From doc: ' + r.desc;
+                o.items.push(it);
+                return;
+            }
+            o.notes = (o.notes ? o.notes + ' | ' : '') + r.desc; return;
+        }
+        // brackets, cut-out specs and any dimensionless free-text are not blinds -> notes
+        if (/specification|cut\s*out|bracket/.test(dl) || !hasDim) { o.notes = (o.notes ? o.notes + ' | ' : '') + r.desc; return; }
         const it = biqBlankItem(String(++n));
         it.qty = r.qty || '1'; it.location = r.location || ''; it.width = r.width || ''; it.drop = r.drop || '';
         it.fix = r.mount || '';
@@ -1279,13 +1316,62 @@ export function biqNormalizeTbd(mappings, p, fileName) {
     return o;
 }
 
+// Inline valance data on a blind line: OPTION or SPLIT? BlindIQ's own variant
+// template decides (Russel 2026-08-07, comprehensive attached-items resolution).
+// A valance key the product's options tab carries (wood venetian Val Size /
+// Val Returns / Mitre, retro Valance and Bottom Type) is a real option and stays.
+// Any other valance data can't ride on the line — it is moved to _valance
+// staging (normalized keys) and biqExpandValances orders it as its own valance
+// line. Cassette keys are NOT staged here — biqFoldCassette folds them onto the
+// product's own cassette options (roller 70mm open cassette stays an option).
+// Items whose blind type is unknown are left untouched (flagging handles them).
+const BIQ_INLINE_VALANCE_RE = /^(val(ance)?\s*(type|colou?r|width|size|returns?|fix|length)|custom\s*val(ance)?\s*width|mitre\s*val(ance)?\s*(lh|rh)|top\s*board\b.*)$/i;
+export function biqStageInlineValances(mappings, order) {
+    (order ? order.items : []).forEach(it => {
+        if (/valance|allusion/.test(biqLc(it.blindType))) return;      // is a valance product
+        if (it._valance && it._valance.length) return;                 // already staged (TBD, Blind Guys)
+        const spec = biqVariantSpec(mappings, it.blindType);
+        if (!spec) return;                                             // unknown type: leave for flags
+        const specKeys = new Set(spec.map(o => biqLc(o.k)));
+        const canonKey = k => {
+            const l = biqLc(k);
+            if (/custom/.test(l)) return 'Custom Width';
+            if (/type/.test(l)) return 'Type';
+            if (/colou?r/.test(l)) return 'Colour';
+            if (/width/.test(l)) return 'Width';
+            if (/size|length/.test(l)) return 'Size';
+            if (/return/.test(l)) return 'Returns';
+            if (/fix/.test(l)) return 'Fix';
+            if (/mitre.*lh/.test(l)) return 'Mitre LH';
+            if (/mitre.*rh/.test(l)) return 'Mitre RH';
+            if (/top\s*board/.test(l)) return 'Top Board';
+            return biqNorm(k);
+        };
+        const staged = [], dropIdx = [];
+        it.variants.forEach((v, idx) => {
+            const k = biqNorm(v[0]);
+            if (!BIQ_INLINE_VALANCE_RE.test(k)) return;
+            if (specKeys.has(biqLc(k))) return;                        // legitimate option here
+            dropIdx.push(idx);
+            const val = cleanVal(v[1]);
+            if (val) staged.push('Valance ' + canonKey(k) + '=' + val);
+        });
+        dropIdx.sort((a, b) => b - a).forEach(i => it.variants.splice(i, 1));
+        // meaningful only when something identifies an actual valance request
+        if (staged.some(s => /^Valance (Type|Colour|Width|Custom Width|Size)=/i.test(s))) it._valance = staged;
+    });
+}
 // A valance block on a blind row becomes its OWN order line (that is how BlindIQ carries it).
-// Product family follows the parent blind (Element Roller -> Element Valance; otherwise Valance);
-// the doc's Range/Colour/Width/Fix land on the line; Returns / End Cap details are mapped onto the
-// valance type's own option keys where its template has them, and anything unmappable rides in the
-// line notes. Drop comes from the range name's profile size ("Linear 150mm" -> 150) when stated,
-// else stays blank to be flagged. If the DB has no valance blind type at all, the line is NOT
-// invented — the parent keeps its _valance flag for the capturer (never silently wrong).
+// Product family follows the parent blind (Element Roller -> Element Valance; otherwise Valance),
+// then switches to the sibling valance product when the requested range only exists there
+// ("Half Round" is a generic-Valance range, not an Element Valance one); the doc's
+// Range/Colour/Width/Fix land on the line; Returns / Mitres / Top Board / End Cap details are
+// mapped onto the valance type's own option keys where its template has them, and anything
+// unmappable rides in the line notes. Drop comes from the range name's profile size
+// ("Linear 150mm" -> 150) or a stated Valance Size. Width uses the doc's stated valance width;
+// when none is usable it is auto-sized to the blind width + 15mm (Russel 2026-08-07) and noted.
+// If the DB has no valance blind type at all, the line is NOT invented — the parent keeps its
+// _valance flag for the capturer (never silently wrong).
 export function biqExpandValances(mappings, order) {
     (order ? order.items.slice() : []).forEach(src => {
         if (!src._valance || !src._valance.length || src._valanceLine) return;
@@ -1294,34 +1380,56 @@ export function biqExpandValances(mappings, order) {
             const i = s.indexOf('=');
             if (i > 0) kv[biqLc(biqNorm(s.slice(0, i)).replace(/^valance\s+/i, ''))] = biqNorm(s.slice(i + 1));
         });
+        // "Type" (Linear / Half Round — Blind Guys, BD form, AI) doubles as the
+        // range when the doc gave no explicit range.
+        if (!kv['range'] && kv['type']) kv['range'] = kv['type'];
         const fam = /^element\b/i.test(src.blindType || '') ? 'Element Valance' : 'Valance';
         const alt = fam === 'Element Valance' ? 'Valance' : 'Element Valance';
-        const use = biqResolve(mappings, 'blindTypes', fam).known ? fam
+        let use = biqResolve(mappings, 'blindTypes', fam).known ? fam
             : (biqResolve(mappings, 'blindTypes', alt).known ? alt : '');
         if (!use) return;
+        // "Linear 150mm" is TBD's name; BlindIQ's range is e.g. "linear valance" — exact name
+        // first, else accept the scoped range only when the first word pins it to exactly ONE
+        // candidate (same rule as the double-roller composite ranges). Returns the resolved
+        // range name, or null when this product can't carry the requested range.
+        const rangeOn = (btName, rangeStr) => {
+            if (!rangeStr) return null;
+            if (biqResolveRange(mappings, btName, rangeStr).known) return rangeStr;
+            const bt = biqResolve(mappings, 'blindTypes', btName);
+            const tok = biqLc(rangeStr).split(/\s+/)[0];
+            if (!bt.known || !tok) return null;
+            const pre = bt.id + '|';
+            const cands = Object.keys(mappings.rangesScoped || {})
+                .filter(k => k.indexOf(pre) === 0).map(k => k.slice(pre.length))
+                .filter(rn => rn.split(/\s+/).includes(tok));
+            return cands.length === 1 ? cands[0] : null;
+        };
+        const wantRange = kv['range'] || '';
+        let resolvedRange = rangeOn(use, wantRange);
+        // the requested range only exists on the sibling valance product -> order it there
+        if (wantRange && !resolvedRange) {
+            const sib = use === fam ? alt : fam;
+            if (biqResolve(mappings, 'blindTypes', sib).known) {
+                const r2 = rangeOn(sib, wantRange);
+                if (r2) { use = sib; resolvedRange = r2; }
+            }
+        }
         const it = biqBlankItem(String(order.items.length + 1));
         it.blindType = use;
         it.qty = src.qty || '1'; it.location = src.location || '';
-        it.range = kv['range'] || '';
+        it.range = wantRange;
+        if (resolvedRange && biqLc(resolvedRange) !== biqLc(wantRange)) { it._origRange = wantRange; it.range = resolvedRange; }
+        else if (resolvedRange) it.range = resolvedRange;
         it.colour = kv['colour'] || '';
-        it.width = (kv['width'] || '').replace(/[^\d]/g, '');
-        const dm = (kv['range'] || '').match(/(\d{2,4})\s*mm/i);
+        it.width = (kv['custom width'] || kv['width'] || '').replace(/[^\d]/g, '');
+        if (!it.width) {
+            const bw = parseInt(src.width, 10);
+            if (bw) { it.width = String(bw + 15); it._autoWidth = true; }   // blind + 15mm (Russel 2026-08-07)
+        }
+        const dm = (kv['range'] || '').match(/(\d{2,4})\s*mm/i)
+            || (kv['size'] || '').match(/(\d{2,4})\s*mm/i) || (kv['size'] || '').match(/^(\d{2,4})$/);
         it.drop = dm ? dm[1] : '';
         it.fix = kv['fix'] || src.fix || '';
-        // "Linear 150mm" is TBD's name; BlindIQ's range is e.g. "linear valance" — accept the
-        // scoped range only when the first word pins it to exactly ONE candidate (same rule as
-        // the double-roller composite ranges; anything else stays as written and gets flagged).
-        if (!biqResolveRange(mappings, it.blindType, it.range).known && it.range) {
-            const bt = biqResolve(mappings, 'blindTypes', it.blindType);
-            const tok = biqLc(it.range).split(/\s+/)[0];
-            if (bt.known && tok) {
-                const pre = bt.id + '|';
-                const cands = Object.keys(mappings.rangesScoped || {})
-                    .filter(k => k.indexOf(pre) === 0).map(k => k.slice(pre.length))
-                    .filter(rn => rn.split(/\s+/).includes(tok));
-                if (cands.length === 1) { it._origRange = it.range; it.range = cands[0]; }
-            }
-        }
         // No legacy fallback to roller-shaped keys. But "Element Valance" (27) carries no option
         // template in the mappings extract while the generic "Valance" (14) does, and BlindIQ uses
         // the same vocabulary for both — proven by order BDO665443, where Type of Blind / Val
@@ -1331,7 +1439,8 @@ export function biqExpandValances(mappings, order) {
         const spec = biqVariantSpec(mappings, it.blindType)
             || biqVariantSpec(mappings, use === 'Element Valance' ? 'Valance' : 'Element Valance') || [];
         it.variants = spec.map(s => [s.k, s.def || '']);
-        const used = new Set(['range', 'colour', 'width', 'fix']);
+        const used = new Set(['range', 'colour', 'width', 'fix', 'custom width', 'size']);
+        if (kv['type'] && kv['range'] === kv['type']) used.add('type');
         const matchVal = (v, o) => {
             const vals = o.values || [];
             const hit = vals.find(x => biqLc(x) === biqLc(v));
@@ -1350,6 +1459,9 @@ export function biqExpandValances(mappings, order) {
         put('end cap colour', /^end\s*cap\s*colou?r$/i);
         put('end cap lh', /^lh\s*side$/i);
         put('end cap rh', /^rh\s*side$/i);
+        put('mitre lh', /^mitre\s*val\s*lh$/i);
+        put('mitre rh', /^mitre\s*val\s*rh$/i);
+        put('top board', /^top\s*board/i);
         const tob = spec.find(s => /^type\s*of\s*blind$/i.test(s.k));
         if (tob) {
             const want = /roller/i.test(src.blindType) ? 'Roller Blind'
@@ -1360,6 +1472,7 @@ export function biqExpandValances(mappings, order) {
         const leftovers = Object.keys(kv).filter(k => !used.has(k)).map(k => k + '=' + kv[k]);
         it.notes = 'Valance for blind ' + (src.location || src.code)
             + (it._origRange ? ' | doc range: ' + it._origRange : '')
+            + (it._autoWidth ? ' | width auto-sized: blind +15mm — confirm' : '')
             + (leftovers.length ? ' | ' + leftovers.join(' | ') : '');
         order.items.push(it);
         src._valanceLine = it.code;
@@ -1539,7 +1652,8 @@ RULES:
 - Product names may be prefixed "BD " (e.g. "BD Element Roller 40", "BD Element Vision", "BD Element Wood Alloy", "BD Outdoor Blinds - Free Hang", "BD Cellular Skylight"); use the product name as the blindType (the "BD " prefix is just the manufacturer tag).
 - "Mk" is the item/mark number; the "No." column is the quantity. "Fab / Slat" is the fabric range; map it to "range".
 - Fix abbreviations: "F/F" = Face; "I/R" = Reveal. "Rev L" / "Rev R" = Reveal with the control on the Left / Right respectively — set fix="Reveal" AND, if controls aren't otherwise stated, set the control side from L/R ("Left" → controlLeft="Lh Chain", controlRight="Rh Pin"; "Right" → controlLeft="Lh Pin", controlRight="Rh Chain"; for crank/motor products use the matching side, e.g. LH Crank / RH Crank).
-- Map the dealer's column wording to BlindIQ options in "options": Comp / Comp Col → Mech Colour; Bott Bar Col → Bottom Bar; Cass Col → the cassette colour option; Steel Chain=Yes or Chain Type=Steel → Steel Ball Chain=Yes; Roll → Roll Type; Int Bracket → Intermediate Bracket; Tilt Cord → the tilt control side; Cord Ht / Chain Height → controlDrop; Br col → Bracket Colour; Alum col → Powder Coat Colour; Add H/D → Hold Downs; Twist Lock Pole / Skylight Pole → the pole option; Crank + Crank length + Crank col → the crank handle/control. Put true accessories (motor Type, Charger, Remote, crank handle as a separate part) into "sundries" when they are charged components.`;
+- Map the dealer's column wording to BlindIQ options in "options": Comp / Comp Col → Mech Colour; Bott Bar Col → Bottom Bar; Cass Col → the cassette colour option; Steel Chain=Yes or Chain Type=Steel → Steel Ball Chain=Yes; Roll → Roll Type; Int Bracket → Intermediate Bracket; Tilt Cord → the tilt control side; Cord Ht / Chain Height → controlDrop; Br col → Bracket Colour; Alum col → Powder Coat Colour; Add H/D → Hold Downs; Twist Lock Pole / Skylight Pole → the pole option; Crank + Crank length + Crank col → the crank handle/control. Put true accessories (motor Type, Charger, Remote, crank handle as a separate part) into "sundries" when they are charged components.
+- A valance or pelmet requested ON a blind line: put it into that line's "options" as "Valance Type=Linear" (or Half Round etc.), "Valance Colour=...", "Valance Width=...", "Valance Returns=..." — do NOT invent a separate line item for it; the converter splits it into its own BlindIQ valance line automatically. A valance printed as its OWN row in the document stays its own line item (blindType "Valance").`;
 }
 
 // Convert the AI's JSON into the converter order model.
@@ -1574,9 +1688,26 @@ export function biqAiResultToOrder(mappings, ai) {
         it.notes = biqNorm(li.notes);
         o.items.push(it);
     });
+    // AI-extracted sundries used to arrive as bare descriptions with no BlindIQ item —
+    // resolve them the same way as every other format. Motor view first for EVERY sundry
+    // (it is small and precise, so a unique hit there IS a motor part — no keyword
+    // guessing), aggregating duplicates and applying the white default; anything that
+    // doesn't resolve there gets one full-catalogue attempt; still-unresolved stays
+    // flagged with the description intact.
     (ai.sundries || []).forEach(s => {
-        o.sundries.push({ code: '', qty: biqNorm(s.qty) || '1', type: '', sundry: '', notes: biqNorm(s.description) });
+        const qty = biqNorm(s.qty) || '1', desc = biqNorm(s.description);
+        if (!desc) return;
+        const before = o.sundries.length;
+        biqAddMotorSundry(mappings, o, desc, +qty || 1, true);
+        const su = o.sundries[o.sundries.length - 1];
+        if (o.sundries.length > before && su && !su.sundry) {
+            const h = biqFuzzySundry(mappings, desc);
+            if (h && h.sundry != null) { su.type = String(h.type); su.sundry = String(h.sundry); }
+        }
     });
+    // inline valances in AI options (Valance Type= / Valance Colour= ...) -> own line
+    biqStageInlineValances(mappings, o);
+    biqExpandValances(mappings, o);
     return o;
 }
 

@@ -767,18 +767,23 @@ export function biqNormalizeMatheo(mappings, p) {
         const mv = (src, key) => { const v = cleanVal(raw[src]); if (v) biqSetVar(it.variants, key, v); };
         mv('H/ware Colour', 'Mech Colour');
         // "Covered Aluminium" = an aluminium bar matching the hardware colour (Russel 2026-08-07).
-        // Only mapped when BlindIQ carries that exact colour bar — Beige hardware has no beige
-        // aluminium bar, so it stays flagged until the factory's pairing is confirmed.
+        // Hardware colours with no aluminium bar in BlindIQ (e.g. Beige) get a WHITE aluminium
+        // bar — factory practice confirmed by Russel 2026-08-07 — with the substitution noted.
         {
             const bb = cleanVal(raw['Bottom Bar']);
             if (/covered/i.test(bb)) {
                 const hw = biqNorm(cleanVal(raw['H/ware Colour']).replace(/\([^)]*\)/g, ' '));
                 const spec = biqVariantSpec(mappings, it.blindType, it.range) || [];
                 const bbo = spec.find(s => /^bottom\s*bar$/i.test(s.k));
-                const want = hw ? hw + ' Aluminium' : '';
-                const real = bbo && want && (bbo.values || []).find(x => biqLc(x) === biqLc(want));
-                if (real) { biqSetVar(it.variants, 'Bottom Bar', real); it.notes = (it.notes ? it.notes + ' | ' : '') + 'Bottom Bar "' + bb + '" read as ' + real; }
-                else biqSetVar(it.variants, 'Bottom Bar', bb);
+                const vals = (bbo && bbo.values) || [];
+                const exact = hw && vals.find(x => biqLc(x) === biqLc(hw + ' Aluminium'));
+                const white = vals.find(x => biqLc(x) === 'white aluminium');
+                const real = exact || white;
+                if (real) {
+                    biqSetVar(it.variants, 'Bottom Bar', real);
+                    it.notes = (it.notes ? it.notes + ' | ' : '') + 'Bottom Bar "' + bb + '" read as ' + real
+                        + (exact ? '' : ' (no ' + (hw || 'matching') + ' aluminium bar — white fitted as standard)');
+                } else biqSetVar(it.variants, 'Bottom Bar', bb);
             } else if (bb) biqSetVar(it.variants, 'Bottom Bar', bb);
         }
         mv('Roll Type', 'Roll Type');

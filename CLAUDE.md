@@ -138,6 +138,17 @@ After Gemini returns results, the frontend runs these validations locally:
 - **Colour-variant parts with no colour on the order default to WHITE** (Russel 2026-08-07): after a colour-ambiguous match, the resolver retries with " white" appended and accepts a unique hit, appending "— WHITE assumed (no colour on order)" to the sundry notes. An explicit colour in the text is never overridden — an explicit colour with no matching catalogue variant (e.g. grey) stays flagged for the operator.
 - **Generalized matching rules** (Russel 2026-08-07, verified by sweeping all 502 items under the seven motor types + Nm/# spelling variants against the live Firestore catalogue — 502/502 resolve, 0 wrong parts, 0 type-13 leaks): torque/speed ratios canonicalize "15Nm/17" ↔ "15/17" on both sides; exact lookup also tries the name + " #" (dealers copy "#"-marked names without the marker); single-letter tokens (side L/R) kept with letter-boundary matching; the canon pass uses the same boundary token rules as pass 1 (a dropped "3" once collided "3/30" with the "40/30/28" charger); several keys naming the SAME item id are aliases, not ambiguity; and a minimal-superset tiebreak picks the entry that adds nothing beyond the dealer's text ("Mercure 3/30" beats "Wood Ven Mercure 3nm/30 Ext Receiver") — except in colour-only families, which the WHITE default handles.
 
+## Converter: Attached Items (valances & motors on blind lines)
+
+Customers order valances/motors ON the blind line; BlindIQ orders them separately (Russel 2026-08-07, comprehensive resolution across all formats):
+
+- **Motors/remotes/accessories** → sundry lines under the seven motor sundry types (see Converter Rules above). Applied on every path incl. AI-extracted sundries (motor view first — a unique hit there IS a motor part — then one full-catalogue attempt).
+- **Valances** → BlindIQ's own variant template decides, per product: if the options tab carries the key (wood venetians' Val Size/Val Returns/Mitre/Val Type, Retro's Valance and Bottom Type/Colour), it stays an option; otherwise `biqStageInlineValances` moves the data to `_valance` staging and `biqExpandValances` orders it as its OWN line under `Valance` (14) / `Element Valance` (27) — range from Linear/Half Round wording (sibling-product fallback when the range only exists on the other valance product), drop from the profile size, parent line cross-referenced ("Valance for this blind is line N — do not add it here").
+- **Cassettes stay options** — roller 70mm open/closed cassette, Double Roller/Vision/RomaShade cassette colour, outdoor fascia/full cassette — via the existing template-aware `biqFoldCassette`. (Roller System 55's only cassette option is "Closed Cassette (Motor Only)".)
+- **Valance width**: the doc's stated width wins; when none is usable it is auto-sized to blind width + 15mm with "width auto-sized: blind +15mm — confirm" in the notes (Russel 2026-08-07).
+- **Standalone valance rows** in dealer docs (e.g. Lifestyle) become real Valance line items when a width is readable; otherwise they stay in order notes.
+- Wired on every deterministic parser (Blind Guys roller/DRB incl. the full v8 valance column group + End Cap/LH/RH Side, BD order form, TBD as before, Lifestyle) and the AI path (extraction prompt instructs Valance Type/Colour/Width option keys). Unknown blind types are never touched — flagging handles them.
+
 ## Improvement Phases (Planned)
 
 See the planning document. Phases in priority order:

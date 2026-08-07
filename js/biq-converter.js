@@ -267,7 +267,11 @@ export function biqAddMotorSundry(mappings, order, text, qty, motorContext) {
     // accessory column). Parentheticals were already stripped; also cut a
     // trailing "Available in ..." clause so the part name alone can match.
     const noTail = biqNorm(t.replace(/\([^)]*\)/g, ' ').replace(/\bavailable in\b.*$/i, ' '));
-    for (const base of [t, biqNorm(t.replace(/\([^)]*\)/g, ' ')), noTail]) {
+    const bases = [t, biqNorm(t.replace(/\([^)]*\)/g, ' ')), noTail];
+    // Dealer sheets prefix the brand ("Somfy Situo 5 RTS Pure") where the catalogue mostly
+    // doesn't — try each base with a leading "Somfy" stripped too (Mathéo, Russel 2026-08-07).
+    bases.slice().forEach(b => { const s = biqNorm(b.replace(/^somfy\s+/i, '')); if (s && s !== b && !bases.includes(s)) bases.push(s); });
+    for (const base of bases) {
         for (const v of [base, base.replace(/(\d+)\s*ch\b/gi, '$1 channel'), base.replace(/(\d+)\s*ch\b/gi, '$1')]) {
             const n = biqNorm(v);
             if (n && !variants.includes(n)) variants.push(n);
@@ -683,7 +687,14 @@ export function biqParseMatheoItems(textItems) {
     // header row: tolerate split words ("Locatio"+"n") — match on '#' + Location/Price prefixes
     const hl = lines.find(l => { const t = l.parts.map(p => p.s.trim()); return t.includes('#') && t.some(s => /^locatio/i.test(s)) && t.some(s => /^price/i.test(s)); });
     if (!hl) return null;
-    const cols = hl.parts.map(p => ({ name: biqNorm(p.s), x: p.x }));
+    // Same-line header words closer than a real column gap are one title — the outdoor sheet
+    // prints "Roll Type" as two words ~16px apart while true columns sit ≥30px apart (J6966).
+    const cols = [];
+    hl.parts.forEach(p => {
+        const prev = cols[cols.length - 1];
+        if (prev && (p.x - prev._lx) < 22) { prev.name = biqNorm(prev.name + ' ' + p.s); prev._lx = p.x; }
+        else cols.push({ name: biqNorm(p.s), x: p.x, _lx: p.x });
+    });
     const hi = lines.indexOf(hl);
     for (let k = 1; k <= 3; k++) {
         const l2 = lines[hi + k]; if (!l2) break;
@@ -717,8 +728,8 @@ export function biqParseMatheoItems(textItems) {
         // option on the blind where the sheet has it, price ignored — BlindIQ prices itself).
         if (/^#?\.?\s*accessory/i.test(biqNorm(joined))) { if (cur) cur._accBlock = true; continue; }
         if (cur && cur._accBlock) {
-            const am = biqNorm(joined).match(/^\d+\.\s*(.+?)(?:\s+[\d.,]+\s+\d+\s+[\d.,]+)?\s*$/);
-            if (am) { (cur._accessories = cur._accessories || []).push(biqNorm(am[1])); continue; }
+            const am = biqNorm(joined).match(/^\d+\.\s*(.+?)(?:\s+[\d.,]+\s+(\d+)\s+[\d.,]+)?\s*$/);
+            if (am) { (cur._accessories = cur._accessories || []).push({ name: biqNorm(am[1]), qty: am[2] || '1' }); continue; }
             if (/^(price|qty|total)\b/i.test(biqNorm(joined))) continue;
             cur._accBlock = false;                                   // block ended — fall through
         }
@@ -756,8 +767,14 @@ export function biqNormalizeMatheo(mappings, p) {
         it.range = rng; it.colour = raw['Colour'] || '';
         it.fix = raw['Fix'] || '';
         const ctl = biqLc(raw['Controls'] || '');
-        if (ctl.includes('rh') && ctl.includes('chain')) { it.control1 = 'Lh Pin'; it.control2 = 'Rh Chain'; }
-        else if (ctl.includes('lh') && ctl.includes('chain')) { it.control1 = 'Lh Chain'; it.control2 = 'Rh Pin'; }
+        const rhS = /\brh\b|\bright\b/.test(ctl), lhS = /\blh\b|\bleft\b/.test(ctl);
+        if (ctl.includes('chain') && rhS) { it.control1 = 'Lh Pin'; it.control2 = 'Rh Chain'; }
+        else if (ctl.includes('chain') && lhS) { it.control1 = 'Lh Chain'; it.control2 = 'Rh Pin'; }
+        // "RH Motor" = motor on the RIGHT -> it belongs on Control R, with the idle pin on the
+        // left (Russel 2026-08-07, Mathéo outdoor J6966). Mirrored for LH. A motor with no side
+        // stays on Control 1 unresolved so it flags rather than guessing.
+        else if (ctl.includes('motor') && rhS) { it.control1 = 'Lh Pin'; it.control2 = 'Rh Motor'; }
+        else if (ctl.includes('motor') && lhS) { it.control1 = 'Lh Motor'; it.control2 = 'Rh Pin'; }
         else if (ctl.includes('motor')) { it.control1 = raw['Controls']; it.control2 = ''; }
         else { it.control1 = raw['Controls'] || ''; }
         { const cd = biqNorm(raw['Control Drop'] || '');
@@ -792,6 +809,33 @@ export function biqNormalizeMatheo(mappings, p) {
         mv('Cassette', 'Sys 40 70mm Cassette');
         mv('Fabric Insert 70mm Cassette', 'Fabric Insert for 70mm Cassette');
         mv('Side Channels', 'Side Channels');
+        mv('Powder Coat Colour', 'Powder Coat Colour');
+        mv('Hold Downs', 'Hold Downs');
+        mv('Crank Handle', 'Crank Handle');
+        // Outdoor: "Brackets: Black" is the bracket COLOUR (Russel 2026-08-07, J6966). Folded
+        // only where the sheet actually has a Bracket Colour option, so other sheets are untouched.
+        {
+            const br = cleanVal(raw['Brackets']);
+            const spec = biqVariantSpec(mappings, it.blindType, it.range) || [];
+            const bco = spec.find(s => /^bracket\s*colou?r$/i.test(s.k));
+            if (br && bco) biqSetVar(it.variants, bco.k, br);
+        }
+        // The sheet's own "Control" option (crank colour / Motor) mirrors the Controls column:
+        // exact value match first, else a motorised blind is the sheet's 'Motor'. A motorised
+        // blind also gets Crank Handle 'None' — there is no crank to pick (Russel 2026-08-07, J6966).
+        {
+            const spec = biqVariantSpec(mappings, it.blindType, it.range) || [];
+            const gv2 = k => { const f = it.variants.find(v => biqLc(v[0]) === biqLc(k)); return f ? biqNorm(f[1]) : ''; };
+            const co = spec.find(s => /^control$/i.test(s.k));
+            if (co && !gv2(co.k)) {
+                const cval = (co.values || []).find(x => biqLc(x) === ctl)
+                    || (ctl.includes('motor') ? (co.values || []).find(x => /^motor$/i.test(x)) : null);
+                if (cval) biqSetVar(it.variants, co.k, cval);
+            }
+            const ch = spec.find(s => /^crank\s*handle$/i.test(s.k));
+            const chNone = ch ? (ch.values || []).find(x => /^none$/i.test(x)) : null;
+            if (ctl.includes('motor') && ch && chNone && !gv2(ch.k)) biqSetVar(it.variants, ch.k, chNone);
+        }
         // Mathéo "Bracket Covers = Std" means covers fitted as standard -> nothing to remove
         // (Russel 2026-08-07). Any other explicit value rides through for the emit gate to judge.
         {
@@ -801,12 +845,17 @@ export function biqNormalizeMatheo(mappings, p) {
         }
         mv('System Change', 'System Change');
         // Priced accessory rows under the blind: map onto the sheet's own option where one
-        // exists (wire side guides), otherwise carry the wording in the notes. The dealer
-        // price is ignored — BlindIQ prices for itself (Russel 2026-08-07).
-        (raw._accessories || []).forEach(acc => {
+        // exists (wire side guides), otherwise they are BlindIQ SUNDRY lines — motors, remotes,
+        // adapter kits, touch-up paint (Russel 2026-08-07, J6966). Unmatched sundries stay
+        // blank + flagged for mapping. The dealer price is ignored — BlindIQ prices for itself.
+        (raw._accessories || []).forEach(a => {
+            const acc = (a && a.name) || String(a || ''); if (!acc) return;
+            const qty = (a && a.qty) || '1';
             const spec = biqVariantSpec(mappings, it.blindType, it.range) || [];
             const wsg = spec.find(s => /wire\s*side\s*guide/i.test(s.k));
             if (/wire\s*side\s*guide/i.test(acc) && wsg) biqSetVar(it.variants, wsg.k, 'Yes');
+            else biqAddMotorSundry(mappings, o, acc, qty,
+                /motor|\brts\b|remote|adapter|adaptor|situo|maestria|sonesse|smoove|tahoma|telis|glydea|zigbee|\bio\b/i.test(acc));
             it.notes = (it.notes ? it.notes + ' | ' : '') + 'Accessory: ' + acc;
         });
         o.items.push(it);
@@ -2423,9 +2472,13 @@ export function biqFoldOptionSynonyms(mappings, order) {
             const o = spec2.find(s => biqLc(s.k) === biqLc(v[0]));
             if (!o || !(o.values || []).length) return;
             const val = biqNorm(v[1]); if (!val) return;
-            if (o.values.some(x => biqLc(x) === biqLc(val))) return;
+            const ci = o.values.find(x => biqLc(x) === biqLc(val));
+            if (ci) { if (ci !== val) v[1] = ci; return; }            // case-only difference -> catalogue spelling, silently
             const stripped = biqNorm(val.replace(/\s*\([^)]*\)\s*/g, ' '));
-            const real = stripped && stripped !== val && o.values.find(x => biqLc(x) === biqLc(stripped));
+            // "4x steel collapsable" (tight PDF kerning glues the count to the x) -> "4 x ..." (J6966)
+            const spacedX = biqNorm(val.replace(/\b(\d+)\s*x\b/gi, '$1 x'));
+            const cands = [stripped, spacedX, biqNorm(stripped.replace(/\b(\d+)\s*x\b/gi, '$1 x'))];
+            const real = cands.map(c => c && c !== val ? o.values.find(x => biqLc(x) === biqLc(c)) : null).find(Boolean);
             if (real) { v[1] = real; it.notes = (it.notes ? it.notes + ' | ' : '') + v[0] + ' "' + val + '" read as ' + real; }
         });
     });

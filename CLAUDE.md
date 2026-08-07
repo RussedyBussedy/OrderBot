@@ -49,6 +49,9 @@ There are no tests, linters, or build steps. The frontend is served as static fi
 | `index.js` | Express proxy — forwards requests to Gemini API via Secret Manager |
 | `js/config.js` | Firebase config, `PROXY_API_URL`, `PROMPT_VERSION` |
 | `js/constants.js` | Validation constants: blind type exclusion lists, `CACHE_TTL_MS` |
+| `js/biq-converter.js` | Document converter core (pure, no DOM): parses Blind Guys xlsx / Mathéo PDF / BD forms / AI JSON → BlindIQ order + XML; name→ID resolution via `orderbot_biq_mappings` (Firestore) |
+| `js/biq-converter-ui.js` | Converter UI (Drawings tab): drag-drop, preview, mappings manager |
+| `js/biq-form-specs.js` | Converter seed mappings / extraction schema / form specs |
 | `package.json` | 2 dependencies: `express` and `@google-cloud/secret-manager` |
 | `Dockerfile` | Cloud Run deployment (node:20-slim, port 8080) |
 
@@ -126,6 +129,13 @@ After Gemini returns results, the frontend runs these validations locally:
 6. **One Touch Dual rule** (Paul, 2026-08-05) — a System 40 roller blind taking a One Touch Dual motor (1.1/2/3Nm family; thinner motor head) must be spec'd "LH DUAL"/"RH DUAL", NOT "LH Motor"/"RH Motor" (plain-motor spec → blind made too narrow); the reverse (DUAL spec, no One Touch Dual motors ordered) is also flagged
 7. **Critical-field surfacing** (Paul, 2026-08-05) — mismatches/omissions on Product Type, Range, Colour, QTY, Width, Drop, Control 1/2 (`CRITICAL_FIELDS` in `js/constants.js`) get the strongest cell highlight (`.critical-cell`), a CRITICAL FIELD CHECK summary at the top of every report, and an end-of-run popup (`#critical-modal`) listing the affected line items per order
 8. **Valance validation** (rules corrected 2026-08-06 after Sharon's cassette false alarms) — runs only when the customer order instructs valances on ALL blinds. A valance ordered AS PART OF THE BLIND (cassette blind, or a valance/cassette in the line's specifications) satisfies the requirement with NO size check — the factory sizes it to the blind. Only STANDALONE valance line items (linear / half round / pelmet — valance wording AND no blind-sized drop) are width-matched: they must be **10–15mm larger** than the blind (was wrongly 20–25mm, and cassette specs were wrongly size-parsed, e.g. "Sys 40" read as 40mm)
+
+## Converter Rules (Drawings tab)
+
+- **Motor/remote/accessory sundries prefer the "Motors …" catalogue entry** (Sharon's Blind Guys motors report, Paul 2026-08-07). Most Somfy parts exist twice in BlindIQ sundries — `Motors Sonesse 40 RTS 3/30` (type 13 "components motor") and a bare `Sonesse 40 Rts 3nm/30` (type 23 "motors somfy rts"). Without `preferMotors=true` the fuzzy match saw both, returned ambiguous, and the sundry stayed blank — BlindIQ then asked the capturer for a part number on every motorised line. All parser call sites (Blind Guys, BD outdoor form, TBD) now pass `preferMotors=true`.
+- **Marketing tails are stripped before matching** — Blind Guys accessory column appends "(max width 4000mm) Available in white, black and grey" which no catalogue key carries.
+- **"adaptor" spellings are canonicalized on both sides** (`adaptor/adapter/adpator/adpater`) because BlindIQ itself carries typo'd entries ("Sys 55 Motor Adpator Kit for Sonesse 40", "… Adpater … White/Black").
+- **Colour-variant parts with no colour on the order default to WHITE** (Russel 2026-08-07): after a colour-ambiguous match, the resolver retries with " white" appended and accepts a unique hit, appending "— WHITE assumed (no colour on order)" to the sundry notes. An explicit colour in the text is never overridden — an explicit colour with no matching catalogue variant (e.g. grey) stays flagged for the operator.
 
 ## Improvement Phases (Planned)
 

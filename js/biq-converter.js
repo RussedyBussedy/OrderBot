@@ -703,9 +703,25 @@ export function biqParseMatheoItems(textItems) {
         const s = p.s.trim();
         row[key] = row[key] ? (s.length <= 2 ? row[key] + s : row[key] + ' ' + s) : s;
     };
+    // Repeating page furniture must never be absorbed into an open row — on multi-page
+    // orders the page-2/3 header ("Blind Designs / Supplier Name : / Purchase Order …")
+    // followed the last item of the previous page and garbled it (Mathéo J7117 items 6+13,
+    // Russel 2026-08-07). Match by content: these lines repeat identically on every page.
+    const isFurniture = t => /supplier name|purchase order|quote #|consultant\s*:|adderss|math.o|blinds\s*\.\s*curtains|^blind designs\b|^bd [a-z ]+blind$|tel\s*:|email\s*:|^date\s*:|name\s*:|job #|page \d+\s*\/|shop \d+|kyalami|ivanseth|johannesburg \d+|witpoort|midrand|^abn\b/i.test(biqLc(biqNorm(t)));
     for (let li = hi + 1; li < lines.length; li++) {
         const l = lines[li]; const first = l.parts[0]; const joined = l.parts.map(p => p.s).join(' ');
         if (/Sub Total|Grand Total|Discount|Vat\(|Rounding|Page \d/i.test(joined)) { if (/Sub Total|Grand Total/i.test(joined)) break; else continue; }
+        if (isFurniture(joined)) continue;
+        // Priced accessory blocks ("#. Accessory" / "1. Wire Side Guides - Floor fix  745.0  1  745.00")
+        // belong to the item ABOVE, not to its option columns (Russel 2026-08-07: accessory ->
+        // option on the blind where the sheet has it, price ignored — BlindIQ prices itself).
+        if (/^#?\.?\s*accessory/i.test(biqNorm(joined))) { if (cur) cur._accBlock = true; continue; }
+        if (cur && cur._accBlock) {
+            const am = biqNorm(joined).match(/^\d+\.\s*(.+?)(?:\s+[\d.,]+\s+\d+\s+[\d.,]+)?\s*$/);
+            if (am) { (cur._accessories = cur._accessories || []).push(biqNorm(am[1])); continue; }
+            if (/^(price|qty|total)\b/i.test(biqNorm(joined))) continue;
+            cur._accBlock = false;                                   // block ended — fall through
+        }
         if (/^\d+$/.test(first.s.trim()) && first.x < cols[1].x) { cur = {}; rowsOut.push(cur); l.parts.forEach(p => assign(cur, p)); }
         else if (cur) { l.parts.forEach(p => assign(cur, p)); }
     }
@@ -750,15 +766,44 @@ export function biqNormalizeMatheo(mappings, p) {
         it.variants = biqTemplateFor2(mappings, it.blindType || 'roller', it.range);
         const mv = (src, key) => { const v = cleanVal(raw[src]); if (v) biqSetVar(it.variants, key, v); };
         mv('H/ware Colour', 'Mech Colour');
-        mv('Bottom Bar', 'Bottom Bar');
+        // "Covered Aluminium" = an aluminium bar matching the hardware colour (Russel 2026-08-07).
+        // Only mapped when BlindIQ carries that exact colour bar — Beige hardware has no beige
+        // aluminium bar, so it stays flagged until the factory's pairing is confirmed.
+        {
+            const bb = cleanVal(raw['Bottom Bar']);
+            if (/covered/i.test(bb)) {
+                const hw = biqNorm(cleanVal(raw['H/ware Colour']).replace(/\([^)]*\)/g, ' '));
+                const spec = biqVariantSpec(mappings, it.blindType, it.range) || [];
+                const bbo = spec.find(s => /^bottom\s*bar$/i.test(s.k));
+                const want = hw ? hw + ' Aluminium' : '';
+                const real = bbo && want && (bbo.values || []).find(x => biqLc(x) === biqLc(want));
+                if (real) { biqSetVar(it.variants, 'Bottom Bar', real); it.notes = (it.notes ? it.notes + ' | ' : '') + 'Bottom Bar "' + bb + '" read as ' + real; }
+                else biqSetVar(it.variants, 'Bottom Bar', bb);
+            } else if (bb) biqSetVar(it.variants, 'Bottom Bar', bb);
+        }
         mv('Roll Type', 'Roll Type');
         if (/steel/i.test(raw['Chain'] || '')) biqSetVar(it.variants, 'Steel Ball Chain', 'Yes');
         if (/yes/i.test(raw['Cord Tidy'] || '')) biqSetVar(it.variants, 'Chain Tidy', 'Yes');
         mv('Cassette', 'Sys 40 70mm Cassette');
         mv('Fabric Insert 70mm Cassette', 'Fabric Insert for 70mm Cassette');
         mv('Side Channels', 'Side Channels');
-        if (cleanVal(raw['Bracket Covers'])) biqSetVar(it.variants, 'Remove Bracket Covers', cleanVal(raw['Bracket Covers']));
+        // Mathéo "Bracket Covers = Std" means covers fitted as standard -> nothing to remove
+        // (Russel 2026-08-07). Any other explicit value rides through for the emit gate to judge.
+        {
+            const bc = cleanVal(raw['Bracket Covers']);
+            if (/^std\.?$|^standard$/i.test(bc)) biqSetVar(it.variants, 'Remove Bracket Covers', 'No');
+            else if (bc) biqSetVar(it.variants, 'Remove Bracket Covers', bc);
+        }
         mv('System Change', 'System Change');
+        // Priced accessory rows under the blind: map onto the sheet's own option where one
+        // exists (wire side guides), otherwise carry the wording in the notes. The dealer
+        // price is ignored — BlindIQ prices for itself (Russel 2026-08-07).
+        (raw._accessories || []).forEach(acc => {
+            const spec = biqVariantSpec(mappings, it.blindType, it.range) || [];
+            const wsg = spec.find(s => /wire\s*side\s*guide/i.test(s.k));
+            if (/wire\s*side\s*guide/i.test(acc) && wsg) biqSetVar(it.variants, wsg.k, 'Yes');
+            it.notes = (it.notes ? it.notes + ' | ' : '') + 'Accessory: ' + acc;
+        });
         o.items.push(it);
     });
     return o;
@@ -2364,6 +2409,19 @@ export function biqFoldOptionSynonyms(mappings, order) {
                 const nl = biqLc(it.notes);
                 if (rule.aliases.some(a => nl.includes(a))) setCanon(rule.value);
             }
+        });
+        // Value-level canonicalization (Russel 2026-08-07, Mathéo "Beige (S40)"): when a value
+        // isn't on the sheet's list but the value MINUS bracketed qualifiers is, use the
+        // catalogue spelling and note the original. Anything still off-list keeps flagging.
+        const spec2 = biqVariantSpec(mappings, it.blindType, it.range);
+        if (spec2) it.variants.forEach(v => {
+            const o = spec2.find(s => biqLc(s.k) === biqLc(v[0]));
+            if (!o || !(o.values || []).length) return;
+            const val = biqNorm(v[1]); if (!val) return;
+            if (o.values.some(x => biqLc(x) === biqLc(val))) return;
+            const stripped = biqNorm(val.replace(/\s*\([^)]*\)\s*/g, ' '));
+            const real = stripped && stripped !== val && o.values.find(x => biqLc(x) === biqLc(stripped));
+            if (real) { v[1] = real; it.notes = (it.notes ? it.notes + ' | ' : '') + v[0] + ' "' + val + '" read as ' + real; }
         });
     });
     biqFoldCassette(mappings, order);

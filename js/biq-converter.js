@@ -667,6 +667,16 @@ export function biqNormalizeBlindGuys(mappings, p) {
 }
 
 // ---------- Mathéo PDF (textItems = [{s,x,y}] from pdf.js getTextContent) ----------
+// Canonical column lists for Mathéo's dense per-type table layouts (see biqParseMatheoItems).
+const BIQ_MATHEO_LAYOUTS = [
+    {
+        re: /urban\s*shutter/i,
+        cols: ['#', 'Location', 'Width', 'Height', 'Type', 'Material', 'Colour', 'Fix', 'Louvre Size', 'Frame Type',
+            'Frame Application', 'Tilt Bar', 'Hinge Type', 'Hinge Configuration', 'Style', 'Mid Rebate',
+            'Mid Rail Positions', 'Top + B Rail Size', 'T-Post Positions', 'Flexi Scribe Strip', 'Locks',
+            'Bay Post', 'Bay Flex Joint', 'Closure Catch', 'Price']
+    },
+];
 export function biqParseMatheoItems(textItems) {
     const items = textItems.filter(i => i.s.trim());
     const lineMap = {};
@@ -707,6 +717,29 @@ export function biqParseMatheoItems(textItems) {
         if (!used) break;
     }
     cols.forEach(c => { c.name = c.name.replace(/\s+([a-z])$/, '$1'); });
+    // Dense per-type layouts (Russel 2026-08-07: "matheo orders format changes depending on
+    // what blind type is chosen"). The 25-column shutter sheet wraps its headers over SIX
+    // lines and packs columns tighter than the emergent heuristics can separate ("Tilt Bar"
+    // is one title 13px apart, "+ | T-Post" are two columns 15px apart, "# | Location" 22px).
+    // For known dense layouts we anchor a canonical column list onto the header line's own
+    // word positions: walk the header words left-to-right, matching each expected title's
+    // first word by prefix, then swallowing its remaining same-line words.
+    const layout = BIQ_MATHEO_LAYOUTS.find(L => L.re.test(meta.product || ''));
+    if (layout) {
+        const words = hl.parts.map(p => ({ s: biqNorm(p.s), x: p.x }));
+        const tcols = []; let wi = 0; let okAll = true;
+        const wmatch = (w, t) => { const a = biqLc(w), b = biqLc(t); return a === b || (a.length > 1 && b.startsWith(a)) || (b.length > 1 && a.startsWith(b)); };
+        for (const title of layout.cols) {
+            const toks = title.split(' ');
+            while (wi < words.length && !wmatch(words[wi].s, toks[0])) { okAll = false; wi++; }   // stray word — tolerate but mark
+            if (wi >= words.length) { okAll = false; break; }
+            tcols.push({ name: title, x: words[wi].x, _lx: words[wi].x }); wi++;
+            for (let ti = 1; ti < toks.length && wi < words.length && wmatch(words[wi].s, toks[ti]); ti++) wi++;
+        }
+        // Use the template only when every expected column found an anchor, in order
+        // (stray extra header words are tolerated); otherwise keep the emergent columns.
+        if (tcols.length === layout.cols.length) { cols.length = 0; cols.push(...tcols); }
+    }
     const rowsOut = []; let cur = null;
     const assign = (row, p) => {
         let best = -1, bd = 1e9; cols.forEach((c, ci) => { const d = p.x - c.x; if (d >= -12 && Math.abs(d) < bd) { bd = Math.abs(d); best = ci; } });
@@ -726,6 +759,9 @@ export function biqParseMatheoItems(textItems) {
         // Priced accessory blocks ("#. Accessory" / "1. Wire Side Guides - Floor fix  745.0  1  745.00")
         // belong to the item ABOVE, not to its option columns (Russel 2026-08-07: accessory ->
         // option on the blind where the sheet has it, price ignored — BlindIQ prices itself).
+        // Shutter sheets print a "Hinge Configurator: LR T LR ..." annotation line under the
+        // row — it belongs in the item notes, never in the option columns (J7103).
+        if (/^hinge\s+configurator/i.test(biqNorm(joined))) { if (cur) cur._hingeCfg = biqNorm(joined); continue; }
         if (/^#?\.?\s*accessory/i.test(biqNorm(joined))) { if (cur) cur._accBlock = true; continue; }
         if (cur && cur._accBlock) {
             const am = biqNorm(joined).match(/^\d+\.\s*(.+?)(?:\s+[\d.,]+\s+(\d+)\s+[\d.,]+)?\s*$/);
@@ -762,6 +798,20 @@ export function biqNormalizeMatheo(mappings, p) {
             for (const re of [/^bd\s+element\s+/i, /^bd\s*e\s+/i, /^bd\s+/i, /^element\s+/i]) {
                 const s = biqNorm(mat.replace(re, ''));
                 if (s && s !== mat && biqResolveRange(mappings, it.blindType, s).known) { rng = s; break; }
+            }
+        }
+        // Hinged shutters: the RANGE is the panel count, printed only inside the price-group
+        // label — "Urban (6P)-W Full Height Grouped" -> "6 Panel Hinged" (Russel 2026-08-07,
+        // J7103). Tier-on-tier wording selects the Tier On Tier range. Material ("Bd Urban
+        // Shutter") is the product name, not a fabric — it stays the fallback when no panel
+        // count is readable.
+        {
+            const grp = biqNorm((raw['Type'] || '') + ' ' + (raw['Hinge Configuration'] || ''));
+            const pm = grp.match(/(\d)\s*P\b/i);
+            if (pm) {
+                const tier = /tier|t\s*on\s*t/i.test(grp);
+                const cand = pm[1] + ' Panel Hinged' + (tier ? ' Tier On Tier' : '');
+                if (biqResolveRange(mappings, it.blindType, cand).known) rng = cand;
             }
         }
         it.range = rng; it.colour = raw['Colour'] || '';
@@ -835,6 +885,65 @@ export function biqNormalizeMatheo(mappings, p) {
             const ch = spec.find(s => /^crank\s*handle$/i.test(s.k));
             const chNone = ch ? (ch.values || []).find(x => /^none$/i.test(x)) : null;
             if (ctl.includes('motor') && ch && chNone && !gv2(ch.k)) biqSetVar(it.variants, ch.k, chNone);
+        }
+        // Hinged-shutter sheets (Russel 2026-08-07, J7103): map the 25-column layout onto the
+        // range's own option sheet. Raw keys are matched ignoring spacing/punctuation so
+        // wrapped-header fragment names ("Closur e Catch") still hit, and option keys come
+        // from the spec itself (BlindIQ's "Rail Size (…) " carries a trailing space). All of
+        // this no-ops on layouts without these columns.
+        {
+            const spec = biqVariantSpec(mappings, it.blindType, it.range) || [];
+            const canon = s => biqLc(s).replace(/[^a-z0-9]/g, '');
+            const rawX = name => { const ck = canon(name); const k = Object.keys(raw).find(x => canon(x) === ck); return k ? cleanVal(raw[k]) : ''; };
+            const opt = name => { const ck = canon(name); return spec.find(s => canon(s.k) === ck); };
+            const optPre = pre => spec.find(s => canon(s.k).startsWith(canon(pre)));
+            const setOpt = (o, v) => { if (o && v) biqSetVar(it.variants, o.k, v); };
+            const note = t => { if (t) it.notes = (it.notes ? it.notes + ' | ' : '') + t; };
+            setOpt(opt('Louvre Size'), rawX('Louvre Size'));
+            setOpt(opt('Frame'), rawX('Frame Type'));
+            setOpt(opt('Frame Application'), rawX('Frame Application'));
+            setOpt(opt('Hinge'), rawX('Hinge Type'));
+            setOpt(opt('Closure Catch'), rawX('Closure Catch'));
+            setOpt(opt('Flexi Scribe Strip'), rawX('Flexi Scribe Strip'));
+            setOpt(opt('Bay Post'), rawX('Bay Post'));
+            setOpt(opt('Bay Flex Joint'), rawX('Bay Flex Joint'));
+            setOpt(optPre('Rail Size'), rawX('Top + B Rail Size'));
+            // The Tilt Bar cell carries both the bar position AND the tilt grouping:
+            // "Front - Hinge Side Grouped (max 2100mm)" (J7103).
+            const tb = rawX('Tilt Bar');
+            if (tb) {
+                const tbo = opt('Tilt Bar');
+                const bar = tbo && (tbo.values || []).find(x => canon(tb).startsWith(canon(x)));
+                setOpt(tbo, bar || tb);
+                const tco = optPre('Tilt Control');
+                const gm = tb.match(/\b(grouped|split|custom)\b/i);
+                const gv2 = tco && gm && (tco.values || []).find(x => biqLc(x) === biqLc(gm[1]));
+                if (gv2) setOpt(tco, gv2);
+            }
+            // Mathéo's "Style" column holds what BlindIQ calls the Rebate (LH over RH / RH over LH).
+            const st = rawX('Style');
+            if (st) {
+                const ro = opt('Rebate');
+                const rv = ro && (ro.values || []).find(x => canon(x) === canon(st));
+                if (rv) setOpt(ro, rv); else note('Style: ' + st);
+            }
+            // Mid rail "997 & 1997" -> Middle Rail Yes / Yes x 2 + positions (from bottom).
+            const mrNums = (rawX('Mid Rail Positions').match(/\d{2,}/g) || []);
+            if (mrNums.length) {
+                const mo = optPre('Middle Rail (');
+                const two = mo && (mo.values || []).find(x => /x\s*2/i.test(x));
+                const one = mo && (mo.values || []).find(x => /^yes$/i.test(x));
+                setOpt(mo, (mrNums.length >= 2 && two) || one || 'Yes');
+                setOpt(optPre('Middle Rail Position 1'), mrNums[0]);
+                if (mrNums[1]) setOpt(optPre('Middle Rail Position 2'), mrNums[1]);
+            }
+            const tpNums = (rawX('T-Post Positions').match(/\d{2,}/g) || []);
+            if (tpNums.length) { setOpt(optPre('T Post Position 1'), tpNums[0]); if (tpNums[1]) setOpt(optPre('T Post Position 2'), tpNums[1]); }
+            const hc = [rawX('Hinge Configuration'), raw._hingeCfg ? biqNorm(String(raw._hingeCfg).replace(/^hinge\s+configurator\s*:?\s*/i, '')) : '']
+                .filter(Boolean).join(' / ');
+            if (hc) note('Hinge config: ' + hc);
+            const mrb = rawX('Mid Rebate'); if (mrb) note('Mid Rebate: ' + mrb);
+            const lk = rawX('Locks'); if (lk) note('Locks: ' + lk);
         }
         // Mathéo "Bracket Covers = Std" means covers fitted as standard -> nothing to remove
         // (Russel 2026-08-07). Any other explicit value rides through for the emit gate to judge.
@@ -2474,6 +2583,11 @@ export function biqFoldOptionSynonyms(mappings, order) {
             const val = biqNorm(v[1]); if (!val) return;
             const ci = o.values.find(x => biqLc(x) === biqLc(val));
             if (ci) { if (ci !== val) v[1] = ci; return; }            // case-only difference -> catalogue spelling, silently
+            // Spacing/punctuation-only difference ("MultiL Frame", "Front- Hinge Side") ->
+            // catalogue spelling, silently — the letters are identical (J7103).
+            const cn = s => biqLc(s).replace(/[^a-z0-9]/g, '');
+            const sp = o.values.find(x => cn(x) === cn(val));
+            if (sp) { v[1] = sp; return; }
             const stripped = biqNorm(val.replace(/\s*\([^)]*\)\s*/g, ' '));
             // "4x steel collapsable" (tight PDF kerning glues the count to the x) -> "4 x ..." (J6966)
             const spacedX = biqNorm(val.replace(/\b(\d+)\s*x\b/gi, '$1 x'));

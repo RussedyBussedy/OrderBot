@@ -182,7 +182,10 @@ export function biqFuzzySundry(mappings, text) {
     if (hits.length === 1) { const e = mappings.sundries[hits[0]]; return { sundry: e.sundry, type: e.type, desc: hits[0], exact: false }; }
     if (hits.length > 1) return { ambiguous: hits.length };
     // second pass: gentle spelling synonyms (li-ion <-> lithium ion, "2.0nm" <-> "2nm")
-    const canon = str => str.replace(/li-ion/g, 'lithiumion').replace(/lithium\s+ion/g, 'lithiumion').replace(/(\d)\.0\s*nm/g, '$1nm').replace(/\s+nm/g, 'nm');
+    // "adaptor" family: BlindIQ itself carries typo'd entries ("Sys 55 Motor
+    // Adpator Kit...", "... Adpater Kit ...") — normalize all spellings on both
+    // sides so correctly-spelled dealer text can still find them.
+    const canon = str => str.replace(/li-ion/g, 'lithiumion').replace(/lithium\s+ion/g, 'lithiumion').replace(/(\d)\.0\s*nm/g, '$1nm').replace(/\s+nm/g, 'nm').replace(/\badp?at[oe]r\b|\badapt[oe]r\b/g, 'adaptor');
     const ctokens = canon(biqLc(text)).split(/[^a-z0-9.:]+/).filter(t => t.length > 1 && !stop.has(t));
     const chits = Object.keys(mappings.sundries || {}).filter(k => { const ck = canon(k); return ctokens.every(t => ck.includes(t)); });
     if (chits.length === 1) { const e = mappings.sundries[chits[0]]; return { sundry: e.sundry, type: e.type, desc: chits[0], exact: false }; }
@@ -202,7 +205,12 @@ export function biqAddMotorSundry(mappings, order, text, qty, preferMotors) {
     // and a parenthetical-stripped form ("Tahoma Switch Pro (ZB)" -> "Tahoma Switch Pro").
     // First variant that yields a unique hit wins; anything still unmatched stays blank + flagged.
     const variants = [];
-    for (const base of [t, biqNorm(t.replace(/\([^)]*\)/g, ' '))]) {
+    // Dealer sheets append marketing tails the catalogue never carries —
+    // "... (max width 4000mm) Available in white, black and grey" (Blind Guys
+    // accessory column). Parentheticals were already stripped; also cut a
+    // trailing "Available in ..." clause so the part name alone can match.
+    const noTail = biqNorm(t.replace(/\([^)]*\)/g, ' ').replace(/\bavailable in\b.*$/i, ' '));
+    for (const base of [t, biqNorm(t.replace(/\([^)]*\)/g, ' ')), noTail]) {
         for (const v of [base, base.replace(/(\d+)\s*ch\b/gi, '$1 channel'), base.replace(/(\d+)\s*ch\b/gi, '$1')]) {
             const n = biqNorm(v);
             if (n && !variants.includes(n)) variants.push(n);
@@ -225,8 +233,25 @@ export function biqAddMotorSundry(mappings, order, text, qty, preferMotors) {
             if (h && h.sundry != null) { hit = h; break outer; }
         }
     }
+    // Colour-variant parts (adaptor kits etc.) with NO colour in the order text:
+    // default to the WHITE variant (Russel 2026-08-07) — retry with " white"
+    // appended and accept only a unique hit, recorded as an assumption in the
+    // notes. An explicit colour in the text (incl. one with no catalogue
+    // variant, e.g. grey) never gets overridden — those stay flagged.
+    let whiteAssumed = false;
+    if (!hit && !/\b(white|black|grey|gray|beige|anthracite|silver|cream|charcoal|bronze|natural)\b/i.test(noTail)) {
+        outer2: for (const v of variants) {
+            for (const cand of (preferMotors ? ['motors ' + v + ' white', v + ' white'] : [v + ' white'])) {
+                const h = biqFuzzySundry(mappings, cand);
+                if (h && h.sundry != null) { hit = h; whiteAssumed = true; break outer2; }
+            }
+        }
+    }
     const su = { code: '', qty: String(+qty || 1), type: '', sundry: '', notes: t, _src: t };
-    if (hit && hit.sundry != null) { su.type = String(hit.type); su.sundry = String(hit.sundry); if (!hit.exact) su.notes = t; }
+    if (hit && hit.sundry != null) {
+        su.type = String(hit.type); su.sundry = String(hit.sundry);
+        su.notes = whiteAssumed ? (t + ' — WHITE assumed (no colour on order)') : t;
+    }
     order.sundries.push(su);
 }
 // Recompute auto-filled control drops once mappings/blind types resolve.
@@ -458,9 +483,14 @@ function biqBgRoller(mappings, o, it, raw, doubleRoller, product) {
     }
     const motorTxt = cleanVal(raw['Motor']), remoteTxt = cleanVal(raw['Remotes']),
         accTxt = cleanVal(raw['Accessory']) || cleanVal(raw['Accessories']);
-    if (motorTxt) biqAddMotorSundry(mappings, o, motorTxt, +it.qty || 1);
-    if (remoteTxt) biqAddMotorSundry(mappings, o, remoteTxt, 1);
-    if (accTxt) biqAddMotorSundry(mappings, o, accTxt, +it.qty || 1);
+    // preferMotors=true (like the TBD path): the catalogue holds most parts twice
+    // ("Motors Sonesse 40 RTS 3/30" type 13 AND "Sonesse 40 Rts 3nm/30" type 23);
+    // without it the fuzzy match sees both and stays ambiguous -> blank sundry ->
+    // BlindIQ asks the capturer for a part number on every motorised line
+    // (Sharon's Blind Guys motors report, Paul 2026-08-07).
+    if (motorTxt) biqAddMotorSundry(mappings, o, motorTxt, +it.qty || 1, true);
+    if (remoteTxt) biqAddMotorSundry(mappings, o, remoteTxt, 1, true);
+    if (accTxt) biqAddMotorSundry(mappings, o, accTxt, +it.qty || 1, true);
     if (!motorTxt && cleanVal(raw['Motor Type'])) it.notes = (it.notes ? it.notes + ' | ' : '') + 'Motor type: ' + cleanVal(raw['Motor Type']);
     const skip = new Set(['Item #', 'Location', 'Finished Width', 'Finished Height', 'Qty', 'Type', 'LH Control', 'RH Control', 'Control Length', 'Mechanism Colour', 'Bottom Bar Colour', 'Fabric', 'Fixing', 'Roll', 'Line Notes', 'Express', 'Front Blind Fabric', 'Back Blind Fabric', 'Configuration Front Blind', 'Configuration Back Blind', 'Cassette Colour', 'Fabric Insert Cassette', 'Roll Type Front', 'Roll Type Back', 'Steel Ball Chain', 'Remove Bracket Covers', 'Plastic Bottom Bar', 'Chain Tidy', 'Wired Side Guides', 'Fabric Only', 'Fabric Insert', 'System 40 70mm Cassette', 'Closed Cassette', 'Motor', 'Motor Type', 'Remotes', 'Accessory', 'Accessories']);
     for (const [k, v] of Object.entries(raw)) {
@@ -874,7 +904,7 @@ export function biqNormalizeCnbw(mappings, p) {
             it._origFabric = fab;
             it.controlDrop = biqComputeControlDropV2(mappings, '', it.drop, it.blindType, it.range); it._cdAuto = true;
             it.variants = biqTemplateFor2(mappings, it.blindType);
-            if (p.product === 'outdoor' && cleanVal(r.motor)) biqAddMotorSundry(mappings, o, cleanVal(r.motor), +it.qty || 1);
+            if (p.product === 'outdoor' && cleanVal(r.motor)) biqAddMotorSundry(mappings, o, cleanVal(r.motor), +it.qty || 1, true);
             if (p.product === 'roller' && /standard|waterfall/i.test(r.chain || '')) biqSetVar(it.variants, 'Roll Type', biqNorm(r.chain));
         }
         o.items.push(it);

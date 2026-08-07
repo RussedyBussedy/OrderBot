@@ -47,7 +47,9 @@ export const BIQ_MAPPING_CATEGORIES = {
     rangeFormulas: { label: 'Control drop formulas (rangeId -> formula)', xml: 'COI_ControlDrop' },
     sundries: { label: 'Sundries (name/code -> {sundry, type})', xml: 'COS_Sundry_Link + COS_SundryType_Link' },
     sundryTypes: { label: 'Sundry types', xml: 'COS_SundryType_Link' },
-    variantTemplates: { label: 'Variant option templates (blindTypeId -> options)', xml: 'COI_VariantOptions' }
+    variantTemplates: { label: 'Variant option templates (blindTypeId -> options)', xml: 'COI_VariantOptions' },
+    variantSheetIndex: { label: 'Per-range option sheet index (blindTypeId|rangeId -> sheet)', xml: 'COI_VariantOptions' },
+    variantTemplateSheets: { label: 'Per-range option sheets (BlindIQ Matrix tables)', xml: 'COI_VariantOptions' }
 };
 
 // ---------- mapping resolution ----------
@@ -368,21 +370,34 @@ export function biqTemplateFor(blindTypeName) {
 }
 // Variant option spec per blind type, harvested from the BlindIQ price matrices:
 // [{k, values[], def, req}] in the exact order the exports use. Null when unknown.
-export function biqVariantSpec(mappings, blindTypeName) {
+// Options are per type+range in BlindIQ (MatrixTriggers -> Matrix_Price_NN sheets, pass-2
+// extract 2026-08-07). When the range is known and a per-range sheet is mapped, use it —
+// this is what stops a Linear valance being asked for Finials (Deco Rod's sheet) or
+// Fabric Insert (70mm Cassette's sheet). Fallback: the per-type union template.
+// Data: variantSheetIndex {'<typeId>|<rangeId>': matrixId} + variantTemplateSheets {matrixId: [...]}.
+export function biqVariantSpec(mappings, blindTypeName, rangeName) {
     const bt = biqResolve(mappings, 'blindTypes', blindTypeName);
     if (!bt.known) return null;
+    if (rangeName) {
+        const rr = biqResolveRange(mappings, blindTypeName, rangeName);
+        if (rr.known) {
+            const mid = (mappings.variantSheetIndex || {})[bt.id + '|' + rr.id];
+            const sh = mid != null ? (mappings.variantTemplateSheets || {})[String(mid)] : null;
+            if (sh && sh.length) return sh;
+        }
+    }
     const t = (mappings.variantTemplates || {})[String(bt.id)];
     return (t && t.length) ? t : null;
 }
 // Template as [key, default] pairs — DB spec when available, legacy heuristics otherwise.
-export function biqTemplateFor2(mappings, blindTypeName) {
-    const spec = biqVariantSpec(mappings, blindTypeName);
+export function biqTemplateFor2(mappings, blindTypeName, rangeName) {
+    const spec = biqVariantSpec(mappings, blindTypeName, rangeName);
     if (spec) return spec.map(o => [o.k, o.def || '']);
     return biqTemplateFor(blindTypeName);
 }
 // Add any template keys missing from an item's variants (keeps existing values + order).
 export function biqMergeTemplate(mappings, it) {
-    const spec = biqVariantSpec(mappings, it.blindType);
+    const spec = biqVariantSpec(mappings, it.blindType, it.range);
     if (!spec) return;
     const have = new Set(it.variants.map(v => biqLc(v[0])));
     const merged = [];
@@ -403,7 +418,7 @@ export function biqSetVar(variants, key, val) {
 // value list is known) a real catalogue value; optional options sitting at their default are dropped
 // (absence = default in BlindIQ); required options always emit. Unknown blind type -> all non-empty.
 export function biqEmittedVariants(mappings, it) {
-    const spec = biqVariantSpec(mappings, it.blindType);
+    const spec = biqVariantSpec(mappings, it.blindType, it.range);
     if (!spec) return it.variants.filter(v => biqNorm(v[0]) && biqNorm(v[1]));
     return it.variants.filter(v => {
         const o = spec.find(s => biqLc(s.k) === biqLc(v[0]));
@@ -423,7 +438,7 @@ export function biqEmittedVariants(mappings, it) {
 // "No"/"None"/empty values are not losses (absence = default in BlindIQ), nor are known optional
 // keys sitting at their default.
 export function biqDroppedVariants(mappings, it) {
-    const spec = biqVariantSpec(mappings, it.blindType);
+    const spec = biqVariantSpec(mappings, it.blindType, it.range);
     if (!spec) return [];
     const out = [];
     it.variants.forEach(v => {
@@ -512,7 +527,7 @@ function biqBgRoller(mappings, o, it, raw, doubleRoller, product) {
     { const cl = biqNorm(raw['Control Length'] || '');
       it.controlDrop = biqComputeControlDropV2(mappings, cl, it.drop, it.blindType, it.range);
       it._cdAuto = !/^\d/.test(cl); }
-    it.variants = biqTemplateFor2(mappings, doubleRoller ? (product || 'Double Roller Blinds') : it.blindType);
+    it.variants = biqTemplateFor2(mappings, doubleRoller ? (product || 'Double Roller Blinds') : it.blindType, it.range);
     const mapv = (src, key) => { const v = cleanVal(raw[src]); if (v) biqSetVar(it.variants, key, v); };
     if (doubleRoller) {
         const frontIsBlockout = /block/i.test(raw['Configuration Front Blind'] || '');
@@ -578,7 +593,7 @@ function biqBgVenetian(mappings, o, it, raw) {
     { const cl = biqNorm(raw['Control Length'] || '');
       it.controlDrop = biqComputeControlDropV2(mappings, cl, it.drop, it.blindType, it.range);
       it._cdAuto = !/^\d/.test(cl); }
-    it.variants = biqTemplateFor2(mappings, it.blindType);
+    it.variants = biqTemplateFor2(mappings, it.blindType, it.range);
     const mapv = (src, key) => { const v = cleanVal(raw[src]); if (v) biqSetVar(it.variants, key, v); };
     mapv('Valance Length', 'Val Size');
     const vr = biqLc(raw['Valancce Returns'] || raw['Valance Returns'] || '');
@@ -607,8 +622,8 @@ function biqBgShutter(mappings, o, it, raw) {
         const tier = /tier/i.test(raw['Style'] || raw['Configuration'] || '');
         it.range = panels[0] + ' Panel Hinged' + (tier ? ' Tier on Tier' : '');
     }
-    it.variants = biqTemplateFor2(mappings, it.blindType);
-    const spec = biqVariantSpec(mappings, it.blindType) || [];
+    it.variants = biqTemplateFor2(mappings, it.blindType, it.range);
+    const spec = biqVariantSpec(mappings, it.blindType, it.range) || [];
     const keys = spec.map(s => s.k);
     const findOpt = col => { const c = biqLc(col); return keys.find(k => biqLc(k) === c) || keys.find(k => biqLc(k).startsWith(c + ' (')); };
     const reb = { 'left over right': 'LH over RH', 'right over left': 'RH over LH' };
@@ -732,7 +747,7 @@ export function biqNormalizeMatheo(mappings, p) {
         { const cd = biqNorm(raw['Control Drop'] || '');
           it.controlDrop = biqComputeControlDropV2(mappings, /^\d/.test(cd) ? cd : '', it.drop, it.blindType, it.range);
           it._cdAuto = !/^\d/.test(cd); }
-        it.variants = biqTemplateFor2(mappings, it.blindType || 'roller');
+        it.variants = biqTemplateFor2(mappings, it.blindType || 'roller', it.range);
         const mv = (src, key) => { const v = cleanVal(raw[src]); if (v) biqSetVar(it.variants, key, v); };
         mv('H/ware Colour', 'Mech Colour');
         mv('Bottom Bar', 'Bottom Bar');
@@ -812,7 +827,7 @@ export function biqNormalizeBDForm(mappings, p, gridByRow) {
         { const cd = biqNorm(raw['Control Drop'] || '');
           it.controlDrop = biqComputeControlDropV2(mappings, /^\d/.test(cd) ? cd : '', it.drop, it.blindType, it.range);
           it._cdAuto = !/^\d/.test(cd); }
-        it.variants = biqTemplateFor2(mappings, it.blindType);
+        it.variants = biqTemplateFor2(mappings, it.blindType, it.range);
         if (cleanVal(raw['Hardware'])) biqSetVar(it.variants, isVen ? 'Hardware' : 'Mech Colour', cleanVal(raw['Hardware']));
         if (cleanVal(raw['Valance Size'])) biqSetVar(it.variants, 'Val Size', cleanVal(raw['Valance Size']));
         if (cleanVal(raw['Valance Return'])) biqSetVar(it.variants, 'Val Returns', cleanVal(raw['Valance Return']));
@@ -906,7 +921,7 @@ export function biqNormalizeLifestyle(mappings, p) {
                 const dv = biqLifestyleDesc(r.desc);
                 it.colour = dv.colour || '';
                 it.controlDrop = '0';
-                it.variants = biqTemplateFor2(mappings, it.blindType);
+                it.variants = biqTemplateFor2(mappings, it.blindType, it.range);
                 it.notes = 'From doc: ' + r.desc;
                 o.items.push(it);
                 return;
@@ -924,7 +939,7 @@ export function biqNormalizeLifestyle(mappings, p) {
         const d = biqLifestyleDesc(r.desc);
         it.blindType = d.blindType; it.range = d.range; it.colour = d.colour;
         it.controlDrop = biqComputeControlDropV2(mappings, '', it.drop, it.blindType, it.range); it._cdAuto = true;
-        it.variants = biqTemplateFor2(mappings, it.blindType || 'roller');
+        it.variants = biqTemplateFor2(mappings, it.blindType || 'roller', it.range);
         o.items.push(it);
     });
     if (express) o.notes = (o.notes ? o.notes + ' | ' : '') + 'EXPRESS ORDER (5 working days)';
@@ -989,7 +1004,7 @@ export function biqNormalizeCnbw(mappings, p) {
             const pan = (r.shutter || '').match(/(\d+)\s*panel/i);
             if (pan) it.range = pan[1] + ' Panel Hinged';
             it.controlDrop = '0';
-            it.variants = biqTemplateFor2(mappings, it.blindType);
+            it.variants = biqTemplateFor2(mappings, it.blindType, it.range);
             if (cleanVal(r.frame)) it.notes = (it.notes ? it.notes + ' | ' : '') + 'Frame: ' + cleanVal(r.frame);
         } else {
             it.blindType = p.product === 'outdoor' ? 'Outdoor Free Hang' : 'Element Roller Sys 40';
@@ -999,7 +1014,7 @@ export function biqNormalizeCnbw(mappings, p) {
             else { it.range = fab; it.colour = r.colour || ''; }
             it._origFabric = fab;
             it.controlDrop = biqComputeControlDropV2(mappings, '', it.drop, it.blindType, it.range); it._cdAuto = true;
-            it.variants = biqTemplateFor2(mappings, it.blindType);
+            it.variants = biqTemplateFor2(mappings, it.blindType, it.range);
             if (p.product === 'outdoor' && cleanVal(r.motor)) biqAddMotorSundry(mappings, o, cleanVal(r.motor), +it.qty || 1, true);
             if (p.product === 'roller' && /standard|waterfall/i.test(r.chain || '')) biqSetVar(it.variants, 'Roll Type', biqNorm(r.chain));
         }
@@ -1258,7 +1273,7 @@ export function biqNormalizeTbd(mappings, p, fileName) {
         } else it.colour = col;
 
         const opts = biqTbdOptions(r.options || '');
-        it.variants = biqTemplateFor2(mappings, it.blindType || 'roller');
+        it.variants = biqTemplateFor2(mappings, it.blindType || 'roller', it.range);
         let leftEnd = '', rightEnd = '', joined = '';
         const seen = {}, extra = [], hardware = [], valance = [];
         opts.forEach(([k, v]) => {
@@ -1338,7 +1353,7 @@ export function biqStageInlineValances(mappings, order) {
     (order ? order.items : []).forEach(it => {
         if (/valance|allusion/.test(biqLc(it.blindType))) return;      // is a valance product
         if (it._valance && it._valance.length) return;                 // already staged (TBD, Blind Guys)
-        const spec = biqVariantSpec(mappings, it.blindType);
+        const spec = biqVariantSpec(mappings, it.blindType, it.range);
         if (!spec) return;                                             // unknown type: leave for flags
         const specKeys = new Set(spec.map(o => biqLc(o.k)));
         const canonKey = k => {
@@ -1380,6 +1395,16 @@ export function biqStageInlineValances(mappings, order) {
 // when none is usable it is auto-sized to the blind width + 15mm (Russel 2026-08-07) and noted.
 // If the DB has no valance blind type at all, the line is NOT invented — the parent keeps its
 // _valance flag for the capturer (never silently wrong).
+// Valance sheets' "Type of Blind" vocabulary, keyed by the PARENT blind type's BlindIQ id —
+// covers dealer wordings the name regex can't ("System 40" is a roller; Breed item 7).
+const BIQ_TYPE_OF_BLIND_BY_ID = {
+    25: 'Roller Blind', 12: 'Roller Blind', 5: 'Roller Blind', 11: 'Roller Blind',
+    28: 'Double Roller Blind', 24: 'Wood Venetian', 1: 'Wood Venetian',
+    26: 'Retro Venetian', 4: 'Retro Venetian', 30: 'Vision Blind', 23: 'Vision Blind',
+    22: 'Visage Blind', 9: 'Roll-up Bamboo', 10: 'Roman Bamboo', 2: 'Roman Panel',
+    3: 'Sliding Panel', 6: '90mm Vertical', 29: 'Allusion Blind',
+    13: 'Curtain', 17: 'Curtain', 18: 'Curtain', 20: 'Curtain'
+};
 export function biqExpandValances(mappings, order) {
     (order ? order.items.slice() : []).forEach(src => {
         if (!src._valance || !src._valance.length || src._valanceLine) return;
@@ -1440,7 +1465,7 @@ export function biqExpandValances(mappings, order) {
         }
         const dm = (kv['range'] || '').match(/(\d{2,4})\s*mm/i)
             || (kv['size'] || '').match(/(\d{2,4})\s*mm/i) || (kv['size'] || '').match(/^(\d{2,4})$/);
-        it.drop = dm ? dm[1] : '';
+        it.drop = dm ? dm[1] : '0';   // valances have no drop — 0 imports, factory sizes the profile (Russel 2026-08-07)
         it.fix = kv['fix'] || src.fix || '';
         // No legacy fallback to roller-shaped keys. But "Element Valance" (27) carries no option
         // template in the mappings extract while the generic "Valance" (14) does, and BlindIQ uses
@@ -1448,7 +1473,7 @@ export function biqExpandValances(mappings, order) {
         // Returns / End Cap Colour / LH Side / RH Side were accepted verbatim. So borrow the
         // sibling valance template when the chosen type has none of its own; otherwise the
         // capturer's returns and end caps are silently lost (which is exactly what happened).
-        const spec = biqVariantSpec(mappings, it.blindType)
+        const spec = biqVariantSpec(mappings, it.blindType, it.range)
             || biqVariantSpec(mappings, use === 'Element Valance' ? 'Valance' : 'Element Valance') || [];
         it.variants = spec.map(s => [s.k, s.def || '']);
         const used = new Set(['range', 'colour', 'fix', 'size']);
@@ -1479,12 +1504,44 @@ export function biqExpandValances(mappings, order) {
         put('mitre lh', /^mitre\s*val\s*lh$/i);
         put('mitre rh', /^mitre\s*val\s*rh$/i);
         put('top board', /^top\s*board/i);
+        // "Type of Blind" comes from the blind the valance was ordered WITH — resolve the
+        // parent's type ID and map it to the valance sheet's vocabulary. The old regex on the
+        // raw name missed dealer wordings like "System 40" (Breed item 7, Russel 2026-08-07).
         const tob = spec.find(s => /^type\s*of\s*blind$/i.test(s.k));
-        if (tob) {
-            const want = /roller/i.test(src.blindType) ? 'Roller Blind'
-                : /wood|venetian/i.test(src.blindType) ? 'Wood Venetian' : '';
+        if (tob && !biqNorm((it.variants.find(v => biqLc(v[0]) === biqLc(tob.k)) || [])[1])) {
+            const pbt = biqResolve(mappings, 'blindTypes', src.blindType);
+            const want = (pbt.known && BIQ_TYPE_OF_BLIND_BY_ID[pbt.id])
+                || (/roller/i.test(src.blindType) ? 'Roller Blind'
+                    : /wood|venetian/i.test(src.blindType) ? 'Wood Venetian' : '');
             const real = want && (tob.values || []).find(x => biqLc(x) === biqLc(want));
             if (real) biqSetVar(it.variants, tob.k, real);
+        }
+        // "Return: Black" style line notes name the end cap colour (Breed 0006, Russel
+        // 2026-08-07) — fill the sheet's End Cap Colour when it is empty and the colour is
+        // a real catalogue value. Sheets without the option keep the note as-is.
+        const autoNotes = [];
+        const ecc = spec.find(s => /^end\s*cap\s*colou?r$/i.test(s.k));
+        if (ecc && !biqNorm((it.variants.find(v => biqLc(v[0]) === biqLc(ecc.k)) || [])[1])) {
+            const m = String(src.notes || it.notes || '').match(/\breturns?\s*[:\-]\s*([A-Za-z][A-Za-z ]{2,18})/i);
+            const val = m && (ecc.values || []).find(x => biqLc(x) === biqLc(m[1].trim()));
+            if (val) { biqSetVar(it.variants, ecc.k, val); autoNotes.push('End Cap Colour ' + val + ' taken from line note'); }
+        }
+        // LH/RH Side follow Val Returns on sheets that carry them (Aluminium valance):
+        // a return on that side is a Return End Cap, otherwise a plain End Cap — the
+        // dominant real-order pattern (pass-3 stored strings). Only fills empty fields.
+        if (spec.some(s => /^lh\s*side$/i.test(s.k))) {
+            const ret = biqLc((it.variants.find(v => /^val\s*returns$/i.test(v[0])) || [])[1] || '');
+            const hasRet = ret && !/^(none|no)$/.test(ret);
+            const fillSide = (reKey, mine) => {
+                const o = spec.find(s => reKey.test(s.k)); if (!o) return;
+                const cur = it.variants.find(v => biqLc(v[0]) === biqLc(o.k));
+                if (cur && biqNorm(cur[1])) return;
+                const v = (hasRet && mine) ? 'Return End Cap' : 'End Cap';
+                if ((o.values || []).some(x => biqLc(x) === biqLc(v))) biqSetVar(it.variants, o.k, v);
+            };
+            fillSide(/^lh\s*side$/i, /\blh\b|left|&|and|both/.test(ret));
+            fillSide(/^rh\s*side$/i, /\brh\b|right|&|and|both/.test(ret));
+            if (hasRet) autoNotes.push('End caps derived from Val Returns — confirm');
         }
         const leftovers = Object.keys(kv).filter(k => !used.has(k)).map(k => k + '=' + kv[k]);
         if (src._valanceOnlyRow) {
@@ -1504,13 +1561,14 @@ export function biqExpandValances(mappings, order) {
             src.control1 = ''; src.control2 = '';
             src.notes = [biqNorm(src.notes || ''), 'Valance-only line',
                 it._origRange ? 'doc range: ' + it._origRange : '',
-                conflict, leftovers.join(' | ')].filter(Boolean).join(' | ');
+                conflict, autoNotes.join(' | '), leftovers.join(' | ')].filter(Boolean).join(' | ');
             src._valanceLine = src.code;                       // consumed — never re-expanded
             return;
         }
         it.notes = 'Valance for blind ' + (src.location || src.code)
             + (it._origRange ? ' | doc range: ' + it._origRange : '')
             + (it._autoWidth ? ' | width auto-sized: blind +15mm — confirm' : '')
+            + (autoNotes.length ? ' | ' + autoNotes.join(' | ') : '')
             + (leftovers.length ? ' | ' + leftovers.join(' | ') : '');
         order.items.push(it);
         src._valanceLine = it.code;
@@ -1717,7 +1775,7 @@ export function biqAiResultToOrder(mappings, ai) {
         { const cd = biqNorm(li.controlDrop || '');
           it.controlDrop = biqComputeControlDropV2(mappings, /^\d/.test(cd) ? cd : '', it.drop, it.blindType, it.range);
           it._cdAuto = !/^\d/.test(cd); }
-        it.variants = biqTemplateFor2(mappings, it.blindType);
+        it.variants = biqTemplateFor2(mappings, it.blindType, it.range);
         (li.options || []).forEach(opt => {
             const i = String(opt).indexOf('=');
             if (i > 0) biqSetVar(it.variants, biqNorm(opt.slice(0, i)), biqNorm(opt.slice(i + 1)));
@@ -1860,13 +1918,15 @@ export function biqCollectProblems(mappings, order) {
             probs.push({ t: w + 'option "' + d.k + '=' + d.v + '" will NOT import — ' + d.why + '. Correct the value or move it to the item notes.' }));
         if (it._valance && it._valance.length && !it._valanceLine)
             probs.push({ t: w + 'has a VALANCE (' + it._valance.join(', ') + ') — BlindIQ needs this captured as its own valance line. Details are carried in the item notes.' });
-        const spec = biqVariantSpec(mappings, it.blindType);
+        const spec = biqVariantSpec(mappings, it.blindType, it.range);
         if (spec) spec.forEach(o => {
             if (o.req) { const f = it.variants.find(v => biqLc(v[0]) === biqLc(o.k));
                 if (!f || !biqNorm(f[1])) probs.push({ t: w + 'option "' + o.k + '" is required for ' + it.blindType + (o.values && o.values.length ? ' (' + o.values.slice(0, 4).join(' / ') + (o.values.length > 4 ? ' …' : '') + ')' : '') + '.' }); }
         });
         if (!(+it.width > 0)) probs.push({ t: w + 'width missing/invalid.' });
-        if (!(+it.drop > 0)) probs.push({ t: w + 'drop missing/invalid.' });
+        // Valance lines carry no drop — 0 (or blank -> 0 in the XML) is correct (Russel 2026-08-07).
+        const isValance = (() => { const r = biqResolve(mappings, 'blindTypes', it.blindType); return r.known && (r.id === 14 || r.id === 27); })();
+        if (!(+it.drop > 0) && !isValance) probs.push({ t: w + 'drop missing/invalid.' });
         if (!(+it.qty > 0)) probs.push({ t: w + 'qty missing/invalid.' });
     });
     order.sundries.forEach((s, i) => {
@@ -1943,7 +2003,7 @@ export function biqGenerateXML(mappings, order) {
         x += tag('COI_BlindRange_Link', idOr(rr));
         x += tag('COI_Colour_Link', biqLc(it.colour) ? idOr(rc) : '-1');
         x += tag('COI_Width', it.width);
-        x += tag('COI_Drop', it.drop);
+        x += tag('COI_Drop', it.drop || ((rt.known && (rt.id === 14 || rt.id === 27)) ? '0' : it.drop));   // valances: no drop -> 0
         x += tag('COI_Fix_Link', biqLc(it.fix) ? idOr(rf) : '-1');
         x += tag('COI_Control1_Link', biqLc(it.control1) ? idOr(r1) : '-1');
         x += tag('COI_Control2_Link', biqLc(it.control2) ? idOr(r2) : '-1');
@@ -2270,7 +2330,7 @@ const BIQ_OPTION_REMAPS = [
 ];
 export function biqFoldOptionSynonyms(mappings, order) {
     (order ? order.items : []).forEach(it => {
-        const spec = biqVariantSpec(mappings, it.blindType);
+        const spec = biqVariantSpec(mappings, it.blindType, it.range);
         const specKeys = spec ? new Set(spec.map(o => biqLc(o.k))) : null;
         BIQ_OPTION_REMAPS.forEach(rule => {
             const toLc = biqLc(rule.to);
@@ -2318,7 +2378,7 @@ export function biqFoldOptionSynonyms(mappings, order) {
 // A Cassette=Yes with a missing/unknown colour keeps the raw value so the emit gate flags it.
 export function biqFoldCassette(mappings, order) {
     (order ? order.items : []).forEach(it => {
-        const spec = biqVariantSpec(mappings, it.blindType); if (!spec) return;
+        const spec = biqVariantSpec(mappings, it.blindType, it.range); if (!spec) return;
         const isYes = s => /^(yes|true)$/i.test(biqNorm(s));
         const idxOf = re => it.variants.findIndex(v => re.test(biqLc(v[0])));
         const colourCassette = spec.find(o => /cassette/i.test(o.k) && (o.values || []).length
@@ -2357,7 +2417,7 @@ const BIQ_VALUE_SYNONYMS = [
 ];
 export function biqApplyOptionDefaults(mappings, order) {
     (order ? order.items : []).forEach(it => {
-        const spec = biqVariantSpec(mappings, it.blindType);
+        const spec = biqVariantSpec(mappings, it.blindType, it.range);
         if (!spec) return;
         spec.forEach(o => {
             const f = it.variants.find(v => biqLc(v[0]) === biqLc(o.k));
@@ -2545,7 +2605,7 @@ function biqReSide(ctrlText, side) {
 // not-importable, Russel 2026-08-07). Falls back to the literal name when the
 // spec is unknown.
 function biqBracketOptionKey(mappings, it, kind) {
-    const spec = biqVariantSpec(mappings, it.blindType) || [];
+    const spec = biqVariantSpec(mappings, it.blindType, it.range) || [];
     const re = kind === 'coupled' ? /coupl/i : /interm/i;
     const o = spec.find(s => re.test(s.k));
     return o ? o.k : (kind === 'coupled' ? 'Coupled Bracket' : 'Intermediate Bracket');
@@ -2616,7 +2676,7 @@ export function biqApplyBracketPairs(mappings, order) {
     // A Yes value carries over to the real key; No/blank phantoms just drop
     // (absence = No in BlindIQ). Runs every refresh, so it self-heals.
     items.forEach(it => {
-        const spec = biqVariantSpec(mappings, it.blindType);
+        const spec = biqVariantSpec(mappings, it.blindType, it.range);
         if (!spec) return;
         const specKeys = new Set(spec.map(o => biqLc(o.k)));
         for (let x = it.variants.length - 1; x >= 0; x--) {

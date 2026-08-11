@@ -2353,6 +2353,17 @@ export function biqBuildDiscernment(mappings, order, shortlistN) {
         if (!biqResolve(mappings, 'control2', it.control2).known) add('control2', it.control2);
         if (!biqResolve(mappings, 'fixes', it.fix).known) add('fix', it.fix);
     });
+    // Unresolved SUNDRY lines too (Russel 2026-08-07): motor-ish wording shortlists from the
+    // seven motor order types (same scope rule as the deterministic resolver); anything else
+    // from the whole sundries catalogue. The AI only ever picks from these grounded lists.
+    (order.sundries || []).forEach((s, i) => {
+        if (/^\d+$/.test(biqNorm(s.sundry)) && /^\d+$/.test(biqNorm(s.type))) return;
+        const raw = biqNorm(s._src || s.notes); if (!raw) return;
+        const motorish = /motor|\brts\b|remote|adapter|adaptor|situo|maestria|sonesse|smoove|tahoma|telis|glydea|zigbee|\bio\b|charger|solar|battery|receiver|wall switch/i.test(raw);
+        const view = motorish ? biqMotorSundryView(mappings) : mappings;
+        const cands = biqShortlist(Object.keys(view.sundries || {}), raw, N + 8);
+        if (cands.length) slots.push({ id: 's' + i + '.sundry', sidx: i, field: 'sundry', raw, candidates: cands });
+    });
     return slots;
 }
 
@@ -2383,6 +2394,7 @@ For each id below, choose the ONE candidate that means the same product attribut
 Rules:
 - "match" must be copied EXACTLY from that id's candidate list (or empty).
 - Judge by product meaning: e.g. "Roller Blind" = "Element Roller Sys 40"; "blockout"/"block" fabrics map to block ranges; abbreviations and word-order differences are fine.
+- For sundry parts (motors, remotes, adapters, accessories): match the exact PART — the size/torque (Nm), channel count, colour and family in the customer's wording must all agree with the candidate. NEVER pick a different size, torque or colour than written; if the wording is ambiguous between sizes, return empty.
 - confidence: 0.9+ only when you are sure; 0.6-0.9 if plausible; below 0.5 if guessing.
 - Never invent a candidate that is not listed.
 
@@ -2418,7 +2430,35 @@ export function biqApplyDiscernment(mappings, order, matches, opts) {
             }
         });
     });
+    // Sundry lines: the match is a sundries-mapping KEY — resolve it to {sundry, type} ids.
+    (order.sundries || []).forEach((s, i) => {
+        const m = byId['s' + i + '.sundry'];
+        if (!m || !biqNorm(m.match)) return;
+        const hit = biqResolveSundry(mappings, m.match);
+        if (!hit || hit.sundry == null || hit.sundry === '' || hit.type == null || hit.type === '') return;
+        const conf = +m.confidence || 0;
+        const from = biqNorm(s._src || s.notes);
+        if (conf >= autoAt) {
+            s._ai = { mode: 'auto', from, to: biqNorm(m.match), confidence: conf };
+            s.type = String(hit.type); s.sundry = String(hit.sundry);
+            if (!/AI matched to/.test(s.notes || '')) s.notes = (from || s.notes || '') + ' — AI matched to "' + biqNorm(m.match) + '" (' + Math.round(conf * 100) + '%) — confirm';
+            report.push({ sidx: i, field: 'sundry', mode: 'auto', raw: from, match: biqNorm(m.match), confidence: conf });
+        } else if (conf >= suggestAt) {
+            s._ai = { mode: 'suggest', from, to: biqNorm(m.match), confidence: conf };
+            report.push({ sidx: i, field: 'sundry', mode: 'suggest', raw: from, match: biqNorm(m.match), confidence: conf });
+        }
+    });
     return report;
+}
+// Accept a pending sundry suggestion (capturer clicked it).
+export function biqAcceptSundrySuggestion(mappings, order, sidx) {
+    const s = (order.sundries || [])[sidx]; if (!s || !s._ai || s._ai.mode !== 'suggest') return false;
+    const hit = biqResolveSundry(mappings, s._ai.to);
+    if (!hit || hit.sundry == null || hit.sundry === '') return false;
+    s.type = String(hit.type); s.sundry = String(hit.sundry);
+    if (!/AI matched to/.test(s.notes || '')) s.notes = (s._ai.from || s.notes || '') + ' — AI matched to "' + s._ai.to + '" (' + Math.round((s._ai.confidence || 0) * 100) + '%) — confirm';
+    s._ai.mode = 'auto';
+    return true;
 }
 // Accept a pending suggestion (capturer clicked it).
 export function biqAcceptSuggestion(order, idx, field) {
@@ -2444,6 +2484,15 @@ export function biqLearnFromAI(mappings, order) {
             else if (field === 'range') { const r = biqResolveRange(mappings, it.blindType, it.range); if (r.known) { const bt = biqResolve(mappings, 'blindTypes', it.blindType); if (bt.known) { const k = bt.id + '|' + biqLc(orig); if (mappings.rangesScoped[k] == null) { mappings.rangesScoped[k] = r.id; learned.push({ cat: 'rangesScoped', key: k, id: r.id }); } } } }
             else if (field === 'colour') { const r = biqResolveColour(mappings, it.range, it.colour); if (r.known) rec('colours', '|' + biqLc(orig), r.id); }
         });
+    });
+    // Confirmed sundry matches learn the dealer's wording as an exact alias.
+    (order.sundries || []).forEach(s => {
+        if (!s._ai || s._ai.mode !== 'auto') return;
+        const key = biqLc(biqNorm(s._ai.from || '')); if (!key) return;
+        if (/^\d+$/.test(biqNorm(s.sundry)) && /^\d+$/.test(biqNorm(s.type)) && mappings.sundries && mappings.sundries[key] == null) {
+            mappings.sundries[key] = { sundry: +s.sundry, type: +s.type };
+            learned.push({ cat: 'sundries', key, id: s.sundry });
+        }
     });
     return learned;
 }

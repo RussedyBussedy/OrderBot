@@ -2776,6 +2776,12 @@ export function biqFoldOptionSynonyms(mappings, order) {
             const cn = s => biqLc(s).replace(/[^a-z0-9]/g, '');
             const sp = o.values.find(x => cn(x) === cn(val));
             if (sp) { v[1] = sp; return; }
+            // TBD writes Master Carrier without BlindIQ's "Quiet " prefix ("Butt Arm Kit" vs
+            // "Quiet Butt Arm Kit") — same part, default to the quiet variant (Russel 2026-08-11).
+            // Generic and collision-safe: fires only when the value is NOT on the list but the
+            // list carries EXACTLY the quiet-prefixed spelling of it.
+            const qp = o.values.find(x => cn(x) === 'quiet' + cn(val));
+            if (qp) { v[1] = qp; return; }
             const stripped = biqNorm(val.replace(/\s*\([^)]*\)\s*/g, ' '));
             // "4x steel collapsable" (tight PDF kerning glues the count to the x) -> "4 x ..." (J6966)
             const spacedX = biqNorm(val.replace(/\b(\d+)\s*x\b/gi, '$1 x'));
@@ -2837,6 +2843,20 @@ export function biqApplyOptionDefaults(mappings, order) {
     (order ? order.items : []).forEach(it => {
         const spec = biqVariantSpec(mappings, it.blindType, it.range);
         if (!spec) return;
+        // Curtain tracks (and any product whose sheet carries its own "Colour" option) take the
+        // colour in the OPTIONS, not on the order item (Russel 2026-08-11, TBD tracks PO): a
+        // BlindIQ capture leaves the item colour empty and picks the track colour on the sheet.
+        // Move a matching line colour into the option and clear the item field; a line colour
+        // that isn't one of the option's values stays on the item to flag.
+        const colOpt = spec.find(o => biqLc(o.k) === 'colour');
+        if (colOpt && (colOpt.values || []).length && biqNorm(it.colour)) {
+            const cnc = s => biqLc(s).replace(/[^a-z0-9]/g, '');
+            const row = it.variants.find(v => biqLc(v[0]) === 'colour');
+            const rowVal = row ? biqNorm(row[1]) : '';
+            const match = colOpt.values.find(x => cnc(x) === cnc(it.colour));
+            if (!rowVal && match) { biqSetVar(it.variants, colOpt.k, match); it.colour = ''; }
+            else if (rowVal && cnc(rowVal) === cnc(it.colour)) it.colour = '';
+        }
         spec.forEach(o => {
             const f = it.variants.find(v => biqLc(v[0]) === biqLc(o.k));
             // A value that isn't one of the spec's allowed values is silently dropped from the

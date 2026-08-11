@@ -976,6 +976,131 @@ export function biqNormalizeMatheo(mappings, p) {
     return o;
 }
 
+// ---------- TBD "Online Purchase Order" (BD-style PO, 2026-08 format) ----------
+// Total Blind Design's reworked PO prints BlindIQ's own vocabulary: exact blind type /
+// range / colour / control names, sheet option keys as "K=V|K=V" lines under each item,
+// and a SUNDRIES section with real ZIQ stock codes (Russel 2026-08-11). Deterministic
+// parse — no AI needed.
+export function biqParseBdPo(textItems) {
+    const items = textItems.filter(i => i.s.trim());
+    const lineMap = {};
+    items.forEach(i => { const k = Math.round(i.y / 3) * 3; (lineMap[k] = lineMap[k] || []).push(i); });
+    const ys = Object.keys(lineMap).map(Number).sort((a, b) => b - a);
+    const lines = ys.map(y => ({ y, parts: lineMap[y].sort((a, b) => a.x - b.x) }));
+    const fullText = lines.map(l => l.parts.map(p => p.s).join(' ')).join('\n');
+    if (!/Online Purchase Order:/i.test(fullText) || !/Total Blind Design/i.test(fullText)) return null;
+    const meta = { customer: 'Total Blind Design' };
+    let m = fullText.match(/Quote Ref\s+(.+?)\s+Operator\b/); if (m) meta.orderNumber = biqNorm(m[1]);
+    if (!meta.orderNumber) { m = fullText.match(/Online Purchase Order:\s*(.+)/); if (m) meta.orderNumber = biqNorm(m[1]); }
+    m = fullText.match(/Order Date\s+(\d{4}-\d{2}-\d{2})/); if (m) meta.orderDate = m[1];
+    m = fullText.match(/Required Date\s+(\d{4}-\d{2}-\d{2})/); if (m) meta.requiredDate = m[1];
+    m = fullText.match(/Operator\s+(\S+)/); if (m) meta.operator = biqNorm(m[1]);
+    m = fullText.match(/Blinds\s*[—-]\s*(.+)/); if (m) meta.product = biqNorm(m[1]);
+    const hl = lines.find(l => { const t = l.parts.map(p => p.s.trim()); return t[0] === 'Item' && t.some(s => /^Locatio/.test(s)) && t.some(s => /^Price/.test(s)); });
+    if (!hl) return null;
+    // Anchor the canonical column list onto the header's word positions (two columns are both
+    // titled "Control" — first is Control L, second Control R).
+    const TITLES = ['Item', 'QTY', 'Location', 'Blind Type', 'Range', 'Colour', 'Width', 'Drop', 'Cont. Drop', 'Control', 'Control2', 'Fix', 'Price'];
+    const words = hl.parts.map(p => ({ s: biqNorm(p.s), x: p.x }));
+    const cols = []; let wi = 0;
+    const wm = (w, t) => { const a = biqLc(w), b = biqLc(t); return a === b || (a.length > 1 && b.startsWith(a)) || (b.length > 1 && a.startsWith(b)); };
+    for (const title of TITLES) {
+        const toks = title.replace(/2$/, '').split(' ');
+        while (wi < words.length && !wm(words[wi].s, toks[0])) wi++;
+        if (wi >= words.length) return null;
+        cols.push({ name: title, x: words[wi].x }); wi++;
+        for (let ti = 1; ti < toks.length && wi < words.length && wm(words[wi].s, toks[ti]); ti++) wi++;
+    }
+    const assign = (row, p) => {
+        let best = -1, bd = 1e9; cols.forEach((c, ci) => { const d = p.x - c.x; if (d >= -12 && Math.abs(d) < bd) { bd = Math.abs(d); best = ci; } });
+        if (best < 0) best = 0; const key = cols[best].name;
+        const s = p.s.trim();
+        row[key] = row[key] ? row[key] + ' ' + s : s;
+    };
+    const rows = [], sundries = [];
+    let cur = null, inSundries = false, inNotes = false;
+    const hi = lines.indexOf(hl);
+    for (let li = hi + 1; li < lines.length; li++) {
+        const joined = biqNorm(lines[li].parts.map(p => p.s).join(' '));
+        if (!joined) continue;
+        if (/^SUNDRIES$/i.test(joined)) { inSundries = true; cur = null; inNotes = false; continue; }
+        if (/^Order Message|^Blind Total|^Trade discount|^Discount:|^Delivery:|^Sub Total|^VAT:|^TOTAL:/i.test(joined)) { cur = null; inNotes = false; continue; }
+        if (inSundries) {
+            if (/^Item\s+QTY\s+Sundry/i.test(joined)) continue;
+            const sm = joined.match(/^([a-z]{1,2})\s+(\d+)\s+(.+?)\s+([A-Z]{2,5}\d{3,6})\s+(.+?)\s+([\d,]+\.\d{2})$/);
+            if (sm) sundries.push({ item: sm[1], qty: sm[2], typeName: biqNorm(sm[3]), code: sm[4], name: biqNorm(sm[5]) });
+            continue;
+        }
+        // "K=V|K=V|" option lines (and their wraps) belong to the item above, never to columns.
+        if (cur && (/=[^|]*\|/.test(joined) || /^\([A-Z]{2,5}\d{3,6}\)\|/.test(joined))) {
+            const nm = joined.match(/^(.*?)\s*\bNotes:\s*(.*)$/i);
+            cur._opts = (cur._opts ? cur._opts + ' ' : '') + (nm ? nm[1] : joined);
+            if (nm) { cur._notes = biqNorm(nm[2]); inNotes = true; }
+            continue;
+        }
+        const first = lines[li].parts[0];
+        if (/^[a-z]{1,2}$/.test(first.s.trim()) && first.x < cols[1].x) { cur = {}; inNotes = false; rows.push(cur); lines[li].parts.forEach(p => assign(cur, p)); continue; }
+        if (cur && inNotes) { cur._notes = biqNorm((cur._notes || '') + ' ' + joined); continue; }
+        if (cur) lines[li].parts.forEach(p => assign(cur, p));
+    }
+    return { meta, rows, sundries };
+}
+export function biqNormalizeBdPo(mappings, p) {
+    const o = biqBlankOrder();
+    o.source = 'bdpo'; o.sourceDesc = 'BD online purchase order (Total Blind Design)';
+    o.customer = p.meta.customer; o.orderNumber = p.meta.orderNumber || '';
+    o.orderDate = biqParseDate(p.meta.orderDate); o.requiredDate = biqParseDate(p.meta.requiredDate);
+    o.notes = p.meta.operator ? ('Captured by ' + p.meta.operator) : '';
+    const canon = s => biqLc(s).replace(/[^a-z0-9]/g, '');
+    p.rows.forEach(r => {
+        const it = biqBlankItem(r['Item'] || '');
+        it.qty = r['QTY'] || '1'; it.location = r['Location'] || '';
+        it.blindType = r['Blind Type'] || ''; it.range = r['Range'] || ''; it.colour = r['Colour'] || '';
+        it.width = r['Width'] || ''; it.drop = r['Drop'] || '';
+        it.fix = r['Fix'] || '';
+        // Curtain/valance drops print as 0 and the narrow "0" can land on the Cont. Drop
+        // anchor — a missing drop on a no-drop product IS 0.
+        if (!it.drop) { const rt = biqResolve(mappings, 'blindTypes', it.blindType); if (rt.known && [13, 17, 18, 20, 14, 27].includes(rt.id)) it.drop = '0'; }
+        let c1 = biqNorm(r['Control'] || ''), c2 = biqNorm(r['Control2'] || '');
+        // Curtain tracks: "Stack …" is a Control 2 (stacking) choice in BlindIQ.
+        if (/^stack/i.test(c1) && !c2) { c2 = c1; c1 = ''; }
+        it.control1 = c1; it.control2 = c2;
+        { const cd = biqNorm(r['Cont. Drop'] || '');
+          it.controlDrop = biqComputeControlDropV2(mappings, /^\d/.test(cd) ? cd : '', it.drop, it.blindType, it.range);
+          it._cdAuto = !/^\d/.test(cd); }
+        it.variants = biqTemplateFor2(mappings, it.blindType, it.range);
+        if (r._notes) it.notes = r._notes;
+        const spec = biqVariantSpec(mappings, it.blindType, it.range) || [];
+        String(r._opts || '').split('|').forEach(pair => {
+            const i = pair.indexOf('='); if (i < 1) return;
+            const k = biqNorm(pair.slice(0, i)), v = biqNorm(pair.slice(i + 1));
+            if (!k || !v) return;
+            // Motorisation references ride as notes — TBD's SUNDRIES section is the
+            // buy-from-BD list; "(Not BD Supply)" motors are customer-sourced.
+            if (/^(motor|adaptor|adapter|remote|charger)$/i.test(k)) { it.notes = (it.notes ? it.notes + ' | ' : '') + k + ': ' + v; return; }
+            if (/^joined to$/i.test(k)) {
+                it.notes = (it.notes ? it.notes + ' | ' : '') + 'Joined To ' + v;
+                if (/coupled/i.test(v)) { const bo = spec.find(s => canon(s.k) === 'coupledbracket'); if (bo) biqSetVar(it.variants, bo.k, 'Yes'); }
+                return;
+            }
+            const so = spec.find(s => canon(s.k) === canon(k));
+            if (so) biqSetVar(it.variants, so.k, v);
+            else it.notes = (it.notes ? it.notes + ' | ' : '') + k + ': ' + v;   // computed specs (Stack Size, Fullness…) inform the factory
+        });
+        if (/coupled/i.test(c1 + ' ' + c2)) {
+            const bo = spec.find(s => canon(s.k) === 'coupledbracket');
+            if (bo && !it.variants.some(vv => canon(vv[0]) === 'coupledbracket' && biqNorm(vv[1]))) biqSetVar(it.variants, bo.k, 'Yes');
+        }
+        o.items.push(it);
+    });
+    p.sundries.forEach(s => {
+        const hit = biqResolveSundry(mappings, s.code) || biqResolveSundry(mappings, s.name) || { sundry: '', type: '' };
+        const disp = (mappings.sundryNames && mappings.sundryNames[String(hit.sundry)]) || s.name;
+        o.sundries.push({ code: '', qty: s.qty, type: String(hit.type == null ? '' : hit.type), sundry: String(hit.sundry == null ? '' : hit.sundry), notes: disp, _src: s.name + ' (' + s.code + ')' });
+    });
+    return o;
+}
+
 // ---------- Blind Designs fillable form PDF (fields = {name: value} from pdf.js annotations) ----------
 export function biqParseBDFields(fields) {
     if (!('Company Name' in fields) && !('Order Number' in fields)) return null;
@@ -2136,9 +2261,10 @@ export function biqCollectProblems(mappings, order) {
                 if (!f || !biqNorm(f[1])) probs.push({ t: w + 'option "' + o.k + '" is required for ' + it.blindType + (o.values && o.values.length ? ' (' + o.values.slice(0, 4).join(' / ') + (o.values.length > 4 ? ' …' : '') + ')' : '') + '.' }); }
         });
         if (!(+it.width > 0)) probs.push({ t: w + 'width missing/invalid.' });
-        // Valance lines carry no drop — 0 (or blank -> 0 in the XML) is correct (Russel 2026-08-07).
-        const isValance = (() => { const r = biqResolve(mappings, 'blindTypes', it.blindType); return r.known && (r.id === 14 || r.id === 27); })();
-        if (!(+it.drop > 0) && !isValance) probs.push({ t: w + 'drop missing/invalid.' });
+        // Valance AND curtain-track lines carry no drop — 0 (or blank -> 0 in the XML) is
+        // correct (Russel 2026-08-07; TBD's BD POs print curtain drops as 0, 2026-08-11).
+        const isNoDrop = (() => { const r = biqResolve(mappings, 'blindTypes', it.blindType); return r.known && [14, 27, 13, 17, 18, 20].includes(r.id); })();
+        if (!(+it.drop > 0) && !isNoDrop) probs.push({ t: w + 'drop missing/invalid.' });
         if (!(+it.qty > 0)) probs.push({ t: w + 'qty missing/invalid.' });
     });
     order.sundries.forEach((s, i) => {
@@ -2215,7 +2341,7 @@ export function biqGenerateXML(mappings, order) {
         x += tag('COI_BlindRange_Link', idOr(rr));
         x += tag('COI_Colour_Link', biqLc(it.colour) ? idOr(rc) : '-1');
         x += tag('COI_Width', it.width);
-        x += tag('COI_Drop', it.drop || ((rt.known && (rt.id === 14 || rt.id === 27)) ? '0' : it.drop));   // valances: no drop -> 0
+        x += tag('COI_Drop', it.drop || ((rt.known && [14, 27, 13, 17, 18, 20].includes(rt.id)) ? '0' : it.drop));   // valances + curtain tracks: no drop -> 0
         x += tag('COI_Fix_Link', biqLc(it.fix) ? idOr(rf) : '-1');
         x += tag('COI_Control1_Link', biqLc(it.control1) ? idOr(r1) : '-1');
         x += tag('COI_Control2_Link', biqLc(it.control2) ? idOr(r2) : '-1');

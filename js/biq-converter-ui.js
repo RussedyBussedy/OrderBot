@@ -14,7 +14,7 @@ import {
     biqApplyShutterConfig, biqApplyOptionDefaults, biqFoldOptionSynonyms, biqApplyBracketPairs, biqEmittedVariants, biqDroppedVariants, biqCopyOptions, biqInferControls, biqApplyControlMatrix, biqCanonicalize,
     biqStampOriginals, biqApplyFormatProfile, biqLearnFormat,
     biqParseBlindGuysRows, biqNormalizeBlindGuys,
-    biqParseMatheoItems, biqNormalizeMatheo,
+    biqParseMatheoItems, biqNormalizeMatheo, biqParseBdPo, biqNormalizeBdPo,
     biqParseLifestyle, biqNormalizeLifestyle, biqParseCnbw, biqNormalizeCnbw, biqCnbwCoherent,
     biqParseTbd, biqNormalizeTbd, biqTbdCoherent, biqOrderPreviewHtml,
     biqParseBDFields, biqNormalizeBDForm,
@@ -189,6 +189,8 @@ async function loadPdf(f) {
         lastSourceText = textItems.map(i => i.s).join(' ');
         const m = biqParseMatheoItems(textItems);
         if (m && m.rows.length) { setOrder(biqNormalizeMatheo(MAPS, m)); return; }
+        const bp = biqParseBdPo(textItems);
+        if (bp && bp.rows.length) { setOrder(biqNormalizeBdPo(MAPS, bp)); return; }
         const lf = biqParseLifestyle(textItems);
         if (lf && lf.rows.length) { setOrder(biqNormalizeLifestyle(MAPS, lf)); return; }
         const cb = biqParseCnbw(textItems);

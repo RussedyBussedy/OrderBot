@@ -79,6 +79,17 @@ function applyCategoryDoc(id, data) {
     const base = id.split('__')[0];
     try { MAPS[base] = Object.assign(MAPS[base] || {}, JSON.parse(data.json)); } catch (e) { console.error('bad mapping doc', id, e); }
 }
+// Confirm an AI sundry match: learn the customer's wording as an alias (saved for everyone)
+// and clear the amber state (Russel 2026-08-07: accepting saves the mapping immediately).
+async function acceptSaveSundry(i) {
+    const s = order && order.sundries[i]; if (!s) return;
+    const key = biqLc(biqNorm(s._src || (s._ai && s._ai.from) || ''));
+    if (key && /^\d+$/.test(biqNorm(s.sundry)) && /^\d+$/.test(biqNorm(s.type))) {
+        if (!(MAPS.sundries || {})[key]) { MAPS.sundries[key] = { sundry: +s.sundry, type: +s.type }; await saveCategory('sundries'); }
+        D.showToast('Mapping saved — "' + (s._src || key) + '" now resolves automatically.', 'success');
+    }
+    s._ai = null;
+}
 const SHARD_LIMIT = 700000; // chars; Firestore doc hard limit is ~1MB
 async function saveCategory(cat) {
     if (!D.db) return;
@@ -410,15 +421,23 @@ function renderItems() {
     order.sundries.forEach((s, i) => {
         const a = s._ai;
         const pct = a ? Math.round((a.confidence || 0) * 100) : 0;
-        const chip = !a ? ''
-            : a.mode === 'auto'
-                ? ` <span class="biq-ai biq-ai-auto" title="AI matched '${escH(a.from)}' to '${escH(a.to)}' (${pct}%). Click 🔍 to verify / change." data-biq-sundrysearch="${i}">AI ${pct}% ✎</span>`
-                : ` <span class="biq-ai biq-ai-sug" title="AI thinks this is '${escH(a.to)}' (${pct}%). Click to accept." data-biq-sunacceptai="${i}">AI? ${escH(a.to)} (${pct}%) - accept</span>`;
+        const src = biqNorm(s._src || (a && a.from) || '');
+        const baseNote = biqNorm(String(s.notes || '').split(' — ')[0]);
+        // The box holds the BlindIQ name; the customer's own wording lives UNDER it, with an
+        // Accept button that saves the mapping for everyone (Russel 2026-08-07).
+        let sub = '';
+        if (a && a.mode === 'auto')
+            sub = `<div class="text-xs text-slate-500 mt-0.5"><span class="biq-ai biq-ai-auto" title="AI matched at ${pct}% — use 🔍 to change if wrong.">AI ${pct}%</span> customer wrote: &quot;${escH(src)}&quot; <button class="biq-btn-sm" data-biq-sunacceptsave="${i}" title="Confirm this is the right part and save the mapping — this wording will resolve automatically from now on.">✓ Accept &amp; save</button></div>`;
+        else if (a && a.mode === 'suggest') {
+            const sugName = (MAPS.sundryNames || {})[String((biqResolveSundry(MAPS, a.to) || {}).sundry)] || a.to;
+            sub = `<div class="text-xs text-slate-500 mt-0.5"><span class="biq-ai biq-ai-sug" data-biq-sunacceptai="${i}" title="Click to accept — fills the IDs, swaps in the BlindIQ name and saves the mapping.">AI? ${escH(sugName)} (${pct}%) — accept &amp; save</span></div>`;
+        } else if (src && biqLc(src) !== biqLc(baseNote))
+            sub = `<div class="text-xs text-slate-400 mt-0.5">customer wrote: &quot;${escH(src)}&quot;</div>`;
         sh += `<tr${a && a.mode === 'auto' ? ' class="biq-ai-row"' : ''}><td><input class="biq-in" value="${escH(s.code)}" data-biq-sundry="${i}" data-biq-field="code"></td>`
             + `<td><input class="biq-in" value="${escH(s.qty)}" data-biq-sundry="${i}" data-biq-field="qty"></td>`
             + `<td><input class="biq-in" value="${escH(s.type)}" data-biq-sundry="${i}" data-biq-field="type" placeholder="e.g. 8"></td>`
             + `<td><input class="biq-in" value="${escH(s.sundry)}" data-biq-sundry="${i}" data-biq-field="sundry" placeholder="e.g. 1897"></td>`
-            + `<td><input class="biq-in w-full" value="${escH(s.notes)}" data-biq-sundry="${i}" data-biq-field="notes">${chip}</td>`
+            + `<td><input class="biq-in w-full" value="${escH(s.notes)}" data-biq-sundry="${i}" data-biq-field="notes">${sub}</td>`
             + `<td class="whitespace-nowrap"><button class="biq-btn-sm" data-biq-sundrysearch="${i}" title="Search the BlindIQ sundries database">🔍</button> <button class="biq-btn-sm biq-btn-danger" data-biq-delsundry="${i}">✕</button></td></tr>`;
     });
     sb.innerHTML = sh || '<tr><td colspan="6" class="text-slate-400 p-2">None</td></tr>';
@@ -933,8 +952,8 @@ function bindEvents() {
         else if (t.dataset.biqVar) { const [i, vi, w] = t.dataset.biqVar.split(':'); order.items[+i].variants[+vi][+w] = t.value; scheduleRefresh(); }
         else if (t.dataset.biqBracket != null) { const it = order.items[+t.dataset.biqBracket]; if (t.value) it._bracketWith = t.value; else delete it._bracketWith; refresh(); }
     });
-    document.addEventListener('click', e => {
-        const t = e.target.closest('[data-biq-assign],[data-biq-pickval],[data-biq-sundrysearch],[data-biq-split],[data-biq-togglevars],[data-biq-delitem],[data-biq-addvar],[data-biq-delvar],[data-biq-delsundry],[data-biq-fscut],[data-biq-maptab],[data-biq-delmap],[data-biq-acceptai],[data-biq-sunacceptai],[data-biq-revertai],[data-biq-prodsearch],[data-biq-prodrevert],[data-biq-copyopts],#biq-addmap,#biq-addcust,#biq-bulkbtn,#biq-copy-apply,#biq-copy-cancel,#biq-copy-all,#biq-copy-same');
+    document.addEventListener('click', async e => {
+        const t = e.target.closest('[data-biq-assign],[data-biq-pickval],[data-biq-sundrysearch],[data-biq-split],[data-biq-togglevars],[data-biq-delitem],[data-biq-addvar],[data-biq-delvar],[data-biq-delsundry],[data-biq-fscut],[data-biq-maptab],[data-biq-delmap],[data-biq-acceptai],[data-biq-sunacceptai],[data-biq-sunacceptsave],[data-biq-revertai],[data-biq-prodsearch],[data-biq-prodrevert],[data-biq-copyopts],#biq-addmap,#biq-addcust,#biq-bulkbtn,#biq-copy-apply,#biq-copy-cancel,#biq-copy-all,#biq-copy-same');
         if (!t) return;
         if (t.dataset.biqAssign) { const [c, n, bt] = JSON.parse(t.dataset.biqAssign); openAssign(c, n, bt); }
         else if (t.dataset.biqPickval != null) { if (assignCtx && assignCtx.product) applyProductPick(t.dataset.biqPickval); else applyPick(t.dataset.biqPickval); }
@@ -947,7 +966,8 @@ function bindEvents() {
         else if (t.dataset.biqProdsearch) { const [i, f] = t.dataset.biqProdsearch.split(':'); openProductPicker(+i, f); }
         else if (t.dataset.biqProdrevert) { const [i, f] = t.dataset.biqProdrevert.split(':'); const it = order.items[+i]; if (it._ai && it._ai[f]) { if (it._aiOrig && it._aiOrig[f] !== undefined) it[f] = it._aiOrig[f]; delete it._ai[f]; delete it._aiOrig[f]; } hide('biq-assignmodal'); assignCtx = null; $('biq-as-save').style.display = ''; refresh(); }
         else if (t.dataset.biqAcceptai) { const [i, f] = t.dataset.biqAcceptai.split(':'); biqAcceptSuggestion(order, +i, f); refresh(); }
-        else if (t.dataset.biqSunacceptai != null) { biqAcceptSundrySuggestion(MAPS, order, +t.dataset.biqSunacceptai); refresh(); }
+        else if (t.dataset.biqSunacceptai != null) { const i = +t.dataset.biqSunacceptai; if (biqAcceptSundrySuggestion(MAPS, order, i)) await acceptSaveSundry(i); refresh(); }
+        else if (t.dataset.biqSunacceptsave != null) { await acceptSaveSundry(+t.dataset.biqSunacceptsave); refresh(); }
         else if (t.dataset.biqRevertai) { const [i, f] = t.dataset.biqRevertai.split(':'); const it = order.items[+i]; if (it._ai && it._ai[f]) { if (it._aiOrig && it._aiOrig[f] !== undefined) it[f] = it._aiOrig[f]; delete it._ai[f]; } refresh(); }
         else if (t.dataset.biqSplit != null) openFabricSplit(+t.dataset.biqSplit);
         else if (t.dataset.biqTogglevars != null) { const it = order.items[+t.dataset.biqTogglevars]; it.open = !it.open; renderItems(); }

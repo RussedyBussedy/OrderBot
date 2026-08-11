@@ -26,7 +26,7 @@ export const BIQ_SEED_MAPPINGS = {
     deliveryMethods: { 'courier triton': 3, 'courier': 3 },
     packingTypes: { 'boxed': 2 },
     customers: { 'total blind designs': { customer: 7051, address: 7050, operator: 954 } },
-    fabricSplits: {}, rangesScoped: {}, rangeFormulas: {}, sundries: {}, sundryTypes: {}, variantTemplates: {},
+    fabricSplits: {}, rangesScoped: {}, rangeFormulas: {}, sundries: {}, sundryTypes: {}, sundryNames: {}, variantTemplates: {},
     // Per-blind-type availability matrices (from BlindIQ's own linkage tables, via SQL export).
     // controlsScoped: { "<blindTypeId>": [controlId,...] } or { "<id>": {c1:[...], c2:[...]} }.
     // Empty until the matrix is imported — all checks stay silent with no data.
@@ -47,6 +47,7 @@ export const BIQ_MAPPING_CATEGORIES = {
     rangeFormulas: { label: 'Control drop formulas (rangeId -> formula)', xml: 'COI_ControlDrop' },
     sundries: { label: 'Sundries (name/code -> {sundry, type})', xml: 'COS_Sundry_Link + COS_SundryType_Link' },
     sundryTypes: { label: 'Sundry types', xml: 'COS_SundryType_Link' },
+    sundryNames: { label: 'Sundry display names (id -> BlindIQ name)', xml: 'COS_Sundry_Notes' },
     variantTemplates: { label: 'Variant option templates (blindTypeId -> options)', xml: 'COI_VariantOptions' },
     variantSheetIndex: { label: 'Per-range option sheet index (blindTypeId|rangeId -> sheet)', xml: 'COI_VariantOptions' },
     variantTemplateSheets: { label: 'Per-range option sheets (BlindIQ Matrix tables)', xml: 'COI_VariantOptions' }
@@ -307,7 +308,10 @@ export function biqAddMotorSundry(mappings, order, text, qty, motorContext) {
     const su = { code: '', qty: String(+qty || 1), type: '', sundry: '', notes: t, _src: t };
     if (hit && hit.sundry != null) {
         su.type = String(hit.type); su.sundry = String(hit.sundry);
-        su.notes = whiteAssumed ? (t + ' — WHITE assumed (no colour on order)') : t;
+        // Notes carry the TRUE BlindIQ name once resolved (Russel 2026-08-07); the customer's
+        // wording stays in _src for the UI sub-line and for learned-alias keys.
+        const disp = (mappings.sundryNames && mappings.sundryNames[String(hit.sundry)]) || t;
+        su.notes = whiteAssumed ? (disp + ' — WHITE assumed (no colour on order)') : disp;
     }
     order.sundries.push(su);
 }
@@ -2359,9 +2363,13 @@ export function biqBuildDiscernment(mappings, order, shortlistN) {
     (order.sundries || []).forEach((s, i) => {
         if (/^\d+$/.test(biqNorm(s.sundry)) && /^\d+$/.test(biqNorm(s.type))) return;
         const raw = biqNorm(s._src || s.notes); if (!raw) return;
-        const motorish = /motor|\brts\b|remote|adapter|adaptor|situo|maestria|sonesse|smoove|tahoma|telis|glydea|zigbee|\bio\b|charger|solar|battery|receiver|wall switch/i.test(raw);
+        const motorish = /motor|\brts\b|remote|adapter|adaptor|situo|maestria|sonesse|smoove|tahoma|telis|glydea|zigbee|\bio\b|charger|solar|battery|receiver|wall switch|one\s*touch|\bdual\b|crown|wire\s*free|li-?ion|rechargeable|extension|matter|\bhub\b|timer/i.test(raw);
         const view = motorish ? biqMotorSundryView(mappings) : mappings;
-        const cands = biqShortlist(Object.keys(view.sundries || {}), raw, N + 8);
+        // Type-13 "Components Motor" records are factory parts, never orderable — they must
+        // not be offered as candidates on ANY path (the Crown Retro Fit lesson, Russel 2026-08-07).
+        const t13 = String((mappings.sundryTypes || {})['components motor'] || 13);
+        const pool = Object.entries(view.sundries || {}).filter(([, e]) => e && String(e.type) !== t13).map(([k]) => k);
+        const cands = biqShortlist(pool, raw, N + 8);
         if (cands.length) slots.push({ id: 's' + i + '.sundry', sidx: i, field: 'sundry', raw, candidates: cands });
     });
     return slots;
@@ -2441,7 +2449,10 @@ export function biqApplyDiscernment(mappings, order, matches, opts) {
         if (conf >= autoAt) {
             s._ai = { mode: 'auto', from, to: biqNorm(m.match), confidence: conf };
             s.type = String(hit.type); s.sundry = String(hit.sundry);
-            if (!/AI matched to/.test(s.notes || '')) s.notes = (from || s.notes || '') + ' — AI matched to "' + biqNorm(m.match) + '" (' + Math.round(conf * 100) + '%) — confirm';
+            if (from && !biqNorm(s._src)) s._src = from;
+            // The notes box gets the TRUE BlindIQ name; the chip + sub-line carry provenance.
+            s.notes = (mappings.sundryNames && mappings.sundryNames[String(hit.sundry)])
+                || biqNorm(m.match).replace(/\b[a-z]/g, c => c.toUpperCase());
             report.push({ sidx: i, field: 'sundry', mode: 'auto', raw: from, match: biqNorm(m.match), confidence: conf });
         } else if (conf >= suggestAt) {
             s._ai = { mode: 'suggest', from, to: biqNorm(m.match), confidence: conf };
@@ -2456,7 +2467,9 @@ export function biqAcceptSundrySuggestion(mappings, order, sidx) {
     const hit = biqResolveSundry(mappings, s._ai.to);
     if (!hit || hit.sundry == null || hit.sundry === '') return false;
     s.type = String(hit.type); s.sundry = String(hit.sundry);
-    if (!/AI matched to/.test(s.notes || '')) s.notes = (s._ai.from || s.notes || '') + ' — AI matched to "' + s._ai.to + '" (' + Math.round((s._ai.confidence || 0) * 100) + '%) — confirm';
+    if (s._ai.from && !biqNorm(s._src)) s._src = s._ai.from;
+    s.notes = (mappings.sundryNames && mappings.sundryNames[String(hit.sundry)])
+        || biqNorm(s._ai.to).replace(/\b[a-z]/g, c => c.toUpperCase());
     s._ai.mode = 'auto';
     return true;
 }
@@ -3123,5 +3136,20 @@ export function biqCanonicalize(mappings, order) {
         const r1 = biqResolve(N, 'control1', it.control1); if (r1.known && r1.id != null && N.controlNames && N.controlNames[r1.id]) it.control1 = N.controlNames[r1.id];
         const r2 = biqResolve(N, 'control2', it.control2); if (r2.known && r2.id != null && N.controlNames && N.controlNames[r2.id]) it.control2 = N.controlNames[r2.id];
         const rf = biqResolve(N, 'fixes', it.fix); if (rf.known && rf.id != null && N.fixNames && N.fixNames[rf.id]) it.fix = N.fixNames[rf.id];
+    });
+    // Sundries: once the ids resolve, the notes box carries the TRUE BlindIQ catalogue name —
+    // never the customer's wording (Russel 2026-08-07). The original wording is preserved in
+    // _src (shown under the box in the UI). Annotation tails (" — WHITE assumed…") survive;
+    // legacy "AI matched to…" tails are dropped — the chip carries that provenance now.
+    (order ? (order.sundries || []) : []).forEach(s => {
+        if (!/^\d+$/.test(biqNorm(s.sundry))) return;
+        const canon = N.sundryNames && N.sundryNames[String(s.sundry)];
+        if (!canon) return;
+        const parts = String(s.notes || '').split(' — ');
+        const base = biqNorm(parts[0]);
+        const tail = parts.slice(1).filter(t => !/^AI matched to|^confirm$/.test(biqNorm(t))).join(' — ');
+        if (base === canon && parts.slice(1).join(' — ') === tail) return;
+        if (base && base !== canon && !biqNorm(s._src)) s._src = base;
+        s.notes = canon + (tail ? ' — ' + tail : '');
     });
 }

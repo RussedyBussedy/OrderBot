@@ -2759,7 +2759,12 @@ ${feedbackExamples}
                 // kit, not a separate motor unit. BD documents use the British spelling "adaptor".
                 const looksLikeAdapter = desc.includes('adapter') || desc.includes('adaptor');
 
-                if (matchingProps.length > 0 && desc.includes('motor') && !looksLikeAdapter) {
+                // A name that matches an entry in the Motor Properties table IS a motor — many
+                // catalogue motor names never contain the word "motor" ("Somfy Sonesse 28 Wire
+                // Free ZIGBEE 1.1nm…"), which made a 7-Dual + 7-Sonesse order count only 7
+                // motors for 14 motorised blinds (Russel 2026-08-07). Chargers/remotes/kits
+                // don't contain a FULL motor name, so the properties match alone is safe.
+                if (matchingProps.length > 0 && !looksLikeAdapter) {
                      for(let i=0; i < qty; i++) {
                         orderedMotors.push({ sundry: sundry, potentialProps: matchingProps, assignedBlind: null });
                      }
@@ -2807,12 +2812,18 @@ ${feedbackExamples}
             const isSys40Type = t => /\bsys(?:tem)?\.?\s*40\b/.test(t || '');
             const isOneTouchDualDesc = d => (d || '').includes('one touch') && (d || '').includes('dual');
             const dualMotorCount = orderedMotors.filter(m => isOneTouchDualDesc((m.sundry.item.blindIQValue || '').toLowerCase())).length;
+            const nonDualMotorCount = orderedMotors.length - dualMotorCount;
             const sys40Motorised = motorizedBlinds.filter(b => isSys40Type((b.blindType?.blindIQValue || '').toLowerCase()));
             const ctlText = b => (((b.control1?.blindIQValue) || '') + ' ' + ((b.control2?.blindIQValue) || '')).toLowerCase();
+            const plainSpecdAll = sys40Motorised.filter(b => ctlText(b).includes('motor') && !ctlText(b).includes('dual'));
+            const dualSpecdAll = sys40Motorised.filter(b => ctlText(b).includes('dual'));
 
-            if (dualMotorCount > 0) {
-                const plainSpecd = sys40Motorised.filter(b => ctlText(b).includes('motor') && !ctlText(b).includes('dual'));
-                const definitive = dualMotorCount >= sys40Motorised.length; // every Sys 40 motorised blind takes a Dual
+            // Mixed motor fleets are legitimate (Russel 2026-08-07): 7 One Touch Dual + 7 Somfy
+            // Sonesse on one order means 7 blinds spec'd LH/RH DUAL and 7 spec'd LH/RH Motor.
+            // Only flag when the spec counts CANNOT be served by the motor mix on the order.
+            if (dualMotorCount > 0 && plainSpecdAll.length > nonDualMotorCount) {
+                const plainSpecd = plainSpecdAll;
+                const definitive = nonDualMotorCount === 0; // every motor on the order is a Dual
                 plainSpecd.forEach(b => {
                     // Side comes from the control that carries the motor (LH specs live in
                     // Control 1, RH specs in Control 2) — not from the first side word in the
@@ -2829,12 +2840,16 @@ ${feedbackExamples}
                     if (b.control1 && ((b.control1.blindIQValue || '').toLowerCase().includes('motor'))) b.control1.result = 'MISMATCH';
                     if (b.control2 && ((b.control2.blindIQValue || '').toLowerCase().includes('motor'))) b.control2.result = 'MISMATCH';
                 });
-            } else if (motorCount > 0) {
-                // Reverse check: a Sys 40 blind spec'd DUAL, but none of the ordered motors
-                // are One Touch Dual — the DUAL deduction with a standard motor head is
-                // equally wrong (blind comes out the wrong width). Flag it.
-                sys40Motorised.filter(b => ctlText(b).includes('dual')).forEach(b => {
-                    const msg = `One Touch Dual Alert: control is specified DUAL but none of the ordered motors are ONE TOUCH DUAL — a DUAL spec with a standard motor gives the wrong width deduction. Check the motor or the control spec.`;
+            }
+            if (motorCount > 0 && dualSpecdAll.length > dualMotorCount) {
+                // Reverse check: more Sys 40 blinds spec'd DUAL than One Touch Dual motors on
+                // the order — a DUAL deduction with a standard motor head is equally wrong
+                // (blind comes out the wrong width). Flag every DUAL-spec'd blind so the
+                // capturer confirms which specs (or motors) are off.
+                dualSpecdAll.forEach(b => {
+                    const msg = dualMotorCount === 0
+                        ? `One Touch Dual Alert: control is specified DUAL but none of the ordered motors are ONE TOUCH DUAL — a DUAL spec with a standard motor gives the wrong width deduction. Check the motor or the control spec.`
+                        : `One Touch Dual Alert: ${dualSpecdAll.length} blinds are spec'd DUAL but only ${dualMotorCount} ONE TOUCH DUAL motor${dualMotorCount === 1 ? '' : 's'} ${dualMotorCount === 1 ? 'is' : 'are'} on the order — a DUAL spec with a standard motor gives the wrong width deduction. Confirm which blinds take the Dual motors.`;
                     if (!b.controlValidation) b.controlValidation = { type: 'error', message: msg };
                     else b.controlValidation.message += ' ' + msg;
                 });

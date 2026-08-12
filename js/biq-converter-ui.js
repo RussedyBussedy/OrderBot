@@ -94,12 +94,34 @@ const SHARD_LIMIT = 700000; // chars; Firestore doc hard limit is ~1MB
 async function saveCategory(cat) {
     if (!D.db) return;
     try {
-        const full = JSON.stringify(MAPS[cat] || {});
-        if (full.length <= SHARD_LIMIT) {
-            await D.setDoc(D.doc(D.db, MAPPINGS_COLLECTION, cat), { json: full, shards: 1, updatedAt: new Date().toISOString() });
-            return;
-        }
-        // shard: split entries across customers / customers__2 / ...
+        // SHRINK GUARD + shard hygiene (Russel 2026-08-12, after half the customer book
+        // vanished): a tab that loaded only SOME of a category's shard docs holds a partial
+        // copy — saving it overwrote `customers` with a 2,093-key single shard while 9,002
+        // keys were stored ("blind guys hermanus" and ~6,900 others disappeared; the stale
+        // main doc claimed shards:1 while customers__2 survived). Before writing, re-read
+        // the stored docs: if this tab is missing a big slice (>20 keys AND >25% of the
+        // stored set), adopt the missing entries first — single edits and one-at-a-time
+        // deletions never trip the guard. After writing, neutralise stale higher __N shard
+        // docs, because the loader merges every one it finds.
+        let existingShardIds = null;
+        try {
+            const mem = MAPS[cat] = MAPS[cat] || {};
+            const snap0 = await D.getDocs(D.collection(D.db, MAPPINGS_COLLECTION));
+            const stored = {};
+            existingShardIds = [];
+            snap0.forEach(d0 => {
+                if (d0.id !== cat && !d0.id.startsWith(cat + '__')) return;
+                if (d0.id !== cat) existingShardIds.push(d0.id);
+                const j = d0.data() && d0.data().json;
+                if (j) { try { Object.assign(stored, JSON.parse(j)); } catch (e) { } }
+            });
+            const missing = Object.keys(stored).filter(k => !(k in mem));
+            if (missing.length > 20 && missing.length > Object.keys(stored).length * 0.25) {
+                missing.forEach(k => { mem[k] = stored[k]; });
+                D.showToast(`This tab was missing ${missing.length} stored "${cat}" entries (partial load) — merged them back before saving. Please refresh the page.`, 'error');
+            }
+        } catch (e) { console.warn('biq shrink guard skipped', e); }
+        // split entries across cat / cat__2 / ... (single small categories = 1 chunk)
         const entries = Object.entries(MAPS[cat] || {});
         const chunks = []; let cur = {}, curLen = 2;
         for (const [k, v] of entries) {
@@ -111,6 +133,10 @@ async function saveCategory(cat) {
         for (let i = 0; i < chunks.length; i++) {
             const id = i === 0 ? cat : cat + '__' + (i + 1);
             await D.setDoc(D.doc(D.db, MAPPINGS_COLLECTION, id), { json: JSON.stringify(chunks[i]), shards: chunks.length, updatedAt: new Date().toISOString() });
+        }
+        for (const id of existingShardIds || []) {
+            const n = Number(id.split('__')[1] || 0);
+            if (n > chunks.length) await D.setDoc(D.doc(D.db, MAPPINGS_COLLECTION, id), { json: '{}', shards: chunks.length, updatedAt: new Date().toISOString() });
         }
     }
     catch (e) { console.error('biq mapping save failed', e); D.showToast('Could not save mapping to Firestore.', 'error'); }

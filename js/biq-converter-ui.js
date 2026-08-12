@@ -891,13 +891,27 @@ function renderMapBody() {
     const cat = mapTab, meta = BIQ_MAPPING_CATEGORIES[cat];
     let h = `<div class="text-xs text-slate-500 mb-2">XML field: <code>${escH(meta.xml)}</code> — changes sync live to every PC via Firestore.</div>`;
     if (cat === 'customers') {
+        // Search over names, ids and alias targets (Russel 2026-08-12 — the 9,000-name
+        // customer book was rendered unfiltered and unsearchable on this tab).
+        const entries = Object.entries(MAPS.customers || {});
+        const filter = biqLc(($('biq-mapsearch') && mapTab === ($('biq-mapsearch').dataset || {}).cat) ? $('biq-mapsearch').value : '');
+        const match = ([k, v]) => { if (!filter) return true; if (k.includes(filter)) return true; const o = v || {}; return String(o.customer || '').includes(filter) || String(o.address || '').includes(filter) || String(o.operator || '').includes(filter) || biqLc(String(o.alias || '')).includes(filter); };
+        const matched = entries.filter(match);
+        const shown = matched.slice(0, 150);
+        if (entries.length > 150) h += `<input id="biq-mapsearch" data-cat="${cat}" class="biq-in w-full mb-2" placeholder="Search ${entries.length} customers — name, ID or alias…" value="${escH(filter)}">`;
         h += '<table class="biq-maptable"><tr><th>Customer name</th><th>Customer ID</th><th>Address ID</th><th>Operator ID</th><th></th></tr>';
-        for (const [k, v] of Object.entries(MAPS.customers)) h += `<tr><td>${escH(k)}</td><td>${escH(v.customer)}</td><td>${escH(v.address)}</td><td>${escH(v.operator)}</td><td><button class="biq-btn-sm biq-btn-danger" data-biq-delmap='${escH(JSON.stringify([cat, k]))}'>✕</button></td></tr>`;
+        for (const [k, v] of shown) {
+            const o = v || {};
+            const cCell = o.alias ? `→ ${escH(o.alias)}` : escH(o.customer == null ? '' : o.customer);
+            h += `<tr><td>${escH(k)}</td><td>${cCell}</td><td>${o.alias ? '' : escH(o.address == null ? '' : o.address)}</td><td>${o.alias ? '' : escH(o.operator == null ? '' : o.operator)}</td><td><button class="biq-btn-sm biq-btn-danger" data-biq-delmap='${escH(JSON.stringify([cat, k]))}'>✕</button></td></tr>`;
+        }
+        if (!filter && entries.length > shown.length) h += `<tr><td colspan="5" class="text-slate-400">…${entries.length - shown.length} more — use search</td></tr>`;
+        else if (filter && matched.length > shown.length) h += `<tr><td colspan="5" class="text-slate-400">…${matched.length - shown.length} more match — narrow the search</td></tr>`;
         h += `<tr><td><input id="biq-nm-name" class="biq-in w-full" placeholder="new customer name"></td><td><input id="biq-nm-c" class="biq-in" style="width:80px"></td><td><input id="biq-nm-a" class="biq-in" style="width:80px"></td><td><input id="biq-nm-o" class="biq-in" style="width:80px"></td><td><button class="biq-btn-sm biq-btn-on" id="biq-addcust">Add</button></td></tr></table>`;
     } else {
         const entries = Object.entries(MAPS[cat] || {});
         const filter = biqLc(($('biq-mapsearch') && mapTab === $('biq-mapsearch').dataset.cat) ? $('biq-mapsearch').value : '');
-        const shown = entries.filter(([k]) => !filter || k.includes(filter)).slice(0, 150);
+        const shown = entries.filter(([k, v]) => !filter || k.includes(filter) || biqLc(typeof v === 'object' ? JSON.stringify(v) : String(v)).includes(filter)).slice(0, 150);
         if (entries.length > 150) h += `<input id="biq-mapsearch" data-cat="${cat}" class="biq-in w-full mb-2" placeholder="Search ${entries.length} entries…" value="${escH(filter)}">`;
         h += '<table class="biq-maptable"><tr><th>Name on order forms' + (cat === 'colours' ? ' (range|colour)' : '') + '</th><th>BlindIQ ID</th><th></th></tr>';
         for (const [k, v] of shown) h += `<tr><td>${escH(k)}</td><td>${escH(typeof v === 'object' ? JSON.stringify(v) : v)}</td><td><button class="biq-btn-sm biq-btn-danger" data-biq-delmap='${escH(JSON.stringify([cat, k]))}'>✕</button></td></tr>`;

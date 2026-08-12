@@ -898,7 +898,7 @@ function renderMapBody() {
         const match = ([k, v]) => { if (!filter) return true; if (k.includes(filter)) return true; const o = v || {}; return String(o.customer || '').includes(filter) || String(o.address || '').includes(filter) || String(o.operator || '').includes(filter) || biqLc(String(o.alias || '')).includes(filter); };
         const matched = entries.filter(match);
         const shown = matched.slice(0, 150);
-        if (entries.length > 150) h += `<input id="biq-mapsearch" data-cat="${cat}" class="biq-in w-full mb-2" placeholder="Search ${entries.length} customers — name, ID or alias…" value="${escH(filter)}">`;
+        h += `<input id="biq-mapsearch" data-cat="${cat}" class="biq-in w-full mb-2" placeholder="Search ${entries.length} customers — name, ID or alias…" value="${escH(filter)}">`;
         h += '<table class="biq-maptable"><tr><th>Customer name</th><th>Customer ID</th><th>Address ID</th><th>Operator ID</th><th></th></tr>';
         for (const [k, v] of shown) {
             const o = v || {};
@@ -912,7 +912,7 @@ function renderMapBody() {
         const entries = Object.entries(MAPS[cat] || {});
         const filter = biqLc(($('biq-mapsearch') && mapTab === $('biq-mapsearch').dataset.cat) ? $('biq-mapsearch').value : '');
         const shown = entries.filter(([k, v]) => !filter || k.includes(filter) || biqLc(typeof v === 'object' ? JSON.stringify(v) : String(v)).includes(filter)).slice(0, 150);
-        if (entries.length > 150) h += `<input id="biq-mapsearch" data-cat="${cat}" class="biq-in w-full mb-2" placeholder="Search ${entries.length} entries…" value="${escH(filter)}">`;
+        h += `<input id="biq-mapsearch" data-cat="${cat}" class="biq-in w-full mb-2" placeholder="Search ${entries.length} entries…" value="${escH(filter)}">`;
         h += '<table class="biq-maptable"><tr><th>Name on order forms' + (cat === 'colours' ? ' (range|colour)' : '') + '</th><th>BlindIQ ID</th><th></th></tr>';
         for (const [k, v] of shown) h += `<tr><td>${escH(k)}</td><td>${escH(typeof v === 'object' ? JSON.stringify(v) : v)}</td><td><button class="biq-btn-sm biq-btn-danger" data-biq-delmap='${escH(JSON.stringify([cat, k]))}'>✕</button></td></tr>`;
         if (entries.length > shown.length && !filter) h += `<tr><td colspan="3" class="text-slate-400">…${entries.length - shown.length} more — use search</td></tr>`;

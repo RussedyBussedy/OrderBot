@@ -3062,16 +3062,24 @@ export function biqControlAllowed(mappings, blindType, side, controlName, range)
     const r = biqResolve(mappings, side === 'c2' ? 'control2' : 'control1', controlName);
     if (!r.known) return null;                                     // unmapped is flagged elsewhere
     if (r.id === -1) return true;                                  // 'None' is always acceptable
-    return (m[side] || []).some(id => String(id) === String(r.id));
+    const ids = m[side] || [];
+    if (ids.some(id => String(id) === String(r.id))) return true;
+    // BlindIQ carries duplicate control records with identical names (Wand 28/57, Stack Left
+    // 29/45, Stack Right 30/46, Lh Spring 186/187). A value resolving to the twin id is the
+    // same physical option — accept it rather than flagging a phantom mismatch.
+    const cn = mappings.controlNames || {};
+    const rn = biqLc(cn[String(r.id)] || '');
+    return !!rn && ids.some(id => biqLc(cn[String(id)] || '') === rn);
 }
 // Human-readable list of what IS allowed (for flags/pickers).
 export function biqAllowedControlNames(mappings, blindType, side, range) {
     const m = biqControlMatrixFor(mappings, blindType, range);
     if (!m) return null;
     const cat = side === 'c2' ? 'control2' : 'control1';
+    const cn = mappings.controlNames || {};
     const inv = {};
     Object.entries(mappings[cat] || {}).forEach(([k, v]) => { if (inv[v] === undefined || k.length > inv[v].length) inv[v] = k; });
-    return (m[side] || []).map(id => inv[id] || ('#' + id)).map(biqTitleCase);
+    return [...new Set((m[side] || []).map(id => cn[String(id)] || inv[id] || ('#' + id)).map(biqTitleCase))];
 }
 // ---------- control-side CONVENTION (per product family) ----------
 // BlindIQ encodes the control side two different ways, and dealer docs / the AI extractor

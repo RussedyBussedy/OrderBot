@@ -1289,12 +1289,50 @@ const BIQ_CNBW_COLS = {
     outdoor: [['numloc', 55], ['qnty', 115], ['window', 159], ['width', 178], ['dropctl', 206], ['fixing', 295], ['motor', 344], ['fabric', 424], ['colour', 579]],
     shutter: [['numloc', 71], ['qnty', 186], ['window', 231], ['width', 283], ['dropctl', 312], ['fixing', 426], ['shutter', 479], ['colour', 600], ['frame', 651]]
 };
+// CnBW's newer templates (wood venetian sheet, "Single roller order template NEW") moved and
+// added columns, so fixed x-anchors can't hold — derive anchors from the header line itself.
+// Merged header runs ("Window Width", "control Chain") become merged anchors whose data is
+// split in normalize. The roller sheet's THREE "Colour" columns run fabric, cassette,
+// components left-to-right (Ron Harriesunker order 2026-08-11: "texfilter | mink | white |
+// white" — mink is a fabric colour, not on the cassette list, so the order is proven by the
+// values themselves); a wrong guess on a future template surfaces immediately as a
+// value-not-in-list flag on the cassette option.
+function biqCnbwHeaderCols(hl) {
+    const cols = []; let colourSeq = 0;
+    hl.parts.forEach(p => {
+        const t = biqLc(biqNorm(p.s)); if (!t) return;
+        let k;
+        if (/^num/.test(t)) k = 'num';
+        else if (/location/.test(t)) k = 'location';
+        else if (/qn?ty|quantity/.test(t)) k = 'qnty';
+        else if (/^window\s+width/.test(t)) k = 'winwidth';
+        else if (/^window/.test(t)) k = 'window';
+        else if (/^width/.test(t)) k = 'width';
+        else if (/^drop/.test(t)) k = 'drop';
+        else if (/^control\s+chain/.test(t)) k = 'ctlchain';
+        else if (/^control/.test(t)) k = 'control';
+        else if (/chain/.test(t)) k = 'chain';
+        else if (/fix|face\s*or\s*recess/.test(t)) k = 'fixing';
+        else if (/roll\s*type/.test(t)) k = 'rolltype';
+        else if (/type\s*of\s*blind/.test(t)) k = 'type';
+        else if (/^colou?r/.test(t)) { k = ['colour', 'casscolour', 'compcolour'][Math.min(colourSeq, 2)]; colourSeq++; }
+        else if (/insert/.test(t)) k = 'insert';
+        else if (/motor/.test(t)) k = 'motor';
+        else if (/corner/.test(t)) k = 'corner';
+        else if (/cut\s*out\s*left/.test(t)) k = 'cutl';
+        else if (/cut\s*out\s*right/.test(t)) k = 'cutr';
+        else k = 'x' + cols.length;                                // price / admin / spring / unknown -> sink
+        cols.push([k, p.x]);
+    });
+    return cols;
+}
 export function biqParseCnbw(textItems) {
     const lines = biqGroupLines(textItems);
     const full = lines.map(l => l.parts.map(p => p.s).join(' ')).join('\n');
     if (!/curtain and blind workshop|cnbw\.co\.za|goldcut/i.test(full)) return null;
     const meta = {};
     let m = full.match(/Order number:?\s*([^\n]+?)(?:\s{2,}|Date|Phone|Email|$)/i); if (m) meta.orderNumber = biqNorm(m[1]);
+    if (!meta.orderNumber) { m = full.match(/Order:?\s*([^\n]+?)(?:\s{2,}|Date|Phone|Email|$)/i); if (m) meta.orderNumber = biqNorm(m[1]); }
     m = full.match(/Date:?\s*(\d{1,2}[\/.]\d{1,2}[\/.]\d{2,4})/i); if (m) meta.orderDate = biqNorm(m[1]);
     const hl = lines.find(l => { const t = l.parts.map(p => biqLc(p.s)); return t.includes('num') && t.some(s => /location/.test(s)) && t.some(s => /width/.test(s)); });
     if (!hl) return null;
@@ -1302,7 +1340,13 @@ export function biqParseCnbw(textItems) {
     let product = 'roller';
     if (heads.some(h => /shutter/.test(h))) product = 'shutter';
     else if (heads.some(h => /motorised/.test(h))) product = 'outdoor';
-    const cols = BIQ_CNBW_COLS[product];
+    else if (heads.some(h => /type\s*of\s*blind/.test(h)) || /venetian\s+blinds?\s+order/i.test(full)) product = 'venetian';
+    // newer layouts (venetian sheet, roller template with roll type / cassette / insert
+    // columns): anchor on the header line itself instead of the legacy fixed x table
+    const dynamic = product === 'venetian'
+        || heads.some(h => /roll\s*type|insert/.test(h))
+        || heads.filter(h => /^colou?r/.test(h)).length > 1;
+    const cols = dynamic ? biqCnbwHeaderCols(hl) : BIQ_CNBW_COLS[product];
     const rows = [];
     for (let li = lines.indexOf(hl) + 1; li < lines.length; li++) {
         const parts = lines[li].parts; const joined = parts.map(p => p.s).join(' ');
@@ -1314,9 +1358,11 @@ export function biqParseCnbw(textItems) {
             let best = null, bd = 1e9; cols.forEach(([n, x]) => { const d = Math.abs(p.x - x); if (d < bd) { bd = d; best = n; } });
             put(best, p.s);
         });
-        // split the two merged fragments
+        // split the merged fragments
         if (row.numloc) { const mm = row.numloc.match(/^(\S+)\s+(.+)$/); if (mm) { row.num = mm[1]; row.location = mm[2]; } else row.num = row.numloc; }
         if (row.dropctl) { const mm = row.dropctl.match(/^(\d+)\s+(.+)$/); if (mm) { row.drop = mm[1]; row.control = mm[2]; } else row.drop = row.dropctl; }
+        if (row.winwidth) { const mm = row.winwidth.match(/^(\d{1,3})\s+(\d{2,})$/); if (mm) { row.window = mm[1]; row.width = mm[2]; } else row.width = row.winwidth; }
+        if (row.ctlchain) { const mm = row.ctlchain.match(/^(left|right|l|r)\b\s*(.*)$/i); if (mm) { row.control = mm[1]; row.chain = biqNorm(mm[2]); } else row.control = row.ctlchain; }
         rows.push(row);
     }
     return { meta, product, rows };
@@ -1331,10 +1377,7 @@ export function biqNormalizeCnbw(mappings, p) {
         it.qty = r.qnty || '1'; it.location = r.location || ''; it.width = r.width || ''; it.drop = r.drop || '';
         it.fix = r.fixing || '';
         const ctl = biqLc(r.control || '');                                     // "left control" / "right motor" / "left"/"right"
-        const side = /left/.test(ctl) ? 'L' : (/right/.test(ctl) ? 'R' : '');
-        const drive = /motor/.test(ctl) ? 'Motor' : 'Chain';
-        if (side === 'L') { it.control1 = 'Lh ' + drive; it.control2 = 'Rh Pin'; }
-        else if (side === 'R') { it.control1 = 'Lh Pin'; it.control2 = 'Rh ' + drive; }
+        const side = /left|^l$/.test(ctl) ? 'L' : (/right|^r$/.test(ctl) ? 'R' : '');
         if (p.product === 'shutter') {
             it.blindType = 'Urban Hinged Shutter';
             it.colour = r.colour || '';
@@ -1343,9 +1386,29 @@ export function biqNormalizeCnbw(mappings, p) {
             it.controlDrop = '0';
             it.variants = biqTemplateFor2(mappings, it.blindType, it.range);
             if (cleanVal(r.frame)) it.notes = (it.notes ? it.notes + ' | ' : '') + 'Frame: ' + cleanVal(r.frame);
+        } else if (p.product === 'venetian') {
+            // venetian family: the SIDE is a value in Control 1 ("Left"/"Right"); Control 2
+            // carries a mechanism only when stated (Motor) — never Lh/Rh column options.
+            const tt = biqLc(r.type || '');
+            it.blindType = /35\s*mm/.test(tt) ? 'Element 35mm Aluminium' : 'Element Wood';
+            const wr = BIQ_TBD_WOOD_RANGES.find(([re]) => re.test(tt));
+            it.range = /35\s*mm/.test(tt) ? 'Standard' : (wr ? wr[1] : 'Classic');
+            it.colour = r.colour || '';
+            it.control1 = side === 'L' ? 'Left' : side === 'R' ? 'Right' : '';
+            it.control2 = (/motor/.test(ctl) || cleanVal(r.motor)) ? 'Motor' : '';
+            it.controlDrop = biqComputeControlDropV2(mappings, '', it.drop, it.blindType, it.range); it._cdAuto = true;
+            it.variants = biqTemplateFor2(mappings, it.blindType, it.range);
+            if (cleanVal(r.cutl)) biqSetVar(it.variants, 'Cut Out LH', cleanVal(r.cutl));
+            if (cleanVal(r.cutr)) biqSetVar(it.variants, 'Cut Out RH', cleanVal(r.cutr));
+            const note = s => { it.notes = (it.notes ? it.notes + ' | ' : '') + s; };
+            if (cleanVal(r.corner)) note('Corner window: ' + cleanVal(r.corner));
+            if (cleanVal(r.motor)) note('Motor: ' + cleanVal(r.motor));
         } else {
+            const drive = /motor/.test(ctl) ? 'Motor' : 'Chain';
+            if (side === 'L') { it.control1 = 'Lh ' + drive; it.control2 = 'Rh Pin'; }
+            else if (side === 'R') { it.control1 = 'Lh Pin'; it.control2 = 'Rh ' + drive; }
             it.blindType = p.product === 'outdoor' ? 'Outdoor Free Hang' : 'Element Roller Sys 40';
-            const fab = biqNorm((r.fabric || '').replace(/\b(outdoor\s+)?blind\b/ig, ''));
+            const fab = biqNorm((r.rolltype || r.fabric || '').replace(/\b(outdoor\s+)?blind\b/ig, ''));
             const f = biqSplitFabric(mappings, fab + (r.colour ? ' ' + r.colour : ''), it.blindType);
             if (f.range && f.colour) { it.range = f.range; it.colour = f.colour; }
             else { it.range = fab; it.colour = r.colour || ''; }
@@ -1353,7 +1416,16 @@ export function biqNormalizeCnbw(mappings, p) {
             it.controlDrop = biqComputeControlDropV2(mappings, '', it.drop, it.blindType, it.range); it._cdAuto = true;
             it.variants = biqTemplateFor2(mappings, it.blindType, it.range);
             if (p.product === 'outdoor' && cleanVal(r.motor)) biqAddMotorSundry(mappings, o, cleanVal(r.motor), +it.qty || 1, true);
-            if (p.product === 'roller' && /standard|waterfall/i.test(r.chain || '')) biqSetVar(it.variants, 'Roll Type', biqNorm(r.chain));
+            if (p.product === 'roller') {
+                if (/standard|waterfall/i.test(r.chain || '')) biqSetVar(it.variants, 'Roll Type', biqNorm(r.chain));
+                else if (/steel/i.test(r.chain || '')) biqSetVar(it.variants, 'Steel Ball Chain', 'Yes');
+                // newer template: cassette colour / components colour / fabric insert columns.
+                // Generic keys here — biqFoldCassette folds them onto the range's own sheet keys
+                // ("Sys 40 70mm Cassette", "Fabric Insert for 70mm Cassette").
+                if (cleanVal(r.casscolour)) biqSetVar(it.variants, 'Cassette Colour', cleanVal(r.casscolour));
+                if (cleanVal(r.insert) && /^y/i.test(biqNorm(r.insert))) biqSetVar(it.variants, 'Fabric Insert', 'Yes');
+                if (cleanVal(r.compcolour)) biqSetVar(it.variants, 'Mech Colour', cleanVal(r.compcolour));
+            }
         }
         o.items.push(it);
     });
@@ -2085,7 +2157,8 @@ RULES:
 - Product names may be prefixed "BD " (e.g. "BD Element Roller 40", "BD Element Vision", "BD Element Wood Alloy", "BD Outdoor Blinds - Free Hang", "BD Cellular Skylight"); use the product name as the blindType (the "BD " prefix is just the manufacturer tag).
 - "Mk" is the item/mark number; the "No." column is the quantity. "Fab / Slat" is the fabric range; map it to "range".
 - Fix abbreviations: "F/F" = Face; "I/R" = Reveal. "Rev L" / "Rev R" = Reveal with the control on the Left / Right respectively — set fix="Reveal" AND, if controls aren't otherwise stated, set the control side from L/R ("Left" → controlLeft="Lh Chain", controlRight="Rh Pin"; "Right" → controlLeft="Lh Pin", controlRight="Rh Chain"; for crank/motor products use the matching side, e.g. LH Crank / RH Crank).
-- Map the dealer's column wording to BlindIQ options in "options": Comp / Comp Col → Mech Colour; Bott Bar Col → Bottom Bar; Cass Col → the cassette colour option; Steel Chain=Yes or Chain Type=Steel → Steel Ball Chain=Yes; Roll → Roll Type; Int Bracket → Intermediate Bracket; Tilt Cord → the tilt control side; Cord Ht / Chain Height → controlDrop; Br col → Bracket Colour; Alum col → Powder Coat Colour; Add H/D → Hold Downs; Twist Lock Pole / Skylight Pole → the pole option; Crank + Crank length + Crank col → the crank handle/control. Put true accessories (motor Type, Charger, Remote, crank handle as a separate part) into "sundries" when they are charged components.
+- CONTROL COLUMNS ARE PER PRODUCT FAMILY. Roller / vision / double roller / perfect fit: the SIDE picks the column — left-side option in controlLeft ("Lh Chain"/"Lh Motor"), right-side in controlRight ("Rh Chain"/"Rh Motor"), idle side "Lh Pin"/"Rh Pin". VENETIAN family (wood/aluminium venetian, bamboo, roman panel, RomaShade): the side is a VALUE — put the plain word "Left" or "Right" (bamboo also "Far Left"/"Far Right") in controlLeft, and put a mechanism in controlRight ONLY when the document states one (Motor / Grouped / Split / Chain / Cord) — NEVER "Lh Chain"/"Rh Pin" for these products. Outdoor / cellular / curtain-motion products: both sides' options live in controlLeft ("Lh Motor" / "Rh Motor" / "Rh Cordlock" — the side is part of the option name); leave controlRight empty (no Pins).
+- Map the dealer's column wording to BlindIQ options in "options": Comp / Comp Col → Mech Colour; Bott Bar Col → Bottom Bar; Cass Col → the cassette colour option; Fabric Insert ticked/yes on a cassette blind → "Fabric Insert=Yes"; Steel Chain=Yes or Chain Type=Steel → Steel Ball Chain=Yes; Roll → Roll Type; Int Bracket → Intermediate Bracket; Tilt Cord → the tilt control side; Cord Ht / Chain Height → controlDrop; Br col → Bracket Colour; Alum col → Powder Coat Colour; Add H/D → Hold Downs; Twist Lock Pole / Skylight Pole → the pole option; Crank + Crank length + Crank col → the crank handle/control. Put true accessories (motor Type, Charger, Remote, crank handle as a separate part) into "sundries" when they are charged components.
 - A valance or pelmet requested ON a blind line: put it into that line's "options" as "Valance Type=Linear" (or Half Round etc.), "Valance Colour=...", "Valance Width=...", "Valance Returns=..." — do NOT invent a separate line item for it; the converter splits it into its own BlindIQ valance line automatically. A valance printed as its OWN row in the document stays its own line item (blindType "Valance").`;
 }
 
@@ -2242,11 +2315,12 @@ export function biqCollectProblems(mappings, order) {
         if (!biqResolve(mappings, 'control2', it.control2).known && biqLc(it.control2)) probs.push({ t: w + 'control "' + it.control2 + '" not mapped.', cat: 'control2', name: it.control2 });
         if (biqRequiresDualControl(mappings, it.blindType) && (!biqLc(it.control1) || !biqLc(it.control2)))
             probs.push({ t: w + 'both control sides (Control L and Control R) must be set for ' + (it.blindType || 'this blind') + '.' });
-        // per-blind-type control availability (BlindIQ's own dropdown matrix, where known)
+        // per-type+range control availability (BlindIQ's own Range_Controls matrix, where known)
         [['c1', 'control1'], ['c2', 'control2']].forEach(([side, field]) => {
-            if (biqControlAllowed(mappings, it.blindType, side, it[field]) === false) {
-                const names = biqAllowedControlNames(mappings, it.blindType, side) || [];
-                probs.push({ t: w + 'control "' + it[field] + '" is not available for ' + it.blindType + ' (' + (side === 'c1' ? 'Control 1' : 'Control 2') + ' options: ' + names.join(' / ') + ').' });
+            if (biqControlAllowed(mappings, it.blindType, side, it[field], it.range) === false) {
+                const names = biqAllowedControlNames(mappings, it.blindType, side, it.range) || [];
+                const scoped = biqResolveRange(mappings, it.blindType, it.range).known ? ' / ' + it.range : '';
+                probs.push({ t: w + 'control "' + it[field] + '" is not available for ' + it.blindType + scoped + ' (' + (side === 'c1' ? 'Control 1' : 'Control 2') + ' options: ' + (names.join(' / ') || 'none — leave empty') + ').' });
             }
         });
         if (it._bracketOdd) probs.push({ t: w + 'flagged as ' + it._bracketOdd + ' bracket but has no matching pair — couple it with its partner line (or clear the flag).' });
@@ -2962,16 +3036,28 @@ const BIQ_CONTROLS_SCOPED_SEED = {
     // Cellular Free Hang (32) — confirmed 27 Jul 2026: C1 = Lh/Rh Cordlock, Lh/Rh Motor; C2 = Free Hang
     '32': { c1: [107, 108, 17, 4], c2: [190] }
 };
-function biqControlMatrixFor(mappings, blindType) {
+// BlindIQ links controls per RANGE (Range_Controls: control id + position 1/2), so the true
+// matrix is per type+range — e.g. Lh Crank exists on Roller Sys 40 "Mineral #" / "Roller Kit"
+// but not on "Texfilter". controlsScoped carries both granularities:
+//   '<typeId>'            -> union across the type's ranges (fallback / legacy)
+//   '<typeId>|<rangeId>'  -> that range's own Control 1 / Control 2 option lists
+// (source extract 2026-08-13, Paul & Venne's wood-venetian column report).
+function biqControlMatrixFor(mappings, blindType, range) {
     const bt = biqResolve(mappings, 'blindTypes', blindType);
     if (!bt.known) return null;
-    const m = (mappings.controlsScoped || {})[String(bt.id)] || BIQ_CONTROLS_SCOPED_SEED[String(bt.id)];
+    const cs = mappings.controlsScoped || {};
+    if (range) {
+        const rr = biqResolveRange(mappings, blindType, range);
+        const rm = rr.known ? cs[bt.id + '|' + rr.id] : null;
+        if (rm) return Array.isArray(rm) ? { c1: rm, c2: rm } : rm;
+    }
+    const m = cs[String(bt.id)] || BIQ_CONTROLS_SCOPED_SEED[String(bt.id)];
     if (!m) return null;
     return Array.isArray(m) ? { c1: m, c2: m } : m;
 }
 // true / false / null (null = no matrix data for this type — stay silent)
-export function biqControlAllowed(mappings, blindType, side, controlName) {
-    const m = biqControlMatrixFor(mappings, blindType);
+export function biqControlAllowed(mappings, blindType, side, controlName, range) {
+    const m = biqControlMatrixFor(mappings, blindType, range);
     if (!m) return null;
     const r = biqResolve(mappings, side === 'c2' ? 'control2' : 'control1', controlName);
     if (!r.known) return null;                                     // unmapped is flagged elsewhere
@@ -2979,13 +3065,87 @@ export function biqControlAllowed(mappings, blindType, side, controlName) {
     return (m[side] || []).some(id => String(id) === String(r.id));
 }
 // Human-readable list of what IS allowed (for flags/pickers).
-export function biqAllowedControlNames(mappings, blindType, side) {
-    const m = biqControlMatrixFor(mappings, blindType);
+export function biqAllowedControlNames(mappings, blindType, side, range) {
+    const m = biqControlMatrixFor(mappings, blindType, range);
     if (!m) return null;
     const cat = side === 'c2' ? 'control2' : 'control1';
     const inv = {};
     Object.entries(mappings[cat] || {}).forEach(([k, v]) => { if (inv[v] === undefined || k.length > inv[v].length) inv[v] = k; });
     return (m[side] || []).map(id => inv[id] || ('#' + id)).map(biqTitleCase);
+}
+// ---------- control-side CONVENTION (per product family) ----------
+// BlindIQ encodes the control side two different ways, and dealer docs / the AI extractor
+// tend to emit the roller way for everything (Paul & Venne, wood venetians 2026-08-12):
+//   side-VALUE types  (venetians 50mm/35mm, bamboo, roman panel, romashade): Control 1 IS the
+//     side — "Left" / "Right" (bamboo also "Far Left"/"Far Right"); Control 2 is a stated
+//     mechanism only (Motor / Grouped / Split / Chain / Cord / Eye Cordlock), else empty.
+//   side-COLUMN types (rollers, vision, double roller, perfect fit, cassette grip fit): the
+//     side picks the COLUMN — left options ("Lh Chain") in Control 1, right ("Rh Chain") in
+//     Control 2, idle side a Pin.
+//   single-COLUMN types (outdoors, cellulars, curtain motion): both sides' options live in
+//     Control 1 ("Lh Motor" / "Rh Motor"); Control 2 is a different axis (Free Hang /
+//     Tensioned / stacking) or unused — never a Pin.
+// Re-encode each item to its own type+range convention. Conservative: only rewrites when the
+// current values don't fit the matrix, never touches coupled/intermediate/dual configs
+// (bracket pairing owns those), and leaves matrix-silent types alone.
+export function biqNormalizeControlSides(mappings, order) {
+    ((order && order.items) || []).forEach(it => {
+        if (it._bracketRole) return;
+        const raw = biqNorm(it.control1) + ' | ' + biqNorm(it.control2);
+        if (/coupled|intermediate|dual/i.test(raw)) return;
+        const c1n = biqAllowedControlNames(mappings, it.blindType, 'c1', it.range) || [];
+        const c2n = biqAllowedControlNames(mappings, it.blindType, 'c2', it.range) || [];
+        if (!c1n.length && !c2n.length) return;
+        const legal = (list, name) => list.find(n => biqLc(n) === biqLc(name)) || '';
+        const c1ok = !biqNorm(it.control1) || !!legal(c1n, it.control1);
+        const c2ok = !biqNorm(it.control2) || !!legal(c2n, it.control2);
+        if (c1ok && c2ok) return;                                  // already fits this type+range
+        const t = biqLc(raw);
+        const noPins = t.replace(/\b[lr]h\s+pin\b/g, ' ');         // fabricated idle fillers carry no information
+        const side = /\b(lh|left)\b/.test(noPins) && !/\b(rh|right)\b/.test(noPins) ? 'L'
+            : /\b(rh|right)\b/.test(noPins) && !/\b(lh|left)\b/.test(noPins) ? 'R' : '';
+        const sideValued = c1n.some(n => /^(far\s+)?(left|right)$/i.test(n));
+        const colSided = c1n.some(n => /^lh\s/i.test(n)) && c2n.some(n => /^rh\s/i.test(n));
+        const singleCol = c1n.some(n => /^[lr]h\s/i.test(n)) && !c2n.some(n => /^rh\s/i.test(n));
+        if (sideValued) {
+            // Control 1 <- the side word; Control 2 <- an explicitly stated mechanism only.
+            // A drive fabricated by a roller-convention parser ("Lh Chain" from "LEFT CONTROL")
+            // is NOT a stated mechanism — Motor is the only drive word we trust from those.
+            const far = /\bfar\b/.test(noPins);
+            let mech = /\bmotor(ised|ized)?\b/.test(t) ? 'Motor' : '';
+            if (!mech) [it.control1, it.control2].forEach(f => { const hit = legal(c2n, f); if (!mech && hit && !/^(far\s+)?(left|right)$/i.test(hit)) mech = hit; });
+            if (!side && !mech) { if (!c1ok) it.control1 = ''; if (!c2ok) it.control2 = ''; return; }
+            const want = (far ? 'Far ' : '') + (side === 'R' ? 'Right' : 'Left');
+            if (side) it.control1 = legal(c1n, want) || legal(c1n, side === 'R' ? 'Right' : 'Left') || want;
+            else if (!c1ok) it.control1 = '';
+            it.control2 = mech ? (legal(c2n, mech) || mech) : '';
+            it._ctlConvention = true;
+        } else if (colSided || singleCol) {
+            // A bare side word ("Left" / "Right Control") means: pick the sided option.
+            const bare = /^((far\s+)?(left|right))(\s+(control|side|hand))?$/i;
+            const c1side = bare.test(biqNorm(it.control1)), c2side = bare.test(biqNorm(it.control2));
+            if (!c1side && !c2side && !(singleCol && !c2ok)) return;
+            const s = side || (/right/i.test(c1side ? it.control1 : it.control2) ? 'R' : 'L');
+            const motor = /\bmotor(ised|ized)?\b/.test(t);
+            const pool = singleCol ? c1n : (s === 'R' ? c2n : c1n);
+            const pref = new RegExp('^' + (s === 'R' ? 'rh' : 'lh') + '\\s', 'i');
+            const sided = pool.filter(n => pref.test(n));
+            const pick = (motor ? sided.find(n => /motor/i.test(n)) : null)
+                || sided.find(n => /chain(?!\s+spring)/i.test(n)) || sided.find(n => /cordlock/i.test(n))
+                || (sided.length === 1 ? sided[0] : '');
+            if (!pick) return;                                     // ambiguous — leave for the flag
+            if (singleCol) {
+                if (c1side || !biqNorm(it.control1) || !c1ok) { it.control1 = pick; it._ctlConvention = true; }
+                if (!c2ok || c2side) it.control2 = '';             // no pins / side words in an unused column
+            } else if (s === 'R') {
+                it.control2 = pick; if (c1side) it.control1 = '';
+                it._ctlConvention = true;
+            } else {
+                it.control1 = pick; if (c2side) it.control2 = '';
+                it._ctlConvention = true;
+            }
+        }
+    });
 }
 function biqTitleCase(s) { return String(s).replace(/\b[a-z]/g, c => c.toUpperCase()); }
 // Snap controls onto the type's matrix where the answer is FORCED, flag where it isn't:
@@ -2998,14 +3158,14 @@ function biqTitleCase(s) { return String(s).replace(/\b[a-z]/g, c => c.toUpperCa
 export function biqApplyControlMatrix(mappings, order) {
     const MANUAL = /cordlock|chain|wand|cord|crank|spring/i;
     ((order && order.items) || []).forEach(it => {
-        const m = biqControlMatrixFor(mappings, it.blindType);
+        const m = biqControlMatrixFor(mappings, it.blindType, it.range);
         if (!m || it._bracketRole) return;
         [['c1', 'control1', 'Lh'], ['c2', 'control2', 'Rh']].forEach(([side, field, pref]) => {
             const cur = biqNorm(it[field]);
             if (/coupled|intermediate/i.test(cur)) return;
-            const ok = biqControlAllowed(mappings, it.blindType, side, cur);
+            const ok = biqControlAllowed(mappings, it.blindType, side, cur, it.range);
             if (ok !== false) return;                              // legal, unknown, or no data
-            const names = biqAllowedControlNames(mappings, it.blindType, side) || [];
+            const names = biqAllowedControlNames(mappings, it.blindType, side, it.range) || [];
             if (names.length === 1) { it[field] = names[0]; it._ctlMatrixed = true; return; }
             if (MANUAL.test(cur)) {
                 const sidePrefix = new RegExp('^' + (cur.match(/^(lh|rh)/i) ? cur.match(/^(lh|rh)/i)[1] : pref), 'i');

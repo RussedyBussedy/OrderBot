@@ -15,3 +15,8 @@ export const PROMPT_VERSION = 'v2.2';
 export const EXTRACTION_MODEL = 'gemini-3-flash-preview';
 // Order comparison + converter name-matching (discernment) — stronger reasoner.
 export const COMPARISON_MODEL = 'gemini-2.5-pro';
+
+// Capture-lock: capturers convert, only admins map (decision: Paul + Russel, 21 Aug 2026 —
+// every wrong-product incident on record entered through the mapping tools). SHA-256 of the
+// admin PIN, lowercased. To change the PIN: sha256(newpin) -> replace this value.
+export const ADMIN_PIN_HASH = 'cadc3ae2777d765748cee4152314e4acc0f9fd1f485a566f7519aa0a918377b9';

@@ -65,7 +65,9 @@ const BIQ_ALIASES = {
         'bd cellular skylight': 'cellular skylight lantern', 'cellular skylight': 'cellular skylight lantern',
         'element wood venetian': 'element wood', 'wood venetian': 'element wood', 'bd element wood venetian': 'element wood',
         'urban hinged': 'urban hinged shutter', 'altra hinged': 'altra hinged shutter', 'altra fold': 'altra fold shutter',
-        'vertical blind': '90mm vertical blind', 'vertical': '90mm vertical blind', '90mm vertical': '90mm vertical blind'
+        'vertical blind': '90mm vertical blind', 'vertical': '90mm vertical blind', '90mm vertical': '90mm vertical blind',
+        // Blind Guys workbook "Type" column vocabulary (J0000340-4, 21 Aug)
+        'system 40': 'roller system 40', 'system 45': 'roller system 45', 'system 55': 'roller system 55'
     },
     fixes: {
         'f/f': 'face', 'ff': 'face', 'face fix': 'face', 'facefix': 'face',
@@ -491,6 +493,87 @@ export function biqReSplitFabrics(mappings, order) {
 // =============================================================================
 
 // ---------- Blind Guys XLSX (rows = array-of-arrays from SheetJS, header:1) ----------
+// ---------- Blind Guys workbook PRINTED/flattened to PDF ("Copy of …_vNN.pdf") ----------
+// The fillable fields are gone in these prints, so they fell through to the AI — which is
+// exactly where Venne's J0000340-4 lost its 70mm Cassette column on every blind (Paul,
+// 21 Aug: "a consistent issue"). Rebuild the spreadsheet grid from the text layer instead:
+// wrapped multi-line headers ("System 40" over "70mm Cassette") and wrapped cells are
+// re-joined by column, then the SAME battle-tested workbook parser takes over — so the
+// print and the xlsx resolve identically, cassette included.
+export function biqBgPrintToRows(textItems) {
+    const parts = (textItems || []).filter(p => biqNorm(p.s));
+    const all = parts.map(p => biqNorm(p.s)).join(' ');
+    if (!/ORDERNo\/Ref:/i.test(all) || !/Item #/.test(all) || !/Finished (Width|Height)/i.test(all)) return null;
+    const lines = [];
+    parts.slice().sort((a, b) => b.y - a.y || a.x - b.x).forEach(p => {
+        const ln = lines[lines.length - 1];
+        if (ln && Math.abs(ln.y - p.y) <= 1.8) ln.parts.push(p); else lines.push({ y: p.y, parts: [p] });
+    });
+    lines.forEach(l => l.parts.sort((a, b) => a.x - b.x));
+    const isHdrLine = l => l.parts.some(p => biqNorm(p.s) === 'Item #');
+    const hi = lines.findIndex(isHdrLine);
+    if (hi < 0) return null;
+    const hy = lines[hi].y;
+    // columns: cluster the header band's words by x-gap; a column's display name is its
+    // fragments top-down ("System 40" + "70mm Cassette" -> the workbook's own header text)
+    const hband = lines.filter(l => Math.abs(l.y - hy) <= 4.5);
+    const hwords = hband.flatMap(l => l.parts.map(p => ({ s: biqNorm(p.s), x: p.x, y: l.y }))).sort((a, b) => a.x - b.x);
+    const cols = [];
+    hwords.forEach(w => {
+        const c = cols[cols.length - 1];
+        if (c && w.x - c.xMax <= 12) { c.words.push(w); c.xMax = Math.max(c.xMax, w.x); }
+        else cols.push({ x: w.x, xMax: w.x, words: [w] });
+    });
+    const CW = 2.4;                                  // ~px per character, for text centers
+    cols.forEach(c => {
+        c.words.sort((a, b) => b.y - a.y || a.x - b.x);
+        c.name = biqNorm(c.words.map(w => w.s).join(' '));
+        c.center = c.words.reduce((s, w) => s + w.x + w.s.length * CW, 0) / c.words.length;
+    });
+    // Hybrid cell matching (same lesson as the TBD PO layout): short tokens sit at their
+    // column's left edge — match by boundaries between column left-x's; long text is centred
+    // in wide columns (the Line Notes start left of their own header) — match by center.
+    const bounds = cols.map((c, i) => i + 1 < cols.length ? (c.x + cols[i + 1].x) / 2 : Infinity);
+    const colOf = w => {
+        const s = biqNorm(w.s);
+        if (s.length > 14) {
+            const wc = w.x + s.length * CW;
+            let best = 0, bd = 1e9;
+            cols.forEach((c, ci) => { const d = Math.abs(wc - c.center); if (d < bd) { bd = d; best = ci; } });
+            return best;
+        }
+        for (let i = 0; i < cols.length; i++) if (w.x < bounds[i]) return i;
+        return cols.length - 1;
+    };
+    const itemCol = cols.findIndex(c => c.name === 'Item #');
+    // meta rows (above the header): each word followed by a blank cell, so the workbook
+    // parser's label -> value-at-c+2 convention lands on the next word
+    const rows = [];
+    lines.filter(l => l.y > hy + 4.5).sort((a, b) => b.y - a.y)
+        .forEach(l => { const r = []; l.parts.forEach(p => { r.push(biqNorm(p.s)); r.push(''); }); rows.push(r); });
+    rows.push(cols.map(c => c.name));
+    // data lines: skip repeated header bands (page furniture — the item L lesson), anchor
+    // every remaining line to its nearest item-code line, then join words per column
+    const dataLines = lines.filter(l => l.y < hy - 4.5);
+    const skipY = [];
+    dataLines.forEach(l => { if (isHdrLine(l)) skipY.push(l.y); });
+    const kept = dataLines.filter(l => !skipY.some(sy => Math.abs(l.y - sy) <= 4.5));
+    const codeLines = kept.filter(l => l.parts.some(p => /^\d{3,4}$/.test(biqNorm(p.s)) && colOf(p) === itemCol));
+    if (!codeLines.length) return null;
+    const groups = new Map(codeLines.map(l => [l.y, []]));
+    kept.forEach(l => {
+        let best = null, bd = 1e9;
+        codeLines.forEach(cl => { const d = Math.abs(cl.y - l.y); if (d < bd) { bd = d; best = cl; } });
+        if (best && bd <= 8) groups.get(best.y).push(l);
+    });
+    [...groups.entries()].sort((a, b) => b[0] - a[0]).forEach(([, ls]) => {
+        const cells = cols.map(() => []);
+        ls.sort((a, b) => b.y - a.y).forEach(l => l.parts.forEach(p => cells[colOf(p)].push(biqNorm(p.s))));
+        rows.push(cells.map(ws => biqNorm(ws.join(' '))));
+    });
+    return rows;
+}
+
 export function biqParseBlindGuysRows(rows) {
     const get = (r, c) => biqNorm(rows[r] && rows[r][c]);
     let meta = { customerName: '', orderNumber: '', address: '', orderDate: '', company: '', product: '', rep: '' };
@@ -552,6 +635,11 @@ function biqBgRoller(mappings, o, it, raw, doubleRoller, product) {
         mapv('Wired Side Guides', 'Wire Side Guides'); mapv('Fabric Only', 'Fabric Only');
         mapv('Fabric Insert', 'Fabric Insert for 70mm Cassette');
         const cass = cleanVal(raw['System 40 70mm Cassette'] || raw['Closed Cassette']); if (cass) biqSetVar(it.variants, 'Sys 40 70mm Cassette', cass);
+        // v11 marks the shared bracket on its carrying line ("Extra Brackets = Intermediate") —
+        // set the blind type's OWN spec key so it imports (biqBracketOptionKey, Breed lesson)
+        const xb = biqLc(raw['Extra Brackets'] || '');
+        if (/inter/.test(xb)) biqSetVar(it.variants, biqBracketOptionKey(mappings, it, 'intermediate'), 'Yes');
+        else if (/coupl/.test(xb)) biqSetVar(it.variants, biqBracketOptionKey(mappings, it, 'coupled'), 'Yes');
         const ty = biqLc(raw['Type']); if (ty.includes('system 32')) biqSetVar(it.variants, 'System 32', 'Yes');
         if (ty.includes('1.5')) biqSetVar(it.variants, 'System 40 1.5:1', 'Yes');
     }
@@ -586,7 +674,7 @@ function biqBgRoller(mappings, o, it, raw, doubleRoller, product) {
         it._valanceOnlyRow = true;
         it._valance = vstage;
     }
-    const skip = new Set(['Item #', 'Location', 'Finished Width', 'Finished Height', 'Qty', 'Type', 'LH Control', 'RH Control', 'Control Length', 'Mechanism Colour', 'Bottom Bar Colour', 'Fabric', 'Fixing', 'Roll', 'Line Notes', 'Express', 'Front Blind Fabric', 'Back Blind Fabric', 'Configuration Front Blind', 'Configuration Back Blind', 'Cassette Colour', 'Fabric Insert Cassette', 'Roll Type Front', 'Roll Type Back', 'Steel Ball Chain', 'Remove Bracket Covers', 'Plastic Bottom Bar', 'Chain Tidy', 'Wired Side Guides', 'Fabric Only', 'Fabric Insert', 'System 40 70mm Cassette', 'Closed Cassette', 'Motor', 'Motor Type', 'Remotes', 'Accessory', 'Accessories', 'Valance Type', 'Valance Colour', 'Valance Width', 'Custom Valance Width', 'Valance Fix', 'Valance Returns', 'Top Board (for Face Fix):', 'Top Board (for Face Fix)', 'Mitre Valance LH', 'Mitre Valance RH', 'End Cap Colour', 'LH Side', 'RH Side']);
+    const skip = new Set(['Item #', 'Location', 'Finished Width', 'Finished Height', 'Qty', 'Type', 'LH Control', 'RH Control', 'Control Length', 'Mechanism Colour', 'Bottom Bar Colour', 'Fabric', 'Fixing', 'Roll', 'Line Notes', 'Express', 'Extra Brackets', 'Front Blind Fabric', 'Back Blind Fabric', 'Configuration Front Blind', 'Configuration Back Blind', 'Cassette Colour', 'Fabric Insert Cassette', 'Roll Type Front', 'Roll Type Back', 'Steel Ball Chain', 'Remove Bracket Covers', 'Plastic Bottom Bar', 'Chain Tidy', 'Wired Side Guides', 'Fabric Only', 'Fabric Insert', 'System 40 70mm Cassette', 'Closed Cassette', 'Motor', 'Motor Type', 'Remotes', 'Accessory', 'Accessories', 'Valance Type', 'Valance Colour', 'Valance Width', 'Custom Valance Width', 'Valance Fix', 'Valance Returns', 'Top Board (for Face Fix):', 'Top Board (for Face Fix)', 'Mitre Valance LH', 'Mitre Valance RH', 'End Cap Colour', 'LH Side', 'RH Side']);
     for (const [k, v] of Object.entries(raw)) {
         if (skip.has(k)) continue; const cv = cleanVal(v); if (cv) biqSetVar(it.variants, k, cv);
     }
@@ -996,6 +1084,7 @@ export function biqParseBdPo(textItems) {
     m = fullText.match(/Required Date\s+(\d{4}-\d{2}-\d{2})/); if (m) meta.requiredDate = m[1];
     m = fullText.match(/Operator\s+(\S+)/); if (m) meta.operator = biqNorm(m[1]);
     m = fullText.match(/Blinds\s*[—-]\s*(.+)/); if (m) meta.product = biqNorm(m[1]);
+    if (/FINAL MEASURED/i.test(fullText)) meta.measured = true;   // the measured-status watermark
     const hl = lines.find(l => { const t = l.parts.map(p => p.s.trim()); return t[0] === 'Item' && t.some(s => /^Locatio/.test(s)) && t.some(s => /^Price/.test(s)); });
     if (!hl) return null;
     // Anchor the canonical column list onto the header's word positions (two columns are both
@@ -1025,6 +1114,14 @@ export function biqParseBdPo(textItems) {
         if (!joined) continue;
         if (/^SUNDRIES$/i.test(joined)) { inSundries = true; cur = null; inNotes = false; continue; }
         if (/^Order Message|^Blind Total|^Trade discount|^Discount:|^Delivery:|^Sub Total|^VAT:|^TOTAL:/i.test(joined)) { cur = null; inNotes = false; continue; }
+        // Per-page furniture: the repeated column header, the "ONLINE PURCHASE ORDER — …"
+        // banner and the FINAL MEASURED watermark reappear at every page break. Fed to the
+        // column assigner they bleed into whichever row is open — order BDO665443's item L
+        // imported as "Patio w1 Location" / "2470 Width" / "1300 Drop" with a blank qty and
+        // "l ONL…" as its code, exactly these three lines. Never data; the open row stays
+        // open so its option lines can continue past the page break.
+        if (/^Item\s+QTY\s+Location\b/i.test(joined)) continue;
+        if (/^ONLINE PURCHASE ORDER\b/i.test(joined) || /^FINAL MEASURED$/i.test(joined)) continue;
         if (inSundries) {
             if (/^Item\s+QTY\s+Sundry/i.test(joined)) continue;
             const sm = joined.match(/^([a-z]{1,2})\s+(\d+)\s+(.+?)\s+([A-Z]{2,5}\d{3,6})\s+(.+?)\s+([\d,]+\.\d{2})$/);
@@ -1032,7 +1129,11 @@ export function biqParseBdPo(textItems) {
             continue;
         }
         // "K=V|K=V|" option lines (and their wraps) belong to the item above, never to columns.
-        if (cur && (/=[^|]*\|/.test(joined) || /^\([A-Z]{2,5}\d{3,6}\)\|/.test(joined))) {
+        // A wrap can break mid-value ("Remote=One Touch" / "Dual Remote 16 Channel White
+        // (ZIQ40100)|") — while the collected options don't yet end on "|", the next line is
+        // still the same option run, whatever it looks like.
+        if (cur && (/=[^|]*\|/.test(joined) || /^\([A-Z]{2,5}\d{3,6}\)\|/.test(joined)
+            || (cur._opts && !/\|\s*$/.test(cur._opts)))) {
             const nm = joined.match(/^(.*?)\s*\bNotes:\s*(.*)$/i);
             cur._opts = (cur._opts ? cur._opts + ' ' : '') + (nm ? nm[1] : joined);
             if (nm) { cur._notes = biqNorm(nm[2]); inNotes = true; }
@@ -1050,8 +1151,9 @@ export function biqNormalizeBdPo(mappings, p) {
     o.source = 'bdpo'; o.sourceDesc = 'BD online purchase order (Total Blind Design)';
     o.customer = p.meta.customer; o.orderNumber = p.meta.orderNumber || '';
     o.orderDate = biqParseDate(p.meta.orderDate); o.requiredDate = biqParseDate(p.meta.requiredDate);
-    o.notes = p.meta.operator ? ('Captured by ' + p.meta.operator) : '';
+    o.notes = [(p.meta.measured ? 'FINAL MEASURED' : ''), (p.meta.operator ? 'Captured by ' + p.meta.operator : '')].filter(Boolean).join(' | ');
     const canon = s => biqLc(s).replace(/[^a-z0-9]/g, '');
+    const hw = [];                             // options hardware, for the sundry-line union below
     p.rows.forEach(r => {
         const it = biqBlankItem(r['Item'] || '');
         it.qty = r['QTY'] || '1'; it.location = r['Location'] || '';
@@ -1075,9 +1177,23 @@ export function biqNormalizeBdPo(mappings, p) {
             const i = pair.indexOf('='); if (i < 1) return;
             const k = biqNorm(pair.slice(0, i)), v = biqNorm(pair.slice(i + 1));
             if (!k || !v) return;
-            // Motorisation references ride as notes — TBD's SUNDRIES section is the
-            // buy-from-BD list; "(Not BD Supply)" motors are customer-sourced.
-            if (/^(motor|adaptor|adapter|remote|charger)$/i.test(k)) { it.notes = (it.notes ? it.notes + ' | ' : '') + k + ': ' + v; return; }
+            // BlindIQ runs its own runner / tape-length / stack calculations; importing TBD's
+            // conflicts with them and the notes were pure delete-work for the capturer
+            // (Russel→Dean 13 Aug, Sharon 20 Aug). Never imported, never a note.
+            if (/^(no of runners|tape length|stack size)$/i.test(k)) return;
+            // Motorisation references stay as item notes (the blind↔hardware linkage the
+            // capturer reads), and BD-supplied ones ALSO join the sundry-line union below —
+            // Westbrook's wall charger and remote appear only here, never in the SUNDRIES
+            // section. "(Not BD Supply)" hardware is customer-sourced: note only, never a
+            // line, so it cannot be supplied by accident.
+            if (BIQ_TBD_SUNDRY_KEYS.test(biqLc(k))) {
+                it.notes = (it.notes ? it.notes + ' | ' : '') + k + ': ' + v;
+                if (!/not\s+bd\s+supply/i.test(v)) {
+                    const cm = v.match(/\(([A-Z]{2,5}\d{3,8})\)/i);
+                    hw.push({ name: biqNorm(v.replace(/\s*\([^)]*\)\s*/g, ' ')), code: cm ? cm[1].toUpperCase() : '', qty: +it.qty || 1 });
+                }
+                return;
+            }
             if (/^joined to$/i.test(k)) {
                 it.notes = (it.notes ? it.notes + ' | ' : '') + 'Joined To ' + v;
                 if (/coupled/i.test(v)) { const bo = spec.find(s => canon(s.k) === 'coupledbracket'); if (bo) biqSetVar(it.variants, bo.k, 'Yes'); }
@@ -1097,6 +1213,24 @@ export function biqNormalizeBdPo(mappings, p) {
         const hit = biqResolveSundry(mappings, s.code) || biqResolveSundry(mappings, s.name) || { sundry: '', type: '' };
         const disp = (mappings.sundryNames && mappings.sundryNames[String(hit.sundry)]) || s.name;
         o.sundries.push({ code: '', qty: s.qty, type: String(hit.type == null ? '' : hit.type), sundry: String(hit.sundry == null ? '' : hit.sundry), notes: disp, _src: s.name + ' (' + s.code + ')' });
+    });
+    // Union: options hardware the SUNDRIES section didn't list still becomes a line, deduped
+    // by stock code then by resolved id, aggregated across blinds. Anything unresolved stays a
+    // blank-id line and gets flagged — a missing charger must be visible, not lost in a note.
+    const agg = {};
+    hw.forEach(h => { const k = h.code || biqLc(h.name); (agg[k] = agg[k] || Object.assign({}, h, { qty: 0 })).qty += h.qty; });
+    const seenCodes = new Set(p.sundries.map(s => String(s.code || '').toUpperCase()));
+    const seenIds = new Set(o.sundries.map(su => String(su.sundry)).filter(Boolean));
+    Object.values(agg).forEach(h => {
+        if (h.code && seenCodes.has(h.code)) return;
+        const fz = biqFuzzySundry(mappings, h.name);
+        const hit = (h.code && biqResolveSundry(mappings, h.code)) || biqResolveSundry(mappings, h.name)
+            || (fz && fz.sundry != null ? fz : null);
+        const id = hit && hit.sundry != null ? String(hit.sundry) : '';
+        if (id && seenIds.has(id)) return;
+        const disp = (id && mappings.sundryNames && mappings.sundryNames[id]) || h.name;
+        o.sundries.push({ code: '', qty: String(h.qty), type: hit && hit.type != null ? String(hit.type) : '', sundry: id, notes: disp, _src: h.name + (h.code ? ' (' + h.code + ')' : '') });
+        if (id) seenIds.add(id);
     });
     return o;
 }

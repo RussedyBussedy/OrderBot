@@ -13,7 +13,7 @@ import {
     biqBuildDiscernment, BIQ_DISCERN_SCHEMA, biqBuildDiscernPrompt, biqApplyDiscernment, biqAcceptSuggestion, biqAcceptSundrySuggestion, biqLearnFromAI,
     biqApplyShutterConfig, biqApplyOptionDefaults, biqFoldOptionSynonyms, biqApplyBracketPairs, biqEmittedVariants, biqDroppedVariants, biqCopyOptions, biqInferControls, biqNormalizeControlSides, biqApplyControlMatrix, biqCanonicalize,
     biqStampOriginals, biqApplyFormatProfile, biqLearnFormat,
-    biqParseBlindGuysRows, biqNormalizeBlindGuys,
+    biqParseBlindGuysRows, biqNormalizeBlindGuys, biqBgPrintToRows,
     biqParseMatheoItems, biqNormalizeMatheo, biqParseBdPo, biqNormalizeBdPo,
     biqParseLifestyle, biqNormalizeLifestyle, biqParseCnbw, biqNormalizeCnbw, biqCnbwCoherent,
     biqParseTbd, biqNormalizeTbd, biqTbdCoherent, biqOrderPreviewHtml,
@@ -23,6 +23,7 @@ import {
     biqToComparisonShape, biqExtractCheckResults
 } from './biq-converter.js';
 import { biqDetectForm, biqParseSpecForm, biqElementGridOptions } from './biq-form-specs.js';
+import { ADMIN_PIN_HASH } from './config.js';
 
 let D = null;            // injected deps
 let MAPS = null;         // live mappings (seeds + Firestore)
@@ -31,6 +32,46 @@ let checkResults = null; // last torque/spec check results
 let assignCtx = null, fsCtx = null, mapTab = 'blindTypes';
 const $ = id => document.getElementById(id);
 const escH = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+// ---------------------------------------------------------------- capture-lock
+// Capturers convert; only admins map (Paul + Russel, 21 Aug 2026). Every wrong-product
+// incident on record came through the mapping tools in untrained hands — Urban Shutter
+// mapped to Element Wood, Waybury attached to LMC's customer IDs, the Zigbee mag charger
+// mapped to a motor part. So capture sessions have NO mapping ability and never write to
+// the shared database; problem orders go to Paul via the "Send to mapping" button instead.
+// Admin mode (PIN) keeps every existing tool.
+function biqIsAdmin() { try { return localStorage.getItem('biq_admin') === '1'; } catch (e) { return false; } }
+async function biqTryUnlock() {
+    if (biqIsAdmin()) {
+        if (confirm('Leave admin mode? Mapping tools will be hidden again.')) { localStorage.removeItem('biq_admin'); location.reload(); }
+        return;
+    }
+    const pin = prompt('Admin PIN:'); if (!pin) return;
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(pin).trim().toLowerCase()));
+    const hex = [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+    if (hex === ADMIN_PIN_HASH) { localStorage.setItem('biq_admin', '1'); location.reload(); }
+    else D.showToast('Wrong PIN.', 'error');
+}
+function biqLockUi() {
+    const adm = biqIsAdmin();
+    const m = $('biq-openmaps'); if (m) m.style.display = adm ? '' : 'none';
+    const lk = $('biq-adminlock'); if (lk) { lk.textContent = adm ? '🔓 admin' : '🔒'; lk.title = adm ? 'Admin mode is ON — click to leave' : 'Admin unlock (mapping is managed by Paul & Russel)'; }
+}
+// One escalation path instead of guessing: a pre-addressed mail to Paul listing every
+// unmapped name on the current order. The capturer attaches the original PDF and sends.
+function biqSendToMapping() {
+    if (!order) { D.showToast('Load an order first.', 'error'); return; }
+    const probs = biqCollectProblems(MAPS, order).map(p => p.t)
+        .filter(t => /not mapped|no BlindIQ IDs|will NOT import|needs splitting/i.test(t));
+    const body = 'Hi Paul\n\nThis order needs mapping help:\n\n'
+        + 'Customer: ' + (order.customer || '?') + '\nOrder ref: ' + (order.orderNumber || '?')
+        + '\nSource file: ' + (lastFileName || '?') + '\n\n'
+        + (probs.length ? probs.map(t => '• ' + t).join('\n') : '• (describe the problem here)')
+        + '\n\nPLEASE ATTACH THE ORIGINAL ORDER PDF BEFORE SENDING.\n';
+    location.href = 'mailto:paul@blinddesigns.co.za?subject=' + encodeURIComponent('OrderBot mapping needed — ' + (order.customer || '') + ' ' + (order.orderNumber || ''))
+        + '&body=' + encodeURIComponent(body);
+}
+let lastFileName = '';
 
 // ---------------------------------------------------------------- mappings io
 const MAPPINGS_COLLECTION = 'orderbot_biq_mappings';
@@ -49,6 +90,7 @@ async function loadFormats() {
     } catch (e) { console.error('biq formats load failed', e); }
 }
 async function saveFormats() {
+    if (!biqIsAdmin()) return;                       // capture sessions never write to the shared DB
     if (!D.db) return;
     try { await D.setDoc(D.doc(D.db, FORMATS_COLLECTION, 'all'), { json: JSON.stringify(FORMATS), updatedAt: new Date().toISOString() }); }
     catch (e) { console.error('biq formats save failed', e); }
@@ -92,6 +134,7 @@ async function acceptSaveSundry(i) {
 }
 const SHARD_LIMIT = 700000; // chars; Firestore doc hard limit is ~1MB
 async function saveCategory(cat) {
+    if (!biqIsAdmin()) return;                       // capture sessions never write to the shared DB
     if (!D.db) return;
     try {
         // SHRINK GUARD + shard hygiene (Russel 2026-08-12, after half the customer book
@@ -164,6 +207,7 @@ async function importMappingsFile(file) {
 async function handleFiles(files) {
     if (!files || !files.length) return;
     const f = files[0];
+    lastFileName = f.name || '';
     const ext = f.name.split('.').pop().toLowerCase();
     try {
         setStatus('Reading ' + f.name + '…');
@@ -217,6 +261,10 @@ async function loadPdf(f) {
         if (m && m.rows.length) { setOrder(biqNormalizeMatheo(MAPS, m)); return; }
         const bp = biqParseBdPo(textItems);
         if (bp && bp.rows.length) { setOrder(biqNormalizeBdPo(MAPS, bp)); return; }
+        // Blind Guys workbook printed/flattened to PDF (form fields gone) — rebuild the grid
+        // and use the workbook parser, so the 70mm cassette etc. resolve exactly like the xlsx.
+        const bg = biqBgPrintToRows(textItems);
+        if (bg) { const pr = biqParseBlindGuysRows(bg); if (pr && pr.items.length) { const o = biqNormalizeBlindGuys(MAPS, pr); if (biqTbdCoherent(MAPS, o)) { setOrder(o); return; } } }
         const lf = biqParseLifestyle(textItems);
         if (lf && lf.rows.length) { setOrder(biqNormalizeLifestyle(MAPS, lf)); return; }
         const cb = biqParseCnbw(textItems);
@@ -327,6 +375,10 @@ function readHeader() {
 }
 function idTag(res, cat, name) {
     if (res.empty) return '<span class="biq-tag biq-tag-na">—</span>';
+    if (!biqIsAdmin()) {                             // capture mode: status only
+        if (res.known) return `<span class="biq-tag biq-tag-ok" title="BlindIQ ID ${res.id}">✓ ${res.id}</span>`;
+        return `<span class="biq-tag biq-tag-miss" title="Not mapped — use ✉ Send to mapping">? unmapped</span>`;
+    }
     const arg = escH(JSON.stringify([cat, String(name)]));
     if (res.known) return `<span class="biq-tag biq-tag-ok" data-biq-assign='${arg}'>✓ ${res.id}</span>`;
     return `<span class="biq-tag biq-tag-miss" data-biq-assign='${arg}'>? assign</span>`;
@@ -362,12 +414,13 @@ function scheduleRefresh() { clearTimeout(refTimer); refTimer = setTimeout(refre
 
 function renderCustomerTag() {
     const r = biqResolveCustomer(MAPS, order.customer);
+    const asg = biqIsAdmin() ? ` data-biq-assign='${escH(JSON.stringify(['customers', order.customer]))}'` : '';
     $('biq-custtag').innerHTML = order.customer
         ? (r.known
-            ? `<span class="biq-tag biq-tag-ok" data-biq-assign='${escH(JSON.stringify(['customers', order.customer]))}'>✓ cust ${r.entry.customer} / addr ${r.entry.address}${r.entry.operator ? ' / op ' + r.entry.operator : ''}</span>`
-            // near miss (letterhead trading name vs registered name) — name it so the capturer
-            // confirms in one click instead of hunting for it
-            : `<span class="biq-tag biq-tag-miss" data-biq-assign='${escH(JSON.stringify(['customers', order.customer]))}'>? assign BlindIQ customer IDs${(() => { const s = biqSuggestCustomer(MAPS, order.customer); return s ? ' — did you mean "' + escH(biqCanonicalCustomerName(MAPS, s) || s) + '"?' : ''; })()}</span>`)
+            ? `<span class="biq-tag biq-tag-ok"${asg}>✓ cust ${r.entry.customer} / addr ${r.entry.address}${r.entry.operator ? ' / op ' + r.entry.operator : ''}</span>`
+            // near miss (letterhead trading name vs registered name) — named so it's confirmed
+            // deliberately; in capture mode the confirmation goes through Send to mapping
+            : `<span class="biq-tag biq-tag-miss"${asg} title="${biqIsAdmin() ? '' : 'Customer IDs are managed by Paul & Russel — use ✉ Send to mapping'}">? customer IDs not set${(() => { const s = biqSuggestCustomer(MAPS, order.customer); return s ? ' — is this "' + escH(biqCanonicalCustomerName(MAPS, s) || s) + '"?' : ''; })()}</span>`)
         : '';
     const dm = biqResolve(MAPS, 'deliveryMethods', order.deliveryMethod);
     $('biq-delmtag').innerHTML = order.deliveryMethod ? idTag(dm, 'deliveryMethods', order.deliveryMethod) : '';
@@ -377,6 +430,11 @@ function renderCustomerTag() {
 
 const BIQ_FIELD_CAT = { blindType:'blindTypes', range:'ranges', colour:'colours', control1:'control1', control2:'control2', fix:'fixes' };
 function prodTag(i, field, res) {
+    if (!biqIsAdmin()) {                             // capture mode: status only, no catalogue picker
+        if (res.empty) return '';
+        if (res.known) return '<span class="biq-tag biq-tag-ok" title="BlindIQ ID '+res.id+'">✓ '+res.id+'</span>';
+        return '<span class="biq-tag biq-tag-miss" title="Not mapped — use ✉ Send to mapping">? unmapped</span>';
+    }
     if (res.empty) return '<span class="biq-tag biq-tag-na" data-biq-prodsearch="'+i+':'+field+'" title="Search the BlindIQ catalogue">+ find</span>';
     if (res.known) return '<span class="biq-tag biq-tag-ok" data-biq-prodsearch="'+i+':'+field+'" title="Correct? Click to search & change">✓ '+res.id+'</span>';
     return '<span class="biq-tag biq-tag-miss" data-biq-prodsearch="'+i+':'+field+'" title="Click to search the BlindIQ catalogue">? find</span>';
@@ -385,6 +443,10 @@ function aiChip(it, field) {
     const a = it._ai && it._ai[field];
     if (!a) return '';
     const pct = Math.round((a.confidence || 0) * 100);
+    if (!biqIsAdmin()) {                             // capture mode: AI results are information, not buttons
+        if (a.mode === 'auto') return ` <span class="biq-ai biq-ai-auto" title="AI matched '${escH(a.from)}' to '${escH(a.to)}' (${pct}%).">AI ${pct}%</span>`;
+        return ` <span class="biq-ai biq-ai-sug" title="AI suggestion — mapping is handled by Paul & Russel (✉ Send to mapping).">AI? ${escH(a.to)} (${pct}%)</span>`;
+    }
     if (a.mode === 'auto')
         return ` <span class="biq-ai biq-ai-auto" title="AI matched '${escH(a.from)}' to '${escH(a.to)}' (${pct}%). Click to verify / change / undo." data-biq-prodsearch="${it._idx}:${field}">AI ${pct}% ✎</span>`;
     return ` <span class="biq-ai biq-ai-sug" title="AI thinks '${escH(it[field])}' means '${escH(a.to)}' (${pct}%). Click to accept." data-biq-acceptai="${it._idx}:${field}">AI? ${escH(a.to)} (${pct}%) - accept</span>`;
@@ -456,10 +518,14 @@ function renderItems() {
         // Accept button that saves the mapping for everyone (Russel 2026-08-07).
         let sub = '';
         if (a && a.mode === 'auto')
-            sub = `<div class="text-xs text-slate-500 mt-0.5"><span class="biq-ai biq-ai-auto" title="AI matched at ${pct}% — use 🔍 to change if wrong.">AI ${pct}%</span> customer wrote: &quot;${escH(src)}&quot; <button class="biq-btn-sm" data-biq-sunacceptsave="${i}" title="Confirm this is the right part and save the mapping — this wording will resolve automatically from now on.">✓ Accept &amp; save</button></div>`;
+            sub = biqIsAdmin()
+                ? `<div class="text-xs text-slate-500 mt-0.5"><span class="biq-ai biq-ai-auto" title="AI matched at ${pct}% — use 🔍 to change if wrong.">AI ${pct}%</span> customer wrote: &quot;${escH(src)}&quot; <button class="biq-btn-sm" data-biq-sunacceptsave="${i}" title="Confirm this is the right part and save the mapping — this wording will resolve automatically from now on.">✓ Accept &amp; save</button></div>`
+                : `<div class="text-xs text-slate-500 mt-0.5"><span class="biq-ai biq-ai-auto" title="AI matched at ${pct}%.">AI ${pct}%</span> customer wrote: &quot;${escH(src)}&quot;</div>`;
         else if (a && a.mode === 'suggest') {
             const sugName = (MAPS.sundryNames || {})[String((biqResolveSundry(MAPS, a.to) || {}).sundry)] || a.to;
-            sub = `<div class="text-xs text-slate-500 mt-0.5"><span class="biq-ai biq-ai-sug" data-biq-sunacceptai="${i}" title="Click to accept — fills the IDs, swaps in the BlindIQ name and saves the mapping.">AI? ${escH(sugName)} (${pct}%) — accept &amp; save</span></div>`;
+            sub = biqIsAdmin()
+                ? `<div class="text-xs text-slate-500 mt-0.5"><span class="biq-ai biq-ai-sug" data-biq-sunacceptai="${i}" title="Click to accept — fills the IDs, swaps in the BlindIQ name and saves the mapping.">AI? ${escH(sugName)} (${pct}%) — accept &amp; save</span></div>`
+                : `<div class="text-xs text-slate-500 mt-0.5"><span class="biq-ai biq-ai-sug" title="AI suggestion — mapping is handled by Paul & Russel (✉ Send to mapping).">AI? ${escH(sugName)} (${pct}%)</span></div>`;
         } else if (src && biqLc(src) !== biqLc(baseNote))
             sub = `<div class="text-xs text-slate-400 mt-0.5">customer wrote: &quot;${escH(src)}&quot;</div>`;
         sh += `<tr${a && a.mode === 'auto' ? ' class="biq-ai-row"' : ''}><td><input class="biq-in" value="${escH(s.code)}" data-biq-sundry="${i}" data-biq-field="code"></td>`
@@ -945,7 +1011,10 @@ function bindEvents() {
     // (no click handler needed — the drop zone is a <label> wrapping the file input)
     fp.addEventListener('change', e => { handleFiles(e.target.files); fp.value = ''; });
     $('biq-newblank').addEventListener('click', newBlankOrder);
-    $('biq-openmaps').addEventListener('click', openMappings);
+    $('biq-openmaps').addEventListener('click', () => { if (!biqIsAdmin()) { D.showToast('Mapping is managed by Paul & Russel — use ✉ Send to mapping.', 'error'); return; } openMappings(); });
+    $('biq-sendmap').addEventListener('click', biqSendToMapping);
+    $('biq-adminlock').addEventListener('click', biqTryUnlock);
+    biqLockUi();
     $('biq-additem').addEventListener('click', () => { order = order || biqBlankOrder(); order.items.push(biqBlankItem()); $('biq-editor').classList.remove('hidden'); refresh(); });
     $('biq-addsundry').addEventListener('click', () => { if (!order) return; order.sundries.push({ code: '', qty: '1', type: '', sundry: '', notes: '' }); refresh(); });
     $('biq-runchecks').addEventListener('click', runChecks);
@@ -998,6 +1067,13 @@ function bindEvents() {
     document.addEventListener('click', async e => {
         const t = e.target.closest('[data-biq-assign],[data-biq-pickval],[data-biq-sundrysearch],[data-biq-split],[data-biq-togglevars],[data-biq-delitem],[data-biq-addvar],[data-biq-delvar],[data-biq-delsundry],[data-biq-fscut],[data-biq-maptab],[data-biq-delmap],[data-biq-acceptai],[data-biq-sunacceptai],[data-biq-sunacceptsave],[data-biq-revertai],[data-biq-prodsearch],[data-biq-prodrevert],[data-biq-copyopts],#biq-addmap,#biq-addcust,#biq-bulkbtn,#biq-copy-apply,#biq-copy-cancel,#biq-copy-all,#biq-copy-same');
         if (!t) return;
+        // capture-lock: defense in depth — these controls are not rendered in capture mode,
+        // but if one is reached anyway (stale DOM, crafted click), refuse the write path.
+        if (!biqIsAdmin() && (t.dataset.biqAssign || t.dataset.biqAcceptai != null || t.dataset.biqSunacceptai != null
+            || t.dataset.biqSunacceptsave != null || t.dataset.biqDelmap || t.dataset.biqMaptab
+            || t.dataset.biqProdsearch != null || ['biq-addmap', 'biq-addcust', 'biq-bulkbtn'].includes(t.id))) {
+            D.showToast('Mapping is managed by Paul & Russel — use ✉ Send to mapping.', 'error'); return;
+        }
         if (t.dataset.biqAssign) { const [c, n, bt] = JSON.parse(t.dataset.biqAssign); openAssign(c, n, bt); }
         else if (t.dataset.biqPickval != null) { if (assignCtx && assignCtx.product) applyProductPick(t.dataset.biqPickval); else applyPick(t.dataset.biqPickval); }
         else if (t.dataset.biqSundrysearch != null) { const i = +t.dataset.biqSundrysearch; openAssign('sundries', order.sundries[i].notes || '', null, i); }
@@ -1084,6 +1160,8 @@ function injectMarkup() {
         <div class="flex flex-col gap-2">
           <button id="biq-newblank" class="biq-btn-sm">+ New blank order</button>
           <button id="biq-openmaps" class="biq-btn-sm">⚙ BlindIQ ID mappings</button>
+          <button id="biq-sendmap" class="biq-btn-sm" title="Email this order's unmapped names to Paul (attach the PDF before sending)">✉ Send to mapping</button>
+          <a id="biq-adminlock" class="biq-btn-sm cursor-pointer select-none" style="text-decoration:none">🔒</a>
           <button id="biq-help" class="biq-btn-sm">❔ How to use</button>
         </div>
       </div>

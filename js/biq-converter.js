@@ -913,6 +913,19 @@ export function biqNormalizeMatheo(mappings, p) {
         // Allusion RH/LH Monocommand (Russel 2026-08-29, PO072611510W). No idle Pin.
         if (/mono\s*command/.test(ctl) && rhS) { it.control1 = 'Rh Monocommand'; it.control2 = ''; }
         else if (/mono\s*command/.test(ctl) && lhS) { it.control1 = 'Lh Monocommand'; it.control2 = ''; }
+        else if (/intermediate/.test(ctl)) {
+            // "LH Chain & RH Intermediate (S40)" must not trip chain+RH -> Lh Pin / Rh Chain
+            // (Russel 2026-08-29, PO082611850 line 5). Pairing then sets Intermediate Bracket.
+            const leftBit = (ctl.match(/(?:lh|left)\b[^&]*/) || [''])[0];
+            const rightBit = (ctl.match(/(?:rh|right)\b[^&]*/) || [''])[0];
+            const drive = (bit, pref) => /intermediate/.test(bit) ? pref + ' Intermediate'
+                : /chain/.test(bit) ? pref + ' Chain'
+                : /motor/.test(bit) ? pref + ' Motor' : '';
+            const c1 = drive(leftBit, 'Lh'), c2 = drive(rightBit, 'Rh');
+            if (c1) it.control1 = c1;
+            if (c2) it.control2 = c2;
+            if (/intermediate/i.test(c1 + ' ' + c2)) it._bracketWith = 'intermediate';
+        }
         else if (ctl.includes('chain') && rhS) { it.control1 = 'Lh Pin'; it.control2 = 'Rh Chain'; }
         else if (ctl.includes('chain') && lhS) { it.control1 = 'Lh Chain'; it.control2 = 'Rh Pin'; }
         // "RH Motor" = motor on the RIGHT -> it belongs on Control R, with the idle pin on the

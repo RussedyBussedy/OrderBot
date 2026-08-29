@@ -785,7 +785,7 @@ export function biqParseMatheoItems(textItems) {
     const compLine = fullText.split('\n').find(l => /math.o\s*blinds/i.test(l) && !/@|phone|e-mail/i.test(l));
     if (compLine) meta.company = biqNorm(compLine);
     m = fullText.match(/Name\s*:\s*([A-Za-zÀ-ž'\- ]+?)\s+Tel/i); if (m) meta.customerName = biqNorm(m[1]);
-    m = fullText.match(/BD\s+(Roller Blind|Outdoor Free Hang|Urban Shutter|Vision|Wood|Cellular|Double Roller)[A-Za-z ]*/i); if (m) meta.product = biqNorm(m[0]);
+    m = fullText.match(/BD\s+(Roller Blind|Outdoor Free Hang|Urban Shutter|Vision|Wood|Cellular|Double Roller|Allusion)[A-Za-z ]*/i); if (m) meta.product = biqNorm(m[0]);
     // header row: tolerate split words ("Locatio"+"n") — match on '#' + Location/Price prefixes
     const hl = lines.find(l => { const t = l.parts.map(p => p.s.trim()); return t.includes('#') && t.some(s => /^locatio/i.test(s)) && t.some(s => /^price/i.test(s)); });
     if (!hl) return null;
@@ -876,7 +876,7 @@ export function biqNormalizeMatheo(mappings, p) {
     // map the "BD ..." title to a BlindIQ blind type (the per-row "Type" is a price group, not a type)
     const tp = biqLc(p.meta.product || '');
     const titleType = /outdoor/.test(tp) ? 'Outdoor Free Hang' : /urban shutter|shutter/.test(tp) ? 'Urban Hinged Shutter'
-        : /vision/.test(tp) ? 'Element Vision' : /wood/.test(tp) ? 'Element Wood' : /cellular/.test(tp) ? 'Cellular Skylight Lantern'
+        : /allusion/.test(tp) ? 'Allusion Blind' : /vision/.test(tp) ? 'Element Vision' : /wood/.test(tp) ? 'Element Wood' : /cellular/.test(tp) ? 'Cellular Skylight Lantern'
             : /double roller/.test(tp) ? 'Double Roller Blinds' : /roller/.test(tp) ? 'Element Roller Sys 40' : '';
     p.rows.forEach(raw => {
         const it = biqBlankItem(raw['#'] || '');
@@ -910,7 +910,23 @@ export function biqNormalizeMatheo(mappings, p) {
         it.fix = raw['Fix'] || '';
         const ctl = biqLc(raw['Controls'] || '');
         const rhS = /\brh\b|\bright\b/.test(ctl), lhS = /\blh\b|\bleft\b/.test(ctl);
-        if (ctl.includes('chain') && rhS) { it.control1 = 'Lh Pin'; it.control2 = 'Rh Chain'; }
+        // Allusion RH/LH Monocommand (Russel 2026-08-29, PO072611510W). No idle Pin.
+        if (/mono\s*command/.test(ctl) && rhS) { it.control1 = 'Rh Monocommand'; it.control2 = ''; }
+        else if (/mono\s*command/.test(ctl) && lhS) { it.control1 = 'Lh Monocommand'; it.control2 = ''; }
+        else if (/intermediate/.test(ctl)) {
+            // "LH Chain & RH Intermediate (S40)" must not trip chain+RH -> Lh Pin / Rh Chain
+            // (Russel 2026-08-29, PO082611850 line 5). Pairing then sets Intermediate Bracket.
+            const leftBit = (ctl.match(/(?:lh|left)\b[^&]*/) || [''])[0];
+            const rightBit = (ctl.match(/(?:rh|right)\b[^&]*/) || [''])[0];
+            const drive = (bit, pref) => /intermediate/.test(bit) ? pref + ' Intermediate'
+                : /chain/.test(bit) ? pref + ' Chain'
+                : /motor/.test(bit) ? pref + ' Motor' : '';
+            const c1 = drive(leftBit, 'Lh'), c2 = drive(rightBit, 'Rh');
+            if (c1) it.control1 = c1;
+            if (c2) it.control2 = c2;
+            if (/intermediate/i.test(c1 + ' ' + c2)) it._bracketWith = 'intermediate';
+        }
+        else if (ctl.includes('chain') && rhS) { it.control1 = 'Lh Pin'; it.control2 = 'Rh Chain'; }
         else if (ctl.includes('chain') && lhS) { it.control1 = 'Lh Chain'; it.control2 = 'Rh Pin'; }
         // "RH Motor" = motor on the RIGHT -> it belongs on Control R, with the idle pin on the
         // left (Russel 2026-08-07, Mathéo outdoor J6966). Mirrored for LH. A motor with no side

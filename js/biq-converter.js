@@ -2547,7 +2547,7 @@ export function biqGenerateXML(mappings, order) {
     x += tag('CO_Required_Date', order.requiredDate ? order.requiredDate + 'T00:00:00' : '');
     x += tag('CO_DeliveryAddress_Link', c.address);
     x += tag('CO_DeliveryMethod_Link', idOr(dm));
-    x += tag('CO_PackingType_Link', (order.packingType && pk.known) ? pk.id : '');  // empty -> caught by the import-safety scan
+    x += tag('CO_PackingType_Link', (order.packingType && pk.known) ? pk.id : '');  // unknown packing: empty, never a fake ID
     x += order.address ? '<CO_Delivery_Address>' + esc(order.address.replace(/\r\n?/g, '\n')) + '\n</CO_Delivery_Address>' : '<CO_Delivery_Address />';
     x += tag('CO_Notes', order.notes);
     x += tag('CO_CustomerOperator_Link', (c.operator === '' || c.operator == null) ? (cust.known ? -1 : '') : c.operator);
@@ -2563,7 +2563,7 @@ export function biqGenerateXML(mappings, order) {
         x += tag('COI_Supplier_Link', '1');
         x += tag('COI_BlindType_Link', idOr(rt));
         x += tag('COI_BlindRange_Link', idOr(rr));
-        x += tag('COI_Colour_Link', biqLc(it.colour) ? idOr(rc) : '-1');
+        x += tag('COI_Colour_Link', biqLc(it.colour) ? idOr(rc) : '-1');  // -1 = no colour (Off). Unmapped colour name -> empty, not a fake ID.
         x += tag('COI_Width', it.width);
         x += tag('COI_Drop', it.drop || ((rt.known && [14, 27, 13, 17, 18, 20].includes(rt.id)) ? '0' : it.drop));   // valances + curtain tracks: no drop -> 0
         x += tag('COI_Fix_Link', biqLc(it.fix) ? idOr(rf) : '-1');

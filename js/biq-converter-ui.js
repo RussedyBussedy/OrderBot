@@ -375,9 +375,9 @@ function readHeader() {
 }
 function idTag(res, cat, name) {
     if (res.empty) return '<span class="biq-tag biq-tag-na">—</span>';
-    if (!biqIsAdmin()) {                             // capture mode: status only
-        if (res.known) return `<span class="biq-tag biq-tag-ok" title="BlindIQ ID ${res.id}">✓ ${res.id}</span>`;
-        return `<span class="biq-tag biq-tag-miss" title="Not mapped — use ✉ Send to mapping">? unmapped</span>`;
+    if (!biqIsAdmin()) {                             // capture mode: no IDs, no assign
+        if (res.known) return `<span class="biq-tag biq-tag-ok">✓</span>`;
+        return `<span class="biq-tag biq-tag-miss" title="Unknown — use ✉ Send to mapping">unknown</span>`;
     }
     const arg = escH(JSON.stringify([cat, String(name)]));
     if (res.known) return `<span class="biq-tag biq-tag-ok" data-biq-assign='${arg}'>✓ ${res.id}</span>`;
@@ -415,13 +415,13 @@ function scheduleRefresh() { clearTimeout(refTimer); refTimer = setTimeout(refre
 function renderCustomerTag() {
     const r = biqResolveCustomer(MAPS, order.customer);
     const asg = biqIsAdmin() ? ` data-biq-assign='${escH(JSON.stringify(['customers', order.customer]))}'` : '';
-    $('biq-custtag').innerHTML = order.customer
-        ? (r.known
-            ? `<span class="biq-tag biq-tag-ok"${asg}>✓ cust ${r.entry.customer} / addr ${r.entry.address}${r.entry.operator ? ' / op ' + r.entry.operator : ''}</span>`
-            // near miss (letterhead trading name vs registered name) — named so it's confirmed
-            // deliberately; in capture mode the confirmation goes through Send to mapping
-            : `<span class="biq-tag biq-tag-miss"${asg} title="${biqIsAdmin() ? '' : 'Customer IDs are managed by Paul & Russel — use ✉ Send to mapping'}">? customer IDs not set${(() => { const s = biqSuggestCustomer(MAPS, order.customer); return s ? ' — is this "' + escH(biqCanonicalCustomerName(MAPS, s) || s) + '"?' : ''; })()}</span>`)
-        : '';
+    if (!order.customer) $('biq-custtag').innerHTML = '';
+    else if (r.known) $('biq-custtag').innerHTML = biqIsAdmin()
+        ? `<span class="biq-tag biq-tag-ok"${asg}>✓ cust ${r.entry.customer} / addr ${r.entry.address}${r.entry.operator ? ' / op ' + r.entry.operator : ''}</span>`
+        : `<span class="biq-tag biq-tag-ok">✓</span>`;
+    else $('biq-custtag').innerHTML = biqIsAdmin()
+        ? `<span class="biq-tag biq-tag-miss"${asg}>? customer IDs not set${(() => { const s = biqSuggestCustomer(MAPS, order.customer); return s ? ' — is this "' + escH(biqCanonicalCustomerName(MAPS, s) || s) + '"?' : ''; })()}</span>`
+        : `<span class="biq-tag biq-tag-miss" title="Unknown — use ✉ Send to mapping">unknown</span>`;
     const dm = biqResolve(MAPS, 'deliveryMethods', order.deliveryMethod);
     $('biq-delmtag').innerHTML = order.deliveryMethod ? idTag(dm, 'deliveryMethods', order.deliveryMethod) : '';
     const pk = biqResolve(MAPS, 'packingTypes', order.packingType);
@@ -430,10 +430,10 @@ function renderCustomerTag() {
 
 const BIQ_FIELD_CAT = { blindType:'blindTypes', range:'ranges', colour:'colours', control1:'control1', control2:'control2', fix:'fixes' };
 function prodTag(i, field, res) {
-    if (!biqIsAdmin()) {                             // capture mode: status only, no catalogue picker
+    if (!biqIsAdmin()) {                             // capture mode: no IDs, no catalogue picker
         if (res.empty) return '';
-        if (res.known) return '<span class="biq-tag biq-tag-ok" title="BlindIQ ID '+res.id+'">✓ '+res.id+'</span>';
-        return '<span class="biq-tag biq-tag-miss" title="Not mapped — use ✉ Send to mapping">? unmapped</span>';
+        if (res.known) return '<span class="biq-tag biq-tag-ok">✓</span>';
+        return '<span class="biq-tag biq-tag-miss" title="Unknown — use ✉ Send to mapping">unknown</span>';
     }
     if (res.empty) return '<span class="biq-tag biq-tag-na" data-biq-prodsearch="'+i+':'+field+'" title="Search the BlindIQ catalogue">+ find</span>';
     if (res.known) return '<span class="biq-tag biq-tag-ok" data-biq-prodsearch="'+i+':'+field+'" title="Correct? Click to search & change">✓ '+res.id+'</span>';
@@ -607,8 +607,9 @@ function renderPreview() {
       <div class="bg-slate-800 text-white px-3 py-2 font-bold flex justify-between"><span>Purchase Order — BlindIQ import preview</span><span>${escH(order.orderNumber)}</span></div>
       <div class="grid grid-cols-3 border-b border-slate-200">
         <div class="p-2 border-r border-slate-100"><div class="uppercase text-slate-400 font-semibold mb-1" style="font-size:10px">Customer (dealer)</div>
-          <div><b>${escH(order.customer || '—')}</b>${cust.known ? '' : ' <span class="text-red-600 font-bold">⚠ not mapped</span>'}</div>
-          <div>IQ: cust ${c.customer} / addr ${c.address} / op ${c.operator}</div><div>End client: ${escH(order.client || '—')}</div></div>
+          <div><b>${escH(order.customer || '—')}</b>${cust.known ? '' : ' <span class="text-red-600 font-bold">unknown</span>'}</div>
+          ${biqIsAdmin() ? `<div>IQ: cust ${c.customer} / addr ${c.address} / op ${c.operator}</div>` : ''}
+          <div>End client: ${escH(order.client || '—')}</div></div>
         <div class="p-2 border-r border-slate-100"><div class="uppercase text-slate-400 font-semibold mb-1" style="font-size:10px">Order</div>
           <div>Ref: <b>${escH(order.orderNumber || '—')}</b> · IQ ID ${escH(order.orderId)}</div>
           <div>Order date: ${fmt(order.orderDate)}</div><div>Required: <b>${fmt(order.requiredDate)}</b></div><div>Notes: ${escH(order.notes || '—')}</div></div>
@@ -641,32 +642,28 @@ function renderPreview() {
 }
 function downloadXML() {
     refresh();
-    const probs = biqCollectProblems(MAPS, order);
-    const offenders = biqImportSafetyScan(biqGenerateXML(MAPS, order));
-    if (offenders.length) {
-        D.showToast('Blocked: these numeric fields are empty and WILL crash BlindIQ\'s importer (Error 13): ' + offenders.join(', '), 'error');
-        return;
-    }
+    // Always export. Unknowns stay unknown (empty Links, no invented IDs). Capturers
+    // finish leftover fields in BlindIQ; do not block or confirm-gate the file.
     const go = () => {
-        const learned = biqLearnFromAI(MAPS, order);
-        if (learned.length) {
-            const cats = [...new Set(learned.map(l => l.cat))];
-            cats.forEach(c => saveCategory(c));
-            D.showToast('Learned ' + learned.length + ' AI match(es) - future orders with this wording resolve automatically.', 'success');
-        }
-        // learn this customer's format (dealer wording the catalogue doesn't cover, + their defaults)
-        const fr = biqLearnFormat(MAPS, FORMATS, order);
-        if (fr) {
-            saveFormats();
-            if (fr.learned.length) D.showToast('Format profile updated for "' + order.customer + '" — learned ' + fr.learned.length + ' term(s); their next orders convert more accurately.', 'success');
-            if (fr.drift) D.showToast('Heads-up: this order\'s format differs from "' + order.customer + '"\'s usual one — worth a closer check.', 'info');
+        if (biqIsAdmin()) {
+            const learned = biqLearnFromAI(MAPS, order);
+            if (learned.length) {
+                const cats = [...new Set(learned.map(l => l.cat))];
+                cats.forEach(c => saveCategory(c));
+                D.showToast('Learned ' + learned.length + ' AI match(es) - future orders with this wording resolve automatically.', 'success');
+            }
+            const fr = biqLearnFormat(MAPS, FORMATS, order);
+            if (fr) {
+                saveFormats();
+                if (fr.learned.length) D.showToast('Format profile updated for "' + order.customer + '" — learned ' + fr.learned.length + ' term(s); their next orders convert more accurately.', 'success');
+                if (fr.drift) D.showToast('Heads-up: this order\'s format differs from "' + order.customer + '"\'s usual one — worth a closer check.', 'info');
+            }
         }
         const blob = new Blob([biqGenerateXML(MAPS, order)], { type: 'text/xml' });
         const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
         a.download = 'BlindIQ_Import_' + (order.orderNumber || 'order').replace(/[^\w\-]+/g, '_') + '.xml'; a.click();
     };
-    if (probs.length) D.showConfirmModal(`This order still has ${probs.length} unresolved issue(s) — the XML will contain blank IDs and may fail to import. Download anyway?`, go);
-    else go();
+    go();
 }
 
 // ---------------------------------------------------------------- name pickers (discernment UX)
@@ -1170,16 +1167,14 @@ function injectMarkup() {
         <div class="flex justify-between items-start"><h4 class="font-bold text-slate-800 mb-1">BlindIQ Order Converter — how it works</h4><button id="biq-helpclose" class="biq-btn-sm">Close</button></div>
         <p class="mb-2"><b>1. Drop the customer's order file</b> in the box above — Blind Guys spreadsheets, Mathéo PDFs and our own order forms are read instantly; anything else (incl. scans/photos) is read by AI. Or click <b>+ New blank order</b> to type one in.</p>
         <p class="mb-2"><b>2. Check the grid.</b> Each product name carries a tag:
-          <span class="biq-tag biq-tag-ok">✓ 25</span> = mapped to a BlindIQ ID (good);
-          <span class="biq-tag biq-tag-miss">? assign</span> = not known yet — click it to search &amp; pick the right BlindIQ name (remembered for next time);
-          <span class="biq-ai biq-ai-auto">AI 96%</span> = AI matched it for you (amber row — <b>please glance and confirm</b>; click the chip to undo);
-          <span class="biq-ai biq-ai-sug">AI? … - accept</span> = AI's best guess, click to accept.</p>
-        <p class="mb-2"><b>3. Clear the red banner.</b> It lists everything still needed before import — required date is optional, but customer, sizes, and any unmapped names must be sorted. Motors/remotes/adapters appear as <b>Sundries</b>; the 🔍 button searches the parts catalogue. Adapter kits ask for a colour — that's expected.</p>
+          <span class="biq-tag biq-tag-ok">✓</span> = already known;
+          <span class="biq-tag biq-tag-miss">unknown</span> = not in the catalogue — you cannot map it here, use ✉ Send to mapping.</p>
+        <p class="mb-2"><b>3. Unknowns are fine.</b> The red banner lists them so you can see what BlindIQ will still need. You cannot assign IDs. Motors/remotes/adapters appear as <b>Sundries</b>.</p>
         <p class="mb-2"><b>4. Run torque &amp; spec checks</b> (optional) to catch fabric-width, chain-weight and motor-power issues before manufacturing.</p>
-        <p class="mb-2"><b>5. Download .xml</b> and import it into BlindIQ. The download is blocked only if a numeric field is still empty (which would crash the importer).</p>
+        <p class="mb-2"><b>5. Download .xml</b> always works, even with unknowns. Import it into BlindIQ and finish anything still unknown there.</p>
         <p class="mb-1 font-semibold text-slate-800">What it can&apos;t do (yet):</p>
         <ul class="list-disc pl-5 mb-1">
-          <li>It won&apos;t pick the <b>customer/dealer account</b> for you — always search and select that yourself (one-time per customer).</li>
+          <li>It won&apos;t let you <b>map names or IDs</b> — unknowns stay unknown; send those to Paul.</li>
           <li>AI matches are <b>suggestions to verify</b>, not gospel — amber rows mean &quot;check me&quot;. When in doubt, open the order&apos;s original file (in the task repository) and compare.</li>
           <li><b>Handwriting</b> is read best-effort — always verify scanned/photographed orders field-by-field.</li>
           <li>It sets specs, not <b>prices or the required date</b> — those stay with you / BlindIQ.</li>

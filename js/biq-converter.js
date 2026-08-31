@@ -910,9 +910,10 @@ export function biqNormalizeMatheo(mappings, p) {
         it.fix = raw['Fix'] || '';
         const ctl = biqLc(raw['Controls'] || '');
         const rhS = /\brh\b|\bright\b/.test(ctl), lhS = /\blh\b|\bleft\b/.test(ctl);
-        // Allusion RH/LH Monocommand (Russel 2026-08-29, PO072611510W). No idle Pin.
-        if (/mono\s*command/.test(ctl) && rhS) { it.control1 = 'Rh Monocommand'; it.control2 = ''; }
-        else if (/mono\s*command/.test(ctl) && lhS) { it.control1 = 'Lh Monocommand'; it.control2 = ''; }
+        // Allusion Monocommand (Russel 2026-08-31): BlindIQ drive is Wand Lh And Rh. Stack stays on control2.
+        if (titleType === 'Allusion Blind' && /mono\s*command/.test(ctl)) {
+            it.control1 = 'Wand Lh And Rh';
+        }
         else if (/intermediate/.test(ctl)) {
             // "LH Chain & RH Intermediate (S40)" must not trip chain+RH -> Lh Pin / Rh Chain
             // (Russel 2026-08-29, PO082611850 line 5). Pairing then sets Intermediate Bracket.
@@ -935,6 +936,23 @@ export function biqNormalizeMatheo(mappings, p) {
         else if (ctl.includes('motor') && lhS) { it.control1 = 'Lh Motor'; it.control2 = 'Rh Pin'; }
         else if (ctl.includes('motor')) { it.control1 = raw['Controls']; it.control2 = ''; }
         else { it.control1 = raw['Controls'] || ''; }
+        if (titleType === 'Allusion Blind') {
+            const canon = s => biqLc(s).replace(/[^a-z0-9]/g, '');
+            const stkKey = Object.keys(raw).find(k => {
+                const c = canon(k);
+                return c === 'stack' || c === 'stackleftright' || c === 'stacking' || c.startsWith('stack');
+            });
+            const stk = stkKey ? biqNorm(raw[stkKey] || '') : '';
+            if (stk) {
+                const sl = biqLc(stk);
+                it.control2 = /split/.test(sl) && /float/.test(sl) ? 'Stack Split Float'
+                    : /split/.test(sl) ? 'Stack Split'
+                    : /float/.test(sl) ? 'Stack Float'
+                    : /left/.test(sl) ? 'Stack Left'
+                    : /right/.test(sl) ? 'Stack Right'
+                    : /^stack\b/.test(sl) ? stk : ('Stack ' + stk);
+            }
+        }
         { const cd = biqNorm(raw['Control Drop'] || '');
           it.controlDrop = biqComputeControlDropV2(mappings, /^\d/.test(cd) ? cd : '', it.drop, it.blindType, it.range);
           it._cdAuto = !/^\d/.test(cd); }
@@ -3166,6 +3184,7 @@ export function biqRequiresDualControl(mappings, blindType) {
 }
 export function biqInferControls(mappings, order) {
     (order ? order.items : []).forEach(it => {
+        if (/allusion/i.test(it.blindType || '')) return;
         if (!biqRequiresDualControl(mappings, it.blindType)) return;
         const c1 = biqLc(it.control1), c2 = biqLc(it.control2);
         if (/intermediate|coupled/.test(c1) || /intermediate|coupled/.test(c2)) return;   // already a coupled/intermediate config

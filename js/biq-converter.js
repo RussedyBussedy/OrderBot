@@ -883,7 +883,7 @@ export function biqNormalizeMatheo(mappings, p) {
         it.qty = '1'; it.location = raw['Location'] || '';
         it.width = raw['Width'] || ''; it.drop = raw['Height'] || '';
         it.blindType = titleType || raw['Type'] || '';
-        if (titleType && raw['Type']) it.notes = (it.notes ? it.notes + ' | ' : '') + raw['Type'];   // keep the price group as a note
+        if (titleType && raw['Type'] && !(titleType === 'Allusion Blind' && biqNorm(raw['Material'] || ''))) it.notes = (it.notes ? it.notes + ' | ' : '') + raw['Type'];  // price group; Allusion skips when fabric is set
         let mat = biqNorm(raw['Material'] || '');
         let rng = mat;
         if (!biqResolveRange(mappings, it.blindType, rng).known) {

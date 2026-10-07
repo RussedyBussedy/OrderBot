@@ -527,7 +527,7 @@
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, addDoc, getDocs, query, where, orderBy, limit, startAfter, deleteDoc, doc, writeBatch, getDoc, setDoc, updateDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-        import { firebaseConfig, PROXY_API_URL, PROMPT_VERSION, EXTRACTION_MODEL, COMPARISON_MODEL } from './js/config.js';
+        import { firebaseConfig, PROXY_API_URL, PROMPT_VERSION, EXTRACTION_MODEL, COMPARISON_MODEL, isGemini3 } from './js/config.js';
         import { BLIND_TYPE_EXCLUSIONS_FOR_COLOUR_CHECK, BLIND_TYPES_REQUIRING_CONTROL_VALIDATION, BLIND_TYPES_REQUIRING_DUAL_CONTROL, CRITICAL_FIELDS, CACHE_TTL_MS } from './js/constants.js';
         import { initBiqConverter } from './js/biq-converter-ui.js';
 
@@ -1064,7 +1064,7 @@ Respond only with a JSON object containing a lineItems array.
                 const geminiPayload = {
                     contents: [{ role: "user", parts: parts }],
                     generationConfig: {
-                        temperature: 0.2,
+                        ...(isGemini3(COMPARISON_MODEL) ? {} : { temperature: 0.2 }),
                         responseMimeType: "application/json",
                         responseSchema: focusedSchema
                     }
@@ -1341,7 +1341,8 @@ ${feedbackExamples}
             const geminiPayload = {
                 contents: [{ role: "user", parts: parts }],
                 generationConfig: {
-                    temperature: 0.1, // Ultra-rigid deterministic extraction
+                    // 2.x models keep the original ultra-rigid 0.1; Gemini 3+ runs at its default (see isGemini3 in js/config.js).
+                    ...(isGemini3(COMPARISON_MODEL) ? {} : { temperature: 0.1 }),
                     responseMimeType: "application/json",
                     responseSchema: schema
                 }
@@ -1942,7 +1943,7 @@ ${feedbackExamples}
                 if (pastedImageB64) { enhancementParts.push({ inlineData: { mimeType: 'image/png', data: pastedImageB64.split(',')[1] } }); }
 
                 const geminiPayload = { contents: [{ role: "user", parts: enhancementParts }] };
-                const proxyPayload = { model: 'gemini-3-flash-preview', payload: geminiPayload };
+                const proxyPayload = { model: EXTRACTION_MODEL, payload: geminiPayload };
 
                 const response = await fetch(PROXY_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proxyPayload) });
                 if (!response.ok) throw new Error('Failed to enhance explanation.');
@@ -2084,14 +2085,14 @@ ${feedbackExamples}
                 const geminiPayload = { 
                     contents: [{ role: "user", parts: [{ text: consolidationPrompt }] }], 
                     generationConfig: { 
-                        temperature: 0.1, 
+                        ...(isGemini3(EXTRACTION_MODEL) ? {} : { temperature: 0.1 }), 
                         responseMimeType: "application/json", 
                         responseSchema: enhancementSchema 
                     } 
                 };
                 
                 // Use Flash for prompt engineering tasks as it is extremely fast and capable of logic grouping
-                const proxyPayload = { model: 'gemini-3-flash-preview', payload: geminiPayload };
+                const proxyPayload = { model: EXTRACTION_MODEL, payload: geminiPayload };
                 
                 const response = await fetch(PROXY_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proxyPayload) });
                 if (!response.ok) throw new Error('API Request failed during guideline consolidation.');

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-OrderBot is an AI-powered document comparison tool for Blind Designs (blind/shutter manufacturer). It compares customer order documents against Blind IQ documents using Google Gemini 2.5-Pro and validates extracted specifications against stored reference data.
+OrderBot is an AI-powered document comparison tool for Blind Designs (blind/shutter manufacturer). It compares customer order documents against Blind IQ documents using Google Gemini 3.8 Flash and validates extracted specifications against stored reference data.
 
 ## Architecture
 
@@ -12,7 +12,7 @@ OrderBot is an AI-powered document comparison tool for Blind Designs (blind/shut
 Frontend (index.html + js/)             →    Backend proxy (index.js)
 Hosted on GitHub Pages / SharePoint         Hosted on Google Cloud Run (africa-south1)
                                                 ↓
-                                        Google Gemini API (2.5-Pro / 3-Flash)
+                                        Google Gemini API (3.8 Flash)
 Firebase Firestore (6 collections) ←————— Firebase SDK (client-side, anonymous auth)
 ```
 
@@ -30,7 +30,7 @@ npm start                    # Runs on port 8080
 # Test backend health
 curl -X POST http://localhost:8080 \
   -H "Content-Type: application/json" \
-  -d '{"model":"gemini-2.5-pro","payload":{"contents":[]}}'
+  -d '{"model":"gemini-3.8-flash","payload":{"contents":[]}}'
 
 # Deploy backend to Cloud Run
 gcloud run deploy gemini-secure-proxy \
@@ -94,8 +94,12 @@ When extracting more modules to `js/`, follow this pattern: named exports only (
 
 ## AI Models
 
-- `gemini-2.5-pro` — main document comparison (configured via `EXTRACTION_MODEL` in `js/config.js`)
-- `gemini-3-flash-preview` — guideline consolidation and feedback enhancement (fast, lower cost)
+- `gemini-3.8-flash` (GA) — every AI call since Oct 2026, set by two constants in `js/config.js`:
+  - `COMPARISON_MODEL` — main order comparison, second-pass re-extraction, converter discernment
+  - `EXTRACTION_MODEL` — converter document extraction, guideline consolidation, feedback enhancement
+- Reverting = change a constant back (previously `gemini-2.5-pro` / `gemini-3-flash-preview`).
+- Temperature: Gemini 3+ models run at their default (Google: lowering it can cause looping or degraded output). Call sites only pin the old low temperatures (0.1 / 0.2 / 0) for 2.x models, via `isGemini3()` in `js/config.js`, so reverting a constant also restores that model's original settings.
+- History: `gemini-3.1-pro-preview` was tried for extraction in Apr 2026 and reverted for lower-quality comparisons — that run used temperature 0.1, against Google's Gemini 3 guidance.
 
 ## Critical Rules for Future Changes
 

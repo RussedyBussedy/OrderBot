@@ -23,7 +23,7 @@ import {
     biqToComparisonShape, biqExtractCheckResults
 } from './biq-converter.js';
 import { biqDetectForm, biqParseSpecForm, biqElementGridOptions } from './biq-form-specs.js';
-import { ADMIN_PIN_HASH } from './config.js';
+import { ADMIN_PIN_HASH, isGemini3 } from './config.js';
 
 let D = null;            // injected deps
 let MAPS = null;         // live mappings (seeds + Firestore)
@@ -290,7 +290,7 @@ async function aiExtract(files) {
     for (const f of files) { const b = await fileToB64(f); parts.push({ inlineData: b }); }
     const proxyPayload = {
         model: D.EXTRACTION_MODEL,
-        payload: { contents: [{ role: 'user', parts }], generationConfig: { temperature: 0.1, responseMimeType: 'application/json', responseSchema: BIQ_EXTRACTION_SCHEMA } }
+        payload: { contents: [{ role: 'user', parts }], generationConfig: { ...(isGemini3(D.EXTRACTION_MODEL) ? {} : { temperature: 0.1 }), responseMimeType: 'application/json', responseSchema: BIQ_EXTRACTION_SCHEMA } }
     };
     let resultText, response;
     for (let attempt = 1; attempt <= 3; attempt++) {
@@ -324,7 +324,7 @@ async function aiDiscern(manual) {
     if (!D.PROXY_API_URL) { if (manual) D.showToast('AI matching needs the Gemini connection (OrderBot only).', 'error'); return; }
     aiBusy = true; setStatus('AI is matching ' + slots.length + ' product name(s) to the BlindIQ catalogue...');
     try {
-        const payload = { model: D.COMPARISON_MODEL || D.EXTRACTION_MODEL, payload: { contents: [{ role: 'user', parts: [{ text: biqBuildDiscernPrompt(slots) }] }], generationConfig: { temperature: 0, responseMimeType: 'application/json', responseSchema: BIQ_DISCERN_SCHEMA } } };
+        const payload = { model: D.COMPARISON_MODEL || D.EXTRACTION_MODEL, payload: { contents: [{ role: 'user', parts: [{ text: biqBuildDiscernPrompt(slots) }] }], generationConfig: { ...(isGemini3(D.COMPARISON_MODEL || D.EXTRACTION_MODEL) ? {} : { temperature: 0 }), responseMimeType: 'application/json', responseSchema: BIQ_DISCERN_SCHEMA } } };
         let txt, resp;
         for (let a = 1; a <= 3; a++) {
             try { resp = await fetch(D.PROXY_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); txt = await resp.text(); if (resp.ok) break; if (a === 3) throw new Error('API ' + resp.status); } catch (e) { if (a === 3) throw e; }

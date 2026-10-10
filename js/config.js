@@ -9,7 +9,7 @@ export const firebaseConfig = {
 };
 
 export const PROXY_API_URL = 'https://gemini-secure-proxy-51064902388.africa-south1.run.app';
-export const PROMPT_VERSION = 'v2.2';
+export const PROMPT_VERSION = 'v2.3';   // v2.3 (Oct 2026): standards, NOT_SPECIFIED, converter reading, corrections with the capturer's words
 
 // Oct 2026: both paths migrated to Gemini 3.8 Flash (GA, no shutdown date), from
 // gemini-3-flash-preview (extraction) and gemini-2.5-pro (comparison).

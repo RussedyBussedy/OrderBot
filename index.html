@@ -97,6 +97,7 @@
         .spec-match { color: #4e7d62; }
         .spec-mismatch { color: #a4442c; font-weight: 700; }
         .spec-low-confidence { color: #96702e; }
+        .spec-not-specified { color: #8a94a3; font-style: italic; }
         /* CRITICAL fields (Paul 2026-08-05): strongest highlight on mismatched critical cells */
         .critical-cell { outline: 2px solid #a4442c; outline-offset: -2px; border-radius: 4px; animation: critpulse 1.2s ease-in-out 3; }
         @keyframes critpulse { 50% { background-color: #f6d5c9; } }
@@ -529,7 +530,10 @@
         import { getFirestore, collection, addDoc, getDocs, query, where, orderBy, limit, startAfter, deleteDoc, doc, writeBatch, getDoc, setDoc, updateDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { firebaseConfig, PROXY_API_URL, PROMPT_VERSION, EXTRACTION_MODEL, COMPARISON_MODEL, isGemini3 } from './js/config.js';
         import { BLIND_TYPE_EXCLUSIONS_FOR_COLOUR_CHECK, BLIND_TYPES_REQUIRING_CONTROL_VALIDATION, BLIND_TYPES_REQUIRING_DUAL_CONTROL, CRITICAL_FIELDS, CACHE_TTL_MS } from './js/constants.js';
-        import { initBiqConverter } from './js/biq-converter-ui.js';
+        // A namespace import: a browser still holding the previous biq-converter-ui.js (GitHub Pages lets it
+        // cache files for 10 minutes) then simply has no converter reading instead of failing to load the page.
+        import * as BiqUI from './js/biq-converter-ui.js';
+        import { selectRelevantFeedback, formatCorrectionExamples, BD_STANDARDS, NOT_SPECIFIED_RULES, RESULT_VALUES, describeConverterReading } from './js/comparison-context.js';
 
         // firebaseConfig, PROXY_API_URL, PROMPT_VERSION imported from ./js/config.js
 
@@ -961,22 +965,6 @@
             } catch (err) { console.error('Critical-errors dialog failed:', err); }
         }
 
-        function selectRelevantFeedback(allFeedback, contextTerms) {
-            if (!contextTerms || contextTerms.length === 0) {
-                return [...allFeedback]
-                    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
-                    .slice(0, 10);
-            }
-            const lowerTerms = contextTerms.map(t => t.toLowerCase());
-            const scored = allFeedback.map(fb => {
-                const text = (JSON.stringify(fb.incorrectItem) + ' ' + (fb.enhancedExplanation || '')).toLowerCase();
-                const score = lowerTerms.reduce((acc, term) => acc + (text.includes(term) ? 1 : 0), 0);
-                return { ...fb, _relevanceScore: score };
-            });
-            scored.sort((a, b) => b._relevanceScore - a._relevanceScore || new Date(b.timestamp) - new Date(a.timestamp));
-            return scored.slice(0, 10);
-        }
-
         async function reExtractLowConfidence(data, customerFiles, blindIQFiles) {
             const THRESHOLD = 0.80;
             const FIELDS = ['item', 'location', 'qty', 'width', 'drop', 'colour', 'control1', 'control2', 'blindType', 'range', 'fix'];
@@ -1008,7 +996,8 @@ ${itemDescriptions}
 - LEFT Control column = control1, RIGHT Control column = control2.
 - Every item MUST have a valid alphabetical item identifier (A, B, C...).
 - Fill the reasoning field first with a side-by-side comparison of each field.
-
+- A field or specification the customer document does not mention at all is NOT_SPECIFIED (information), except Blind Type, Range, Colour, QTY, Width, Drop, Control 1 and Control 2: those are OMISSION, unless the value follows from what the customer did state (see the standards below), which is a MATCH.
+${BD_STANDARDS}
 # OUTPUT
 Respond only with a JSON object containing a lineItems array.
             `.trim();
@@ -1030,7 +1019,7 @@ Respond only with a JSON object containing a lineItems array.
                 parts.push({ inlineData: { mimeType: f.type, data: f.data } });
             }
 
-            const cfSchema = { type: "OBJECT", properties: { customerValue: { type: "STRING" }, blindIQValue: { type: "STRING" }, result: { type: "STRING", enum: ["MATCH", "MISMATCH", "OMISSION", "NOTE"] }, confidence: { type: "NUMBER" } }, required: ["customerValue", "blindIQValue", "result", "confidence"] };
+            const cfSchema = { type: "OBJECT", properties: { customerValue: { type: "STRING" }, blindIQValue: { type: "STRING" }, result: { type: "STRING", enum: RESULT_VALUES }, confidence: { type: "NUMBER" } }, required: ["customerValue", "blindIQValue", "result", "confidence"] };
             const focusedSchema = {
                 type: "OBJECT",
                 properties: {
@@ -1144,13 +1133,21 @@ Respond only with a JSON object containing a lineItems array.
                 const feedbackDocs = _feedbackGuidelineCache.feedback;
                 if (feedbackDocs.length > 0) {
                     const relevant = selectRelevantFeedback(feedbackDocs, contextTerms);
-                    feedbackExamples = "\n# CORRECTION EXAMPLES\n" + relevant.map((fb, i) => `Example ${i + 1}:\n- Incorrect Item: ${JSON.stringify(fb.incorrectItem)}\n- Enhanced Explanation: "${fb.enhancedExplanation}"\n`).join("\n");
+                    feedbackExamples = formatCorrectionExamples(relevant);
                 }
 
                 const guidelineDocs = _feedbackGuidelineCache.guidelines;
                 if (guidelineDocs.length > 0) {
                     guidelines = "\n# GUIDELINES (USER-DEFINED)\nYou must follow these rules without exception:\n- " + guidelineDocs.join("\n- ") + "\n";
                 }
+            }
+
+            // The converter's own reading of every customer file it recognises (fixed parsers, never the
+            // AI): the line items in Blind IQ names plus its notes on values the customer didn't give.
+            let converterReading = '';
+            for (const f of customerFiles) {
+                const reading = BiqUI.biqReadCustomerFile ? await BiqUI.biqReadCustomerFile(f) : null;
+                if (reading) converterReading += describeConverterReading(reading, f.name);
             }
 
             const systemPrompt = `
@@ -1242,6 +1239,9 @@ Extract every mandatory field for every line item, even when the customer docume
 ### 5. Format-specific rules live in guidelines, not here
 The user maintains a collection of guidelines and per-cell corrections below that teach you about specific dealer formats, recurring mistakes, and domain conventions. Consult them. If a guideline contradicts these principles, the guideline wins.
 
+${BD_STANDARDS}
+${NOT_SPECIFIED_RULES}
+${converterReading}
 # JSON OUTPUT
 Respond ONLY with a single JSON object conforming to the provided schema.
 ${guidelines}
@@ -1275,7 +1275,7 @@ ${feedbackExamples}
                 parts.push({ inlineData: { mimeType: fileObj.type, data: fileObj.data } });
             }
 
-            const comparisonFieldSchema = { type: "OBJECT", properties: { "customerValue": { "type": "STRING" }, "blindIQValue": { "type": "STRING" }, "result": { "type": "STRING", "enum": ["MATCH", "MISMATCH", "OMISSION", "NOTE"] }, "confidence": { "type": "NUMBER" } }, required: ["customerValue", "blindIQValue", "result", "confidence"] };
+            const comparisonFieldSchema = { type: "OBJECT", properties: { "customerValue": { "type": "STRING" }, "blindIQValue": { "type": "STRING" }, "result": { "type": "STRING", "enum": RESULT_VALUES }, "confidence": { "type": "NUMBER" } }, required: ["customerValue", "blindIQValue", "result", "confidence"] };
             const schema = {
                 type: "OBJECT",
                 properties: {
@@ -1479,10 +1479,10 @@ ${feedbackExamples}
                     if (!hasMismatch && !hasAlert) {
                         (data.lineItems || []).forEach(item => {
                             Object.values(item).forEach(field => {
-                                if (field && (field.confidence * 100) < 90) hasLowConfidence = true;
+                                if (field && field.result !== 'NOT_SPECIFIED' && (field.confidence * 100) < 90) hasLowConfidence = true;
                             });
                             (item.specifications || []).forEach(spec => {
-                                if ((spec.specComparison.confidence * 100) < 90) hasLowConfidence = true;
+                                if (spec.specComparison.result !== 'NOT_SPECIFIED' && (spec.specComparison.confidence * 100) < 90) hasLowConfidence = true;
                             });
                         });
                     }
@@ -1695,12 +1695,13 @@ ${feedbackExamples}
         }
 
         function renderReportTable(data) {
-            const getIndicator = (result) => ({ 'MISMATCH': '🔴', 'OMISSION': '🟡', 'MATCH': '🟢', 'NOTE': '🔵' }[result] || '');
+            const getIndicator = (result) => ({ 'MISMATCH': '🔴', 'OMISSION': '🟡', 'MATCH': '🟢', 'NOTE': '🔵', 'NOT_SPECIFIED': '⚪' }[result] || '');
             
             const renderCell = (field, fieldName, label) => {
                 const isMismatch = field && field.result === 'MISMATCH';
                 const isOmission = field && field.result === 'OMISSION';
-                const isLowConfidence = field && !isMismatch && !isOmission && (field.confidence * 100) < 90;
+                const isNotSpecified = field && field.result === 'NOT_SPECIFIED';
+                const isLowConfidence = field && !isMismatch && !isOmission && !isNotSpecified && (field.confidence * 100) < 90;
                 const value = field ? field.blindIQValue : 'N/A';
                 const customerVal = field ? field.customerValue : 'N/A';
 
@@ -1724,6 +1725,10 @@ ${feedbackExamples}
                     cellClasses += ' bg-orange-50';
                     textClasses += ' text-orange-700';
                     statusBadge = '<span class="status-badge bg-orange-100 text-orange-600">OMISSION</span>';
+                } else if (isNotSpecified) {
+                    textClasses += ' text-slate-500';
+                    tooltip = `<div class="tooltip">Not on the customer's order: Blind IQ's value (the Blind Designs standard or the capturer's choice)</div>`;
+                    statusBadge = '<span class="status-badge bg-slate-100 text-slate-500">not on order</span>';
                 } else if (isLowConfidence) {
                     cellClasses += ' bg-orange-50';
                     textClasses += ' text-orange-700';
@@ -1812,10 +1817,12 @@ ${feedbackExamples}
                 const specHtml = (lineItem.specifications || []).map((spec, specIndex) => {
                     const isMismatch = spec.specComparison.result === 'MISMATCH';
                     const isOmission = spec.specComparison.result === 'OMISSION';
-                    const isLowConfidence = (spec.specComparison.confidence * 100) < 90;
+                    const isNotSpecified = spec.specComparison.result === 'NOT_SPECIFIED';
+                    const isLowConfidence = !isNotSpecified && (spec.specComparison.confidence * 100) < 90;
 
                     let resultClass = 'spec-match';
                     if (isMismatch) resultClass = 'spec-mismatch';
+                    else if (isNotSpecified) resultClass = 'spec-not-specified';
                     else if (isLowConfidence) resultClass = 'spec-low-confidence';
 
                     let text = `${spec.specName}=${spec.specComparison.blindIQValue}`;
@@ -1827,7 +1834,9 @@ ${feedbackExamples}
                     }
                     
                     let tooltip = '';
-                    if (isLowConfidence && !isMismatch) {
+                    if (isNotSpecified) {
+                        tooltip = `<div class="tooltip">Not on the customer's order</div>`;
+                    } else if (isLowConfidence && !isMismatch) {
                         tooltip = `<div class="tooltip">Confidence: ${Math.round(spec.specComparison.confidence * 100)}%</div>`;
                     }
 
@@ -2416,6 +2425,10 @@ ${feedbackExamples}
             const LOW_CONFIDENCE = 0.75;
             const FIELDS = ['item', 'location', 'qty', 'width', 'drop', 'colour', 'control1', 'control2', 'blindType', 'range', 'fix'];
             (data.lineItems || []).forEach(item => {
+                // Paul's critical fields are never "not on the order": a missing one stays an OMISSION.
+                CRITICAL_FIELDS.forEach(f => {
+                    if (item[f] && item[f].result === 'NOT_SPECIFIED') { item[f].result = 'OMISSION'; item[f].notSpecifiedCritical = true; }
+                });
                 FIELDS.forEach(f => {
                     if (item[f] && item[f].confidence < LOW_CONFIDENCE && item[f].result === 'MATCH') {
                         item[f].result = 'NOTE';
@@ -3377,7 +3390,7 @@ ${feedbackExamples}
         // --- BlindIQ XML Converter (self-contained section; see js/biq-converter-ui.js) ---
         if (typeof pdfjsLib !== 'undefined') pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
         setupCollapsible(document.getElementById('biq-converter-header'), document.getElementById('biq-converter-content'), 'ob_biq_open');
-        initBiqConverter({
+        BiqUI.initBiqConverter({
             db, collection, doc, getDocs, setDoc, onSnapshot,
             PROXY_API_URL, EXTRACTION_MODEL, COMPARISON_MODEL,
             getFabricProperties, getMotorProperties, getTubeProperties,

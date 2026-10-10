@@ -30,7 +30,18 @@ export const BIQ_SEED_MAPPINGS = {
     // Per-blind-type availability matrices (from BlindIQ's own linkage tables, via SQL export).
     // controlsScoped: { "<blindTypeId>": [controlId,...] } or { "<id>": {c1:[...], c2:[...]} }.
     // Empty until the matrix is imported — all checks stay silent with no data.
-    controlsScoped: {}, fixesScoped: {}
+    controlsScoped: {}, fixesScoped: {},
+    // BlindIQ catalogue linkage + status (SQL extract, imported like every other category; all
+    // checks that use them stay silent until they are loaded):
+    //   rangeColours / rangeFixes: "<rangeId>" -> [ids] (Relate_Range_Colours / Relate_Range_Fixes)
+    //   rangeBlindType: "<rangeId>" -> blindTypeId
+    //   blindTypeHidden / rangeHidden / colourHidden: "<id>" -> 1 retired (hidden) / 0 live
+    //   sundryInactive: "<sundryId>" -> 1 inactive / 0 active
+    //   sizeWarnings: "<blindTypeId>" -> [{dim:'w'|'d', op:'lt'|'gt', level, v, msg}]
+    // Derived data: regenerate from the SQL extract rather than hand-editing (not shown as
+    // mapping-manager tabs for that reason).
+    rangeColours: {}, rangeFixes: {}, rangeBlindType: {},
+    blindTypeHidden: {}, rangeHidden: {}, colourHidden: {}, sundryInactive: {}, sizeWarnings: {}
 };
 export const BIQ_MAPPING_CATEGORIES = {
     blindTypes: { label: 'Blind types', xml: 'COI_BlindType_Link' },
@@ -67,13 +78,20 @@ const BIQ_ALIASES = {
         'urban hinged': 'urban hinged shutter', 'altra hinged': 'altra hinged shutter', 'altra fold': 'altra fold shutter',
         'vertical blind': '90mm vertical blind', 'vertical': '90mm vertical blind', '90mm vertical': '90mm vertical blind',
         // Blind Guys workbook "Type" column vocabulary (J0000340-4, 21 Aug)
-        'system 40': 'roller system 40', 'system 45': 'roller system 45', 'system 55': 'roller system 55'
+        'system 40': 'roller system 40', 'system 45': 'roller system 45', 'system 55': 'roller system 55',
+        // Blind Guys outdoor sheet (BD1-ORB) Type column: 41 lines since June arrived unmapped
+        'free hang': 'outdoor free hang', 'channel x': 'outdoor channel x', 'zip x': 'outdoor zip x', 'wire x': 'outdoor wire x'
     },
     fixes: {
         'f/f': 'face', 'ff': 'face', 'face fix': 'face', 'facefix': 'face',
         'i/r': 'reveal', 'ir': 'reveal', 'inside reveal': 'reveal', 'recess': 'reveal', 'standard recess': 'reveal', 'standard facefix': 'face',
         'rev': 'reveal', 'rev l': 'reveal', 'rev r': 'reveal', 'reveal l': 'reveal', 'reveal r': 'reveal',
-        'side fix': 'side', 'top fix': 'top'                        // TBD software wording (catalogue: side=6, top=7)
+        'side fix': 'side', 'top fix': 'top',                       // TBD software wording (catalogue: side=6, top=7)
+        // Mathéo sheets: "F/Fix" (116 of 117 converted lines since June stored Face), "Reveal Fix", "T Fix" (top
+        // fix — Reveal on every range that has no Top, see biqRepairTopFix); Blind Guys "Special - Reveal"
+        'f/fix': 'face', 'f fix': 'face', 'f/fx': 'face', 'face fixed': 'face',
+        'r/fix': 'reveal', 'r fix': 'reveal', 'reveal fix': 'reveal', 'reveal fixed': 'reveal', 'special - reveal': 'reveal',
+        't fix': 'top', 't/fix': 'top', 'top fixed': 'top'
     }
 };
 export function biqResolve(mappings, cat, name) {
@@ -92,14 +110,57 @@ export function biqResolve(mappings, cat, name) {
     }
     return { id: null, known: false };
 }
-export function biqResolveColour(mappings, range, colour) {
+// The colours BlindIQ links to the item's range (Relate_Range_Colours) — [] for a range that has
+// no colours (bamboo, curtain tracks, headrails), null when the range is unknown or the linkage
+// hasn't been imported (every check built on it then stays silent).
+export function biqRangeColourIds(mappings, blindTypeName, rangeName) {
+    const rc = mappings.rangeColours;
+    if (!rc || !Object.keys(rc).length) return null;
+    const rr = biqResolveRange(mappings, blindTypeName || '', rangeName);
+    if (!rr.known) return null;
+    const list = rc[String(rr.id)];
+    return Array.isArray(list) ? list : null;
+}
+// The fixes BlindIQ links to the item's range (Relate_Range_Fixes): [] = the range takes no item
+// fix (curtain tracks, Ripple Shade), null = unknown / not imported.
+export function biqRangeFixIds(mappings, blindTypeName, rangeName) {
+    const rf = mappings.rangeFixes;
+    if (!rf || !Object.keys(rf).length) return null;
+    const rr = biqResolveRange(mappings, blindTypeName || '', rangeName);
+    if (!rr.known) return null;
+    const list = rf[String(rr.id)];
+    return Array.isArray(list) ? list : null;
+}
+// blindType (optional) lets the range resolve per blind type; without it only globally-unique
+// range names scope the lookup. Result: {id, known, onRange} — onRange is true/false when the
+// range's own colour list is known (false = BlindIQ doesn't offer this colour on the range).
+export function biqResolveColour(mappings, range, colour, blindType) {
     const k1 = biqLc(range) + '|' + biqLc(colour), k2 = '|' + biqLc(colour);
-    if (mappings.colours[k1] != null) return { id: mappings.colours[k1], known: true };
-    if (mappings.colours[k2] != null) return { id: mappings.colours[k2], known: true };
+    const scope = biqLc(colour) ? biqRangeColourIds(mappings, blindType, range) : null;
+    const mark = res => { if (scope) res.onRange = scope.some(id => String(id) === String(res.id)); return res; };
+    const squash = s => biqLc(s).replace(/[\s\-]+/g, '');
+    if (mappings.colours[k1] != null) return mark({ id: mappings.colours[k1], known: true });
+    // The colour as THIS range carries it first: colour names repeat across IDs ("Midnight" is 604
+    // on Moscow but the global key pointed at an unlinked twin), and spacing variants resolve
+    // within the range's own list before the whole catalogue.
+    if (scope && scope.length) {
+        const cn = mappings.colourNames || {};
+        let hit = scope.find(id => biqLc(cn[String(id)]) === biqLc(colour));
+        if (hit == null) { const hs = scope.filter(id => squash(cn[String(id)]) === squash(colour)); if (hs.length === 1) hit = hs[0]; }
+        // Designer fabrics carry their roll width in BlindIQ ("Argent Gold 2050mm @"); dealers write
+        // fabric + colour only. A live colour wins over a retired twin.
+        if (hit == null && squash(colour)) {
+            const bare = s => squash(String(s || '').replace(/\s*\d{3,4}\s*mm\b.*$/i, ''));
+            let hs = scope.filter(id => bare(cn[String(id)]) === squash(colour));
+            if (hs.length > 1) hs = hs.filter(id => !(mappings.colourHidden || {})[String(id)]);
+            if (hs.length === 1) hit = hs[0];
+        }
+        if (hit != null) return { id: hit, known: true, scoped: true, onRange: true };
+    }
+    if (mappings.colours[k2] != null) return mark({ id: mappings.colours[k2], known: true });
     if (!biqLc(colour)) return { id: null, known: false, empty: true };
     // Spacing-insensitive fallback: "Dunegrey" -> "Dune Grey". Only accepted when the squashed
     // form maps to exactly one colour, so it can never silently pick between two fabrics.
-    const squash = s => biqLc(s).replace(/[\s\-]+/g, '');
     if (!mappings._colourSquash) {
         const idx = {};
         Object.keys(mappings.colours).forEach(k => {
@@ -111,7 +172,7 @@ export function biqResolveColour(mappings, range, colour) {
         catch (e) { mappings._colourSquash = idx; }
     }
     const hit = mappings._colourSquash[squash(colour)];
-    if (hit != null) return { id: hit, known: true, alias: true };
+    if (hit != null) return mark({ id: hit, known: true, alias: true });
     return { id: null, known: false };
 }
 
@@ -119,12 +180,41 @@ export function biqResolveColour(mappings, range, colour) {
 // Range lookup, blind-type-scoped: BlindIQ range names repeat across blind types
 // ("Sheerweave 4500" exists 12x), so try '<blindTypeId>|<range>' first, then the
 // flat map (which only contains globally-unique names).
+// A blind type's own range whose NAME FAMILY contains the wording: BlindIQ names some ranges per
+// product with a suffix or as a "/"-joined family — Roller System 55 has "5 Screen / Aventus 5%"
+// where Roller System 40 has "5 Screen", Double Roller has "Blockout/Duo Block/Surface Block/Any
+// Screen". Matches the wording as a whole "/"-segment or a segment's leading words; only a UNIQUE
+// live candidate counts. Indexed per load (rebuilt when the data changes).
+function biqScopedRangeFamily(mappings, btId, key) {
+    const rs = mappings.rangesScoped || {}, hid = mappings.rangeHidden || {};
+    const sig = Object.keys(rs).length + ':' + Object.keys(hid).length;
+    let idx = mappings._rangeFamilyIdx;
+    if (!idx || idx.sig !== sig) {
+        idx = { sig, byType: {} };
+        Object.keys(rs).forEach(k => {
+            const i = k.indexOf('|'), t = k.slice(0, i), name = k.slice(i + 1), id = rs[k];
+            if (+hid[String(id)] === 1) return;
+            (idx.byType[t] = idx.byType[t] || []).push({ id, segs: name.split('/').map(s => biqNorm(s)).filter(Boolean) });
+        });
+        try { Object.defineProperty(mappings, '_rangeFamilyIdx', { value: idx, enumerable: false, configurable: true, writable: true }); }
+        catch (e) { mappings._rangeFamilyIdx = idx; }
+    }
+    const hits = new Set(), multiWord = key.split(' ').length > 1;   // one bare word ("edge") is too loose to extend
+    (idx.byType[String(btId)] || []).forEach(r => { if (r.segs.some(s => s === key || (multiWord && s.startsWith(key + ' ')))) hits.add(r.id); });
+    return hits.size === 1 ? [...hits][0] : null;
+}
 export function biqResolveRange(mappings, blindTypeName, rangeName) {
     const key = biqLc(rangeName);
     if (!key) return { id: null, known: false, empty: true };
     const bt = biqResolve(mappings, 'blindTypes', blindTypeName);
     if (bt.known && mappings.rangesScoped && mappings.rangesScoped[bt.id + '|' + key] != null)
         return { id: mappings.rangesScoped[bt.id + '|' + key], known: true, scoped: true };
+    // Before the global name map (which can only answer with ANOTHER blind type's range): the
+    // blind type's own family member ("5 Screen" on Roller System 55 -> "5 Screen / Aventus 5%").
+    if (bt.known && mappings.rangesScoped) {
+        const fam = biqScopedRangeFamily(mappings, bt.id, key);
+        if (fam != null) return { id: fam, known: true, scoped: true, family: true };
+    }
     if (mappings.ranges[key] != null) return { id: mappings.ranges[key], known: true };
     const stripped = key.replace(/\s*\d+$/, '').trim();          // "Duo Screen40" -> "Duo Screen" (Windovert suffixes)
     if (stripped && stripped !== key) {
@@ -146,24 +236,48 @@ export function biqRangeNamesFor(mappings, blindTypeName) {
 }
 // Control drop from the range's real BlindIQ formula ("[drop]*0.75", "[drop]*0.66",
 // "400", "0", "[drop]-0"); falls back to the 75% heuristic when the range is unknown.
+// BlindIQ evaluates the range formula and rounds half to even (.NET Math.Round): on 2026 manual
+// Roller System 40 orders a drop giving x.5 is stored even 3,353 times out of 3,524 (1002 x 0.75 =
+// 751.5 -> 752, 1006 x 0.75 = 754.5 -> 754), x.75 goes up 653 of 711, and wood venetians at 0.66
+// round to nearest 1,101 of 1,170. Truncating left a 1mm difference on ~1 in 4 converted lines.
+export function biqRoundHalfEven(x) {
+    const y = Math.round(x * 1e6) / 1e6, f = Math.floor(y);
+    return Math.abs(y - f - 0.5) < 1e-6 ? (f % 2 === 0 ? f : f + 1) : Math.round(y);
+}
+// A control length the order states, in mm: "3640", "Custom: 3640", "Custom: 4480mm", or metres
+// ("Custom 2.5", "2.5m"). Blind Guys sheets write a custom length as "Custom: 3640"; it never parsed,
+// so the formula's 2475 went out where the dealer asked for 3640 — BlindIQ stored the dealer's
+// figure on 9 of the 10 such lines we could check since June (2500 for "Custom 2.5"). "Standard",
+// a percentage, or text without a length gives '' (the range formula applies).
+export function biqStatedControlLength(raw) {
+    const r = biqNorm(raw);
+    if (!r || /std|standard|%/i.test(r)) return '';
+    const m = r.match(/(\d+(?:[.,]\d+)?)\s*(mm|m|metres?|meters?)?(?![a-z\d])/i);
+    if (!m) return '';
+    let v = parseFloat(m[1].replace(',', '.'));
+    const unit = biqLc(m[2] || '');
+    if ((unit && unit !== 'mm') || (!unit && v < 10 && /[.,]/.test(m[1]))) v *= 1000;
+    return v >= 100 ? String(Math.round(v)) : '';
+}
 export function biqComputeControlDropV2(mappings, raw, drop, blindTypeName, rangeName) {
     const r = biqNorm(raw);
-    if (/^\d+(\.\d+)?$/.test(r)) return String(Math.round(+r));
+    const stated = biqStatedControlLength(r);
+    if (stated) return stated;
     const d = parseFloat(drop);
     if (!d && d !== 0) return '';
     if (r && !/std|standard|75/i.test(r)) return '';
     const rr = biqResolveRange(mappings, blindTypeName, rangeName);
     if (rr.known) {
         const entry = (mappings.rangeFormulas || {})[String(rr.id)];
-        if (entry === undefined) return String(Math.floor(d * 0.75)); // range known, formula not in DB -> heuristic
+        if (entry === undefined) return String(biqRoundHalfEven(d * 0.75)); // range known, formula not in DB -> heuristic
         const f = String(entry).trim();
         if (!f || f === '0') return '0';                              // DB says no control drop (curtains etc.)
-        let m = f.match(/^\[drop\]\s*\*\s*([\d.]+)$/i);   if (m) return String(Math.floor(d * parseFloat(m[1])));
+        let m = f.match(/^\[drop\]\s*\*\s*([\d.]+)$/i);   if (m) return String(biqRoundHalfEven(d * parseFloat(m[1])));
         m = f.match(/^\[drop\]\s*-\s*([\d.]+)$/i);          if (m) return String(Math.round(d - parseFloat(m[1])));
         m = f.match(/^[\d.]+$/);                                if (m) return String(Math.round(parseFloat(f)));
-        return String(Math.floor(d * 0.75));
+        return String(biqRoundHalfEven(d * 0.75));
     }
-    return String(Math.floor(d * 0.75));
+    return String(biqRoundHalfEven(d * 0.75));
 }
 // Exact-name (or stock-code) sundry lookup -> {sundry, type} or null.
 export function biqResolveSundry(mappings, text) {
@@ -247,9 +361,34 @@ export const BIQ_MOTOR_ORDER_TYPES = ['motors somfy rts', 'motors motion', 'moto
 export function biqMotorSundryView(mappings) {
     const ids = new Set(BIQ_MOTOR_ORDER_TYPES.map(n => String((mappings.sundryTypes || {})[n])).filter(s => s && s !== 'undefined'));
     if (!ids.size) return mappings;
+    const inactive = mappings.sundryInactive || {};
     const sundries = {};
-    for (const [k, e] of Object.entries(mappings.sundries || {})) if (ids.has(String(e.type))) sundries[k] = e;
+    for (const [k, e] of Object.entries(mappings.sundries || {})) if (ids.has(String(e.type)) && +inactive[String(e.sundry)] !== 1) sundries[k] = e;
     return Object.keys(sundries).length ? { sundries } : mappings;
+}
+// Wording that names motorisation hardware: resolved within the seven motor order types only.
+// One list for every path (deterministic parsers and the AI discernment shortlist) — the Mathéo
+// accessory path used a narrower one and sent "Smart Hub One Touch Dual" to the whole catalogue,
+// where it matched the type-13 factory record instead of the orderable hub (2 Oct 2026).
+export const BIQ_MOTORISH_RE = /motor|\brts\b|remote|adapter|adaptor|situo|maestria|sonesse|smoove|tahoma|telis|glydea|zigbee|\bio\b|charger|solar|battery|receiver|wall switch|one\s*touch|\bdual\b|crown|wire\s*free|li-?ion|rechargeable|extension|matter|\bhub\b|timer/i;
+// Every sundry BlindIQ will take on an order: ACTIVE, and not a type-13 "components motor" factory
+// record (Russel 2026-08-07). Used by every non-motor lookup; falls back to the full mappings
+// when the sundries aren't loaded. Cached until the data changes.
+export function biqOrderableSundryView(mappings) {
+    const all = mappings.sundries || {}, inactive = mappings.sundryInactive || {};
+    const t13 = String((mappings.sundryTypes || {})['components motor'] || 13);
+    const sig = Object.keys(all).length + ':' + Object.keys(inactive).length + ':' + t13;
+    const c = mappings._orderableSundries;
+    if (c && c.sig === sig) return c.view;
+    const sundries = {};
+    for (const [k, e] of Object.entries(all)) {
+        if (!e || String(e.type) === t13 || +inactive[String(e.sundry)] === 1) continue;
+        sundries[k] = e;
+    }
+    const view = { sundries, sundryNames: mappings.sundryNames, sundryTypes: mappings.sundryTypes };
+    try { Object.defineProperty(mappings, '_orderableSundries', { value: { sig, view }, enumerable: false, configurable: true, writable: true }); }
+    catch (e) { mappings._orderableSundries = { sig, view }; }
+    return view;
 }
 // Turn motorisation text (motor / remote / adapter) into an order sundry line,
 // aggregating duplicates by description.
@@ -263,7 +402,7 @@ export function biqAddMotorSundry(mappings, order, text, qty, motorContext) {
     // unique-match rule: "16ch" -> "16 channel" (one touch remotes), "4ch" -> "4" (smoove origin),
     // and a parenthetical-stripped form ("Tahoma Switch Pro (ZB)" -> "Tahoma Switch Pro").
     // First variant that yields a unique hit wins; anything still unmatched stays blank + flagged.
-    const view = motorContext ? biqMotorSundryView(mappings) : mappings;
+    const view = motorContext ? biqMotorSundryView(mappings) : biqOrderableSundryView(mappings);
     const variants = [];
     // Dealer sheets append marketing tails the catalogue never carries —
     // "... (max width 4000mm) Available in white, black and grey" (Blind Guys
@@ -274,6 +413,10 @@ export function biqAddMotorSundry(mappings, order, text, qty, motorContext) {
     // Dealer sheets prefix the brand ("Somfy Situo 5 RTS Pure") where the catalogue mostly
     // doesn't — try each base with a leading "Somfy" stripped too (Mathéo, Russel 2026-08-07).
     bases.slice().forEach(b => { const s = biqNorm(b.replace(/^somfy\s+/i, '')); if (s && s !== b && !bases.includes(s)) bases.push(s); });
+    // A leading "Motors" is the naming of BlindIQ's type-13 factory records ("Motors Smart Hub One
+    // Touch Dual") — dealers who copy those names mean the orderable part ("One Touch Dual Smart
+    // Hub"), which the motor view (type 13 excluded) can only find without the prefix.
+    if (motorContext) bases.slice().forEach(b => { const s = biqNorm(b.replace(/^motors?\s+/i, '')); if (s && s !== b && !bases.includes(s)) bases.push(s); });
     for (const base of bases) {
         for (const v of [base, base.replace(/(\d+)\s*ch\b/gi, '$1 channel'), base.replace(/(\d+)\s*ch\b/gi, '$1')]) {
             const n = biqNorm(v);
@@ -318,8 +461,35 @@ export function biqAddMotorSundry(mappings, order, text, qty, motorContext) {
     order.sundries.push(su);
 }
 // Recompute auto-filled control drops once mappings/blind types resolve.
+// BlindIQ sizes run in 5mm steps for these products: 99%+ of manually captured 2026 widths and
+// drops on rollers, venetians, valances, verticals, Roman, Allusion, bamboo and Ripple/Glide
+// curtains (Roller System 40: 25,748 of 25,778 widths). Shutters, Perfect Fit, outdoor zip /
+// channel / wire and skylight products are made to the millimetre and are left alone. Converted
+// sizes off the step were rounded by hand (287 of 512 such widths/drops on OrderBot-imported
+// orders since June), so a size read from the order is rounded once to the nearest 5mm (...1/...2
+// down, ...3/...4 up, as capturers do) and the order's own figures are kept in the notes. Only
+// the first pass rounds: a size the capturer types afterwards is theirs.
+const BIQ_FIVE_MM_TYPES = /^(element\s+)?(roller|double roller|vision|wood|retro|35mm aluminium|valance|90mm vertical|roman|romashade|allusion|bamboo)|^curtain (ripple|glide)/i;
+function biqRoundSizes(mappings, it) {
+    if (it._sizeRounded) return;
+    it._sizeRounded = true;
+    const bt = biqResolve(mappings, 'blindTypes', it.blindType);
+    const name = bt.known ? ((mappings.blindTypeNames || {})[String(bt.id)] || it.blindType) : '';
+    if (!name || !BIQ_FIVE_MM_TYPES.test(biqNorm(name))) return;
+    const done = [];
+    ['width', 'drop'].forEach(f => {
+        const s = biqNorm(String(it[f] == null ? '' : it[f]));
+        if (!/^\d{2,5}$/.test(s)) return;
+        const n = +s, m = n % 5;
+        if (!m) return;
+        const v = m <= 2 ? n - m : n + (5 - m);
+        done.push(f + ' ' + n + ' -> ' + v); it[f] = String(v);
+    });
+    if (done.length) it.notes = (it.notes ? it.notes + ' | ' : '') + 'Size in 5mm steps (' + done.join(', ') + ')';
+}
 export function biqRecomputeControlDrops(mappings, order) {
     (order ? order.items : []).forEach(it => {
+        biqRoundSizes(mappings, it);
         if (it._cdAuto || !biqNorm(it.controlDrop)) {
             const v = biqComputeControlDropV2(mappings, '', it.drop, it.blindType, it.range);
             if (v !== '') { it.controlDrop = v; it._cdAuto = true; }
@@ -393,11 +563,27 @@ export function biqVariantSpec(mappings, blindTypeName, rangeName) {
         if (rr.known) {
             const mid = (mappings.variantSheetIndex || {})[bt.id + '|' + rr.id];
             const sh = mid != null ? (mappings.variantTemplateSheets || {})[String(mid)] : null;
-            if (sh && sh.length) return sh;
+            if (sh && sh.length) return biqSplitSpecValues(sh);
         }
     }
     const t = (mappings.variantTemplates || {})[String(bt.id)];
-    return (t && t.length) ? t : null;
+    return (t && t.length) ? biqSplitSpecValues(t) : null;
+}
+// BlindIQ keeps some option lists as one comma-joined entry — Urban shutter "Rail Size" is
+// "50mm,100mm", Build Out "12mm,25mm,37mm", Biscuit Join "Yes RH, Yes LH RH" — and its own screens
+// offer the parts: orders store "50mm" / "100mm" (88 of the converted shutter lines since June),
+// never the joined text, so the joined entry made every real value look off-list (63 lines
+// flagged). Split once per sheet; the same expanded sheet is returned on every call.
+const BIQ_SPEC_SPLIT = new WeakMap();
+function biqSplitSpecValues(spec) {
+    let out = BIQ_SPEC_SPLIT.get(spec);
+    if (out) return out;
+    const joined = o => (o.values || []).some(v => /,/.test(String(v)));
+    out = spec.some(joined)
+        ? spec.map(o => joined(o) ? Object.assign({}, o, { values: [...new Set(o.values.flatMap(v => String(v).split(',').map(biqNorm).filter(Boolean)))] }) : o)
+        : spec;
+    BIQ_SPEC_SPLIT.set(spec, out);
+    return out;
 }
 // Template as [key, default] pairs — DB spec when available, legacy heuristics otherwise.
 export function biqTemplateFor2(mappings, blindTypeName, rangeName) {
@@ -464,8 +650,12 @@ export function biqDroppedVariants(mappings, it) {
 }
 
 // ---------- fabric split ("5 Screen Charcoal Grey" -> range + colour) ----------
+// Screen fabrics are often written with their openness as a percentage or run together ("5% SCREEN
+// WHITE STONE", "DUOSCREEN" — Curtain & Blind Workshop); BlindIQ's ranges are "5 Screen" / "Duo Screen".
 export function biqSplitFabric(mappings, fabric, blindTypeName) {
-    const f = biqNorm(fabric); if (!f) return { range: '', colour: '' };
+    const f0 = biqNorm(fabric); if (!f0) return { range: '', colour: '' };
+    const saved0 = mappings.fabricSplits[biqLc(f0)]; if (saved0) return { range: saved0.range, colour: saved0.colour };
+    const f = f0.replace(/\b(\d{1,2})\s*%\s*(screen)\b/ig, '$1 $2').replace(/\bduoscreen\b/ig, 'Duo Screen');
     const saved = mappings.fabricSplits[biqLc(f)]; if (saved) return { range: saved.range, colour: saved.colour };
     const ranges = biqRangeNamesFor(mappings, blindTypeName);
     const fl = biqLc(f);
@@ -484,7 +674,116 @@ export function biqReSplitFabrics(mappings, order) {
         if (it._origFabric && !biqResolveRange(mappings, it.blindType, it.range).known) {
             const f = biqSplitFabric(mappings, it._origFabric, it.blindType);
             if (biqResolveRange(mappings, it.blindType, f.range).known) { it.range = f.range; if (f.colour) it.colour = f.colour; }
+            // A fabric that holds no range name at all is a colour: designer fabrics are written
+            // "Cotton Flower Mineral" for BlindIQ's Designer Fab G colour "Cotton Flower Mineral 2050mm @"
+            // (24 Blind Guys lines since June). When exactly one live range sells it, it is a colour-only
+            // line and the range follows from it (biqInferRangeFromColour, noted).
+            else if (!biqLc(it.colour) && biqLc(it.range) === biqLc(it._origFabric) && biqRangesWithColour(mappings, it.blindType, it._origFabric).length === 1) {
+                it.colour = it._origFabric; it.range = '';
+            }
         }
+    });
+    biqInferRangeFromColour(mappings, order);
+    biqRemapRetiredRanges(mappings, order);
+}
+
+// Live ranges of a blind type that carry a colour name — from BlindIQ's range->colour links,
+// limited to ranges that are not retired and have an option sheet (orderable). Cached per load.
+export function biqRangesWithColour(mappings, blindTypeName, colour) {
+    const rc = mappings.rangeColours, cn = mappings.colourNames || {};
+    if (!rc || !Object.keys(rc).length || !biqLc(colour)) return [];
+    const bt = biqResolve(mappings, 'blindTypes', blindTypeName);
+    if (!bt.known) return [];
+    const rbt = mappings.rangeBlindType || {}, hid = mappings.rangeHidden || {}, vsi = mappings.variantSheetIndex || {};
+    const sig = Object.keys(rc).length + ':' + Object.keys(rbt).length + ':' + Object.keys(hid).length + ':' + Object.keys(vsi).length;
+    if (!mappings._colourRangeIdx || mappings._colourRangeIdx.sig !== sig) {      // rebuilt when an import changes the data
+        const idx = { sig };
+        const hasSheets = Object.keys(vsi).length > 0;
+        Object.keys(rc).forEach(rid => {
+            const t = rbt[rid];
+            if (t == null || +hid[rid] === 1 || (hasSheets && vsi[t + '|' + rid] == null)) return;
+            (rc[rid] || []).forEach(cid => {
+                const k = t + '|' + biqLc(cn[String(cid)] || '');
+                (idx[k] = idx[k] || []).push(+rid);
+            });
+        });
+        try { Object.defineProperty(mappings, '_colourRangeIdx', { value: idx, enumerable: false, configurable: true, writable: true }); }
+        catch (e) { mappings._colourRangeIdx = idx; }
+    }
+    const exact = mappings._colourRangeIdx[bt.id + '|' + biqLc(colour)];
+    if (exact && exact.length) return [...new Set(exact)];
+    // a colour written without BlindIQ's roll-width suffix ("Argent Gold" = "Argent Gold 2050mm @")
+    const bare = x => biqLc(x).replace(/\s*\d{3,4}\s*mm\b.*$/, '').replace(/[\s\-]+/g, '');
+    const want = bt.id + '|' + bare(colour), out = [];
+    Object.keys(mappings._colourRangeIdx).forEach(k => {
+        if (k === 'sig' || !/\d{3,4}\s*mm/.test(k)) return;
+        const i = k.indexOf('|');
+        if (k.slice(0, i + 1) + bare(k.slice(i + 1)) === want) out.push(...mappings._colourRangeIdx[k]);
+    });
+    return [...new Set(out)];
+}
+// A missing or unknown range is taken from the colour when exactly ONE live range of the blind
+// type carries that colour (84% of Roller System 40 colour names belong to a single range):
+// "Solar" on a Roller System 40 is Moscow Fr — capturers made that fix 12 times on 30 Sep. When
+// the order names a range that doesn't resolve, a colour shared by several ranges still decides
+// if exactly one of them starts with the order's wording ("Moscow" + "Sea Mist" -> Moscow Fr).
+// Noted on the item; a range that resolves is never changed here.
+export function biqInferRangeFromColour(mappings, order) {
+    (order ? order.items : []).forEach(it => {
+        if (!biqLc(it.colour) || biqResolveRange(mappings, it.blindType, it.range).known) return;
+        if (biqNeedsSplit(mappings, it)) return;                    // the fabric splitter owns that case
+        let cands = biqRangesWithColour(mappings, it.blindType, it.colour);
+        const rn = mappings.rangeNames || {};
+        const given = biqLc(it.range);
+        if (cands.length > 1 && given) {
+            const re = new RegExp('^' + given.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b');
+            cands = cands.filter(id => re.test(biqLc(rn[String(id)] || '')));
+        }
+        if (cands.length !== 1) return;
+        const name = rn[String(cands[0])]; if (!name) return;
+        if (!biqResolveRange(mappings, it.blindType, name).known) return;
+        const note = 'Range ' + name + ' taken from colour "' + it.colour + '"' + (given ? ' (order said "' + it.range + '")' : '') + ' — confirm';
+        it.range = name; it._rangeInferred = true;
+        if (!biqLc(it.notes).includes(biqLc(note))) it.notes = (it.notes ? it.notes + ' | ' : '') + note;
+    });
+}
+
+// BlindIQ retires a fabric by hiding its range and re-listing the remaining stock under the blind
+// type's live "Discontinued" range as "<range> <colour>" ("Manhattan" + "Latte" -> Discontinued /
+// "Manhattan Latte"). Single colours of a live range retire the same way: Sheerweave 4500 Fr keeps
+// 4 colours while "Sheerweave 4500 Charcoal Slate" sits in Discontinued A (13 TBD lines were moved
+// there by hand). An order for a retired range, or for a colour its live range no longer carries,
+// that has such a twin is moved onto it (noted, and surfaced as a heads-up to confirm stock); the
+// twin may drop the range's fire-retardant " Fr" suffix. Anything else stays flagged.
+export function biqRemapRetiredRanges(mappings, order) {
+    const hid = mappings.rangeHidden || {}, rbt = mappings.rangeBlindType || {}, rc = mappings.rangeColours || {}, rn = mappings.rangeNames || {}, cn = mappings.colourNames || {};
+    if (!Object.keys(hid).length || !Object.keys(rc).length) return;
+    const base = n => biqLc(n).replace(/\s*#$/, '').replace(/^copy of\s+/, '');
+    (order ? order.items : []).forEach(it => {
+        if (!biqLc(it.colour)) return;
+        const rr = biqResolveRange(mappings, it.blindType, it.range);
+        if (!rr.known) return;
+        if (+hid[String(rr.id)] !== 1) {
+            const list = rc[String(rr.id)];
+            if (!Array.isArray(list) || !list.length) return;
+            if (biqResolveColour(mappings, it.range, it.colour, it.blindType).onRange !== false) return;
+        }
+        const bt = biqResolve(mappings, 'blindTypes', it.blindType);
+        const t = bt.known ? String(bt.id) : String(rbt[String(rr.id)]);
+        const b0 = base(rn[String(rr.id)] || it.range);
+        const wants = [b0 + ' ' + biqLc(it.colour)];
+        if (/\sfr$/.test(b0)) wants.push(b0.replace(/\s+fr$/, '') + ' ' + biqLc(it.colour));
+        const hits = [];
+        Object.keys(rn).forEach(rid => {
+            if (String(rbt[rid]) !== t || +hid[rid] === 1 || !/^discontinued\b/i.test(biqNorm(rn[rid]))) return;
+            (rc[rid] || []).forEach(cid => { if (wants.includes(biqLc(cn[String(cid)] || '').replace(/\s*#$/, ''))) hits.push([rid, cid]); });
+        });
+        if (hits.length !== 1) return;
+        const [rid, cid] = hits[0];
+        const from = it.range + ' / ' + it.colour;
+        it.range = rn[rid]; it.colour = cn[String(cid)]; it._discontinued = from;
+        const note = 'BlindIQ retired ' + from + ' — ordered from ' + it.range + ' / ' + it.colour + ' (confirm stock)';
+        if (!biqLc(it.notes).includes(biqLc(note))) it.notes = (it.notes ? it.notes + ' | ' : '') + note;
     });
 }
 
@@ -604,7 +903,9 @@ export function biqParseBlindGuysRows(rows) {
     let kind = 'roller';
     if (/double/.test(prod)) kind = 'doubleRoller';
     else if (/shutter/.test(prod)) kind = 'shutter';
+    else if (/alumin/.test(prod) && /venetian/.test(prod)) kind = 'aluVenetian';    // BD1-AV: 35mm / 50mm slats
     else if (/venetian|wood/.test(prod)) kind = 'venetian';
+    else if (/vertical/.test(prod)) kind = 'vertical';                              // BD1-EVB
     return { meta, items, kind, doubleRoller: kind === 'doubleRoller' };
 }
 // Roller + Double Roller line (the original mapping, unchanged).
@@ -617,7 +918,7 @@ function biqBgRoller(mappings, o, it, raw, doubleRoller, product) {
     it.control1 = raw['LH Control'] || ''; it.control2 = raw['RH Control'] || '';
     { const cl = biqNorm(raw['Control Length'] || '');
       it.controlDrop = biqComputeControlDropV2(mappings, cl, it.drop, it.blindType, it.range);
-      it._cdAuto = !/^\d/.test(cl); }
+      it._cdAuto = !biqStatedControlLength(cl); }
     it.variants = biqTemplateFor2(mappings, doubleRoller ? (product || 'Double Roller Blinds') : it.blindType, it.range);
     const mapv = (src, key) => { const v = cleanVal(raw[src]); if (v) biqSetVar(it.variants, key, v); };
     if (doubleRoller) {
@@ -642,9 +943,20 @@ function biqBgRoller(mappings, o, it, raw, doubleRoller, product) {
         else if (/coupl/.test(xb)) biqSetVar(it.variants, biqBracketOptionKey(mappings, it, 'coupled'), 'Yes');
         const ty = biqLc(raw['Type']); if (ty.includes('system 32')) biqSetVar(it.variants, 'System 32', 'Yes');
         if (ty.includes('1.5')) biqSetVar(it.variants, 'System 40 1.5:1', 'Yes');
+        // v11/v12 sheets offer "Upgrade Mechanism = System 40 1.5: 1". Capturers kept the upgrade on
+        // only 15 of the 79 lines that asked since June (BlindIQ fits it to heavy blinds: 23% of 5m²+
+        // manual blinds, 0.3% under 2m²), so it is not set automatically: the request goes to the
+        // notes and an amber heads-up instead of a "won't import" problem on every such line.
+        const um = cleanVal(raw['Upgrade Mechanism']);
+        if (um) {
+            it.notes = (it.notes ? it.notes + ' | ' : '') + 'Upgrade Mechanism on the sheet: ' + um;
+            if (/1\.5\s*:\s*1/.test(um)) it._upgradeAsk = 'System 40 1.5:1';
+            else if (/system\s*32/i.test(um)) it._upgradeAsk = 'System 32';
+        }
     }
     const motorTxt = cleanVal(raw['Motor']), remoteTxt = cleanVal(raw['Remotes']),
         accTxt = cleanVal(raw['Accessory']) || cleanVal(raw['Accessories']);
+    if (motorTxt) it._motorText = motorTxt;                // which motor drives THIS line (One Touch Dual rule)
     // preferMotors=true (like the TBD path): the catalogue holds most parts twice
     // ("Motors Sonesse 40 RTS 3/30" type 13 AND "Sonesse 40 Rts 3nm/30" type 23);
     // without it the fuzzy match sees both and stays ambiguous -> blank sundry ->
@@ -674,7 +986,7 @@ function biqBgRoller(mappings, o, it, raw, doubleRoller, product) {
         it._valanceOnlyRow = true;
         it._valance = vstage;
     }
-    const skip = new Set(['Item #', 'Location', 'Finished Width', 'Finished Height', 'Qty', 'Type', 'LH Control', 'RH Control', 'Control Length', 'Mechanism Colour', 'Bottom Bar Colour', 'Fabric', 'Fixing', 'Roll', 'Line Notes', 'Express', 'Extra Brackets', 'Front Blind Fabric', 'Back Blind Fabric', 'Configuration Front Blind', 'Configuration Back Blind', 'Cassette Colour', 'Fabric Insert Cassette', 'Roll Type Front', 'Roll Type Back', 'Steel Ball Chain', 'Remove Bracket Covers', 'Plastic Bottom Bar', 'Chain Tidy', 'Wired Side Guides', 'Fabric Only', 'Fabric Insert', 'System 40 70mm Cassette', 'Closed Cassette', 'Motor', 'Motor Type', 'Remotes', 'Accessory', 'Accessories', 'Valance Type', 'Valance Colour', 'Valance Width', 'Custom Valance Width', 'Valance Fix', 'Valance Returns', 'Top Board (for Face Fix):', 'Top Board (for Face Fix)', 'Mitre Valance LH', 'Mitre Valance RH', 'End Cap Colour', 'LH Side', 'RH Side']);
+    const skip = new Set(['Item #', 'Location', 'Finished Width', 'Finished Height', 'Qty', 'Type', 'LH Control', 'RH Control', 'Control Length', 'Mechanism Colour', 'Bottom Bar Colour', 'Fabric', 'Fixing', 'Roll', 'Line Notes', 'Express', 'Extra Brackets', 'Front Blind Fabric', 'Back Blind Fabric', 'Configuration Front Blind', 'Configuration Back Blind', 'Cassette Colour', 'Fabric Insert Cassette', 'Roll Type Front', 'Roll Type Back', 'Steel Ball Chain', 'Remove Bracket Covers', 'Plastic Bottom Bar', 'Chain Tidy', 'Wired Side Guides', 'Fabric Only', 'Fabric Insert', 'System 40 70mm Cassette', 'Closed Cassette', 'Motor', 'Motor Type', 'Remotes', 'Accessory', 'Accessories', 'Upgrade Mechanism', 'Valance Type', 'Valance Colour', 'Valance Width', 'Custom Valance Width', 'Valance Fix', 'Valance Returns', 'Top Board (for Face Fix):', 'Top Board (for Face Fix)', 'Mitre Valance LH', 'Mitre Valance RH', 'End Cap Colour', 'LH Side', 'RH Side']);
     for (const [k, v] of Object.entries(raw)) {
         if (skip.has(k)) continue; const cv = cleanVal(v); if (cv) biqSetVar(it.variants, k, cv);
     }
@@ -688,7 +1000,7 @@ function biqBgVenetian(mappings, o, it, raw) {
     it.control1 = raw['Control Side'] || ''; it.control2 = raw['Operation'] || '';
     { const cl = biqNorm(raw['Control Length'] || '');
       it.controlDrop = biqComputeControlDropV2(mappings, cl, it.drop, it.blindType, it.range);
-      it._cdAuto = !/^\d/.test(cl); }
+      it._cdAuto = !biqStatedControlLength(cl); }
     it.variants = biqTemplateFor2(mappings, it.blindType, it.range);
     const mapv = (src, key) => { const v = cleanVal(raw[src]); if (v) biqSetVar(it.variants, key, v); };
     mapv('Valance Length', 'Val Size');
@@ -699,16 +1011,104 @@ function biqBgVenetian(mappings, o, it, raw) {
     const hd = biqLc(raw['Hold Downs'] || '');
     if (/magnet/.test(hd)) biqSetVar(it.variants, 'Hold Downs Magnetic', 'Yes');
     else if (/clip/.test(hd)) biqSetVar(it.variants, 'Hold Downs Clip In', 'Yes');
-    const lcut = [cleanVal(raw['Left Cutout Drop from Bottom']), cleanVal(raw['Left Cutout Width'])].filter(Boolean).join(' x ');
-    const rcut = [cleanVal(raw['Right Cutout Drop from Bottom']), cleanVal(raw['Right Cutout Width'])].filter(Boolean).join(' x ');
-    if (lcut) biqSetVar(it.variants, 'Cut Out LH', lcut);
-    if (rcut) biqSetVar(it.variants, 'Cut Out RH', rcut);
+    biqBgCutOuts(it, raw);
     ['Second Colour', 'Additional Colour', 'Third Colour'].forEach(k => { const v = cleanVal(raw[k]); if (v && biqLc(v) !== 'standard') it.notes = (it.notes ? it.notes + ' | ' : '') + k + ': ' + v; });
+}
+// Cut-outs as BlindIQ writes them: "<width> x <drop from bottom>" ("15 x 390"), the order of
+// every cut-out stored in 2026 — the sheet gives the two figures in separate columns.
+function biqBgCutOuts(it, raw) {
+    [['Left', 'Cut Out LH'], ['Right', 'Cut Out RH']].forEach(([side, key]) => {
+        const w = cleanVal(raw[side + ' Cutout Width']), d = cleanVal(raw[side + ' Cutout Drop from Bottom']);
+        if (w || d) biqSetVar(it.variants, key, [w, d].filter(Boolean).join(' x '));
+    });
+}
+// Aluminium venetian line (Blind Guys BD1-AV). The slat size picks the BlindIQ product — 35mm is
+// "35mm Aluminium", 50mm "Retro Venetian" (all 99 lines since June were stored that way; they came
+// out as Wood Venetian) — and the sheet's Type its range (Standard / the perforated-textured range).
+function biqBgAluVenetian(mappings, o, it, raw) {
+    it.width = raw['Finished Width'] || ''; it.drop = raw['Finished Drop'] || raw['Finished Height'] || '';
+    it.fix = raw['Fit'] || raw['Fixing'] || '';
+    it.blindType = /50/.test(raw['Slat Size'] || '') ? 'Retro Venetian' : '35mm Aluminium';
+    const ty = biqNorm(raw['Type'] || '');
+    it.range = ty;
+    if (ty && !biqResolveRange(mappings, it.blindType, ty).known && /perf|text|print|prt/i.test(ty)) {
+        const bt = biqResolve(mappings, 'blindTypes', it.blindType);
+        const own = !bt.known ? [] : [...new Set(Object.keys(mappings.rangesScoped || {}).filter(k => k.startsWith(bt.id + '|'))
+            .map(k => mappings.rangesScoped[k]).filter(id => !(mappings.rangeHidden || {})[String(id)]))]
+            .map(id => (mappings.rangeNames || {})[String(id)]).filter(n => n && /perf/i.test(n));
+        if (own.length === 1) it.range = own[0];
+    }
+    it.colour = raw['Colour'] || '';
+    it.control1 = raw['Control Side'] || ''; it.control2 = raw['Operation'] || '';
+    { const cl = biqNorm(raw['Control Length'] || '');
+      it.controlDrop = biqComputeControlDropV2(mappings, cl, it.drop, it.blindType, it.range);
+      it._cdAuto = !biqStatedControlLength(cl); }
+    it.variants = biqTemplateFor2(mappings, it.blindType, it.range);
+    const mapv = (src, key) => { const v = cleanVal(raw[src]); if (v) biqSetVar(it.variants, key, v); };
+    mapv('Remove Valance', 'Remove Valance'); mapv('Valance Length', 'Val Size');
+    const vr = biqLc(raw['Valance Returns'] || '');
+    if (vr) biqSetVar(it.variants, 'Val Returns', /^(no|none)$/.test(vr) ? 'None' : raw['Valance Returns']);
+    mapv('Valance and Bottom Bar', 'Valance and Bottom Type'); mapv('Valance and Bottom Bar Colours', 'Valance and Bottom Colour');
+    mapv('Cleat Colour', 'Cleat'); mapv('Ladder Tape', 'Ladder Tape'); mapv('Ladder Tape Colour', 'Ladder Tape Colour');
+    mapv('Wire Side Guides', 'Wire Side Guides'); mapv('Mixed Slats', 'Mixed Slats');
+    const hd = biqLc(cleanVal(raw['Holddowns'] || raw['Hold Downs'] || ''));
+    if (/magnet/.test(hd)) biqSetVar(it.variants, 'Hold Downs Magnetic', 'Yes');
+    else if (hd) biqSetVar(it.variants, 'Hold Downs', 'Yes');
+    biqBgCutOuts(it, raw);
+    ['Second Colour', 'Additional Colour', 'Third Colour'].forEach(k => { const v = cleanVal(raw[k]); if (v && biqLc(v) !== 'standard') it.notes = (it.notes ? it.notes + ' | ' : '') + k + ': ' + v; });
+}
+// Vertical blind line (Blind Guys BD1-EVB): Type is the vane width ("90MM"), Fabric splits into range
+// + colour, Control Side is BlindIQ's Control 1 (Cord Left / Cord Right / Wand) and Stacking its
+// Control 2 (Stack Left / Right / Split) — 47 lines since June arrived with no blind type.
+function biqBgVertical(mappings, o, it, raw) {
+    it.width = raw['Finished Width'] || ''; it.drop = raw['Finished Height'] || raw['Finished Drop'] || '';
+    it.fix = raw['Fixing'] || '';
+    it.blindType = '90mm Vertical Blind';
+    const fab = raw['Fabric'] || '';
+    { const f = biqSplitFabric(mappings, fab, it.blindType); it.range = f.range; it.colour = f.colour; it._origFabric = fab; }
+    it.control1 = raw['Control Side'] || '';
+    const st = biqNorm(raw['Stacking'] || '');
+    it.control2 = !st ? '' : /^stack/i.test(st) ? st : /split|cent/i.test(st) ? 'Stack Split' : 'Stack ' + st;
+    { const cl = biqNorm(raw['Control Length'] || '');
+      it.controlDrop = biqComputeControlDropV2(mappings, cl, it.drop, it.blindType, it.range);
+      it._cdAuto = !biqStatedControlLength(cl); }
+    it.variants = biqTemplateFor2(mappings, it.blindType, it.range);
+    const mapv = (src, key) => { const v = cleanVal(raw[src]); if (v) biqSetVar(it.variants, key, v); };
+    mapv('Track Colour', 'Track Colour'); mapv('Bottom Weight Colour', 'Bottom Weight');
+    mapv('Sloped Vertical', 'Sloped Vertical'); mapv('Vanes Only', 'Vanes Only');
+    if (/^y/i.test(cleanVal(raw['Mono Command']))) biqSetVar(it.variants, 'Control', 'Mono-command');
+    const ty = biqNorm(raw['Type'] || ''); if (ty && !/^90\s*mm$/i.test(ty)) it.notes = (it.notes ? it.notes + ' | ' : '') + 'Type: ' + ty;
+    ['Alternating Colours', 'Second Fabric', 'Additional Colour', 'Third Fabric'].forEach(k => { const v = cleanVal(raw[k]); if (v) it.notes = (it.notes ? it.notes + ' | ' : '') + k + ': ' + v; });
+}
+// A hinged shutter's Control 1 is its hinge layout in BlindIQ's notation ("H L", "H R", "H L R",
+// "H L R T L R"). Dealers write it as "2P - LR" (Mathéo) or already as "H R" (Blind Guys); the 59
+// converted shutter lines since June all arrived without one. Only a layout the range offers is used.
+export function biqShutterHingeControl(mappings, it, code) {
+    const c = biqNorm(String(code || '').replace(/^\s*\d\s*p\s*[-–:]\s*/i, ''));
+    if (!c) return '';
+    const ok = cand => biqResolve(mappings, 'control1', cand).known && biqControlAllowed(mappings, it.blindType, 'c1', cand, it.range) !== false;
+    if (ok(c)) return c;
+    const toks = c.toUpperCase().split(/\s+/).filter(Boolean);
+    for (const cand of ['H ' + toks.map(t => t === 'T' ? 'T' : t.split('').join(' ')).join(' '), 'H ' + toks.join(' ')]) if (ok(cand)) return cand;
+    return '';
+}
+// "T: 526|M: 526|B: 526" / "L: 1331|M: 1331|R: 1331": three measurements of one opening. The
+// smallest is the size (reveal fit); differing figures are kept in the notes.
+function biqTripleSize(v) {
+    const s = biqNorm(v); const nums = (s.match(/\d{2,5}/g) || []).map(Number);
+    if (nums.length < 2 || !/[TMBLR]\s*:/i.test(s)) return { size: s, note: '' };
+    return { size: String(Math.min(...nums)), note: new Set(nums).size > 1 ? s : '' };
 }
 // Shutter line (Blind Guys BD1-SHUT "Supply Sheet"). Range is derived from the panel count
 // ("1 Panel" -> "1 Panel Hinged"), which matches BlindIQ's shutter range names.
 function biqBgShutter(mappings, o, it, raw) {
-    it.width = raw['Width'] || raw['Finished Width'] || ''; it.drop = raw['Height'] || raw['Finished Height'] || '';
+    const tw = biqTripleSize(raw['Width'] || raw['Finished Width'] || ''), th = biqTripleSize(raw['Height'] || raw['Finished Height'] || '');
+    it.width = tw.size; it.drop = th.size;
+    [['Widths', tw.note, tw.size], ['Heights', th.note, th.size]].forEach(([k, n, sz]) => {
+        if (!n) return;
+        it.notes = (it.notes ? it.notes + ' | ' : '') + k + ' measured ' + n;
+        (it._sizeChecks = it._sizeChecks || []).push(biqLc(k) + ' measured ' + n + ' — ' + sz + ' used (the smallest), confirm');
+    });
     it.fix = raw['Fixing'] || '';
     it.blindType = biqNorm((raw['Shutter Type'] || 'Urban Hinged') + ' Shutter');
     it.colour = raw['Colours'] || raw['Colour'] || '';
@@ -728,8 +1128,12 @@ function biqBgShutter(mappings, o, it, raw) {
         if (skip.has(col)) continue;
         let cv = cleanVal(v); if (!cv) continue;
         if (biqLc(col) === 'rebate' && reb[biqLc(cv)]) cv = reb[biqLc(cv)];
-        const k = findOpt(col); if (k) biqSetVar(it.variants, k, cv);
+        const k = findOpt(col === 'Frame Type' ? 'Frame' : col); if (k) biqSetVar(it.variants, k, cv);    // "Frame Type" holds BlindIQ's Frame
     }
+    // Rear Frame Cover is a Multi L option: on any other frame BlindIQ stores None
+    { const fr = it.variants.find(v => biqLc(v[0]) === 'frame'), rfc = keys.find(k => /^rear frame cover/i.test(k));
+      if (rfc && fr && biqNorm(fr[1]) && !/multi\s*l/i.test(fr[1]) && !it.variants.some(v => biqLc(v[0]) === biqLc(rfc) && biqNorm(v[1]))) biqSetVar(it.variants, rfc, 'None'); }
+    it.control1 = biqShutterHingeControl(mappings, it, raw['Configuration']) || it.control1;
     // keep the workshop-relevant descriptors that aren't BlindIQ options
     const desc = ['No. of Panels', 'Configuration', 'Style'].map(k => cleanVal(raw[k])).filter(Boolean);
     if (desc.length) it.notes = (it.notes ? it.notes + ' | ' : '') + desc.join(' | ');
@@ -746,6 +1150,8 @@ export function biqNormalizeBlindGuys(mappings, p) {
         const it = biqBlankItem(raw['Item #'] || '');
         it.qty = raw['Qty'] || '1'; it.location = raw['Location'] || '';
         if (kind === 'shutter') biqBgShutter(mappings, o, it, raw);
+        else if (kind === 'aluVenetian') biqBgAluVenetian(mappings, o, it, raw);
+        else if (kind === 'vertical') biqBgVertical(mappings, o, it, raw);
         else if (kind === 'venetian') biqBgVenetian(mappings, o, it, raw);
         else biqBgRoller(mappings, o, it, raw, kind === 'doubleRoller', p.meta.product);
         if (biqLc(raw['Express']) === 'yes') express = true;
@@ -785,7 +1191,9 @@ export function biqParseMatheoItems(textItems) {
     const compLine = fullText.split('\n').find(l => /math.o\s*blinds/i.test(l) && !/@|phone|e-mail/i.test(l));
     if (compLine) meta.company = biqNorm(compLine);
     m = fullText.match(/Name\s*:\s*([A-Za-zÀ-ž'\- ]+?)\s+Tel/i); if (m) meta.customerName = biqNorm(m[1]);
-    m = fullText.match(/BD\s+(Roller Blind|Outdoor Free Hang|Urban Shutter|Vision|Wood|Cellular|Double Roller|Allusion)[A-Za-z ]*/i); if (m) meta.product = biqNorm(m[0]);
+    // Product title. The Designer roller, venetian, Zip X and valance sheets are Mathéo layouts too
+    // (12 designer, 9 venetian, 7 valance and 5 Zip X orders since June arrived with no blind type).
+    m = fullText.match(/BD\s+(Designer Roller Blind|Roller Blind|Outdoor Free Hang|Outdoor Zip X|Urban Shutter|Vision|Venetian|Wood|Cellular|Double Roller|Allusion|Valances?)[A-Za-z ]*/i); if (m) meta.product = biqNorm(m[0]);
     // header row: tolerate split words ("Locatio"+"n") — match on '#' + Location/Price prefixes
     const hl = lines.find(l => { const t = l.parts.map(p => p.s.trim()); return t.includes('#') && t.some(s => /^locatio/i.test(s)) && t.some(s => /^price/i.test(s)); });
     if (!hl) return null;
@@ -833,8 +1241,11 @@ export function biqParseMatheoItems(textItems) {
         if (tcols.length === layout.cols.length) { cols.length = 0; cols.push(...tcols); }
     }
     const rowsOut = []; let cur = null;
+    // Cells start up to ~17px left of their header (the venetian, Allusion, Vision and valance sheets
+    // print "50mm Wood" / "TBD Allusion -" / "Linear Valance-" 12-17px left of "Type"); the old 12px
+    // limit pushed the Type text into the Height or Width cell ("1455 50mm Wood") and lost the size.
     const assign = (row, p) => {
-        let best = -1, bd = 1e9; cols.forEach((c, ci) => { const d = p.x - c.x; if (d >= -12 && Math.abs(d) < bd) { bd = Math.abs(d); best = ci; } });
+        let best = -1, bd = 1e9; cols.forEach((c, ci) => { const d = p.x - c.x; if (d >= -20 && Math.abs(d) < bd) { bd = Math.abs(d); best = ci; } });
         if (best < 0) best = 0; const key = cols[best].name;
         const s = p.s.trim();
         row[key] = row[key] ? (s.length <= 2 ? row[key] + s : row[key] + ' ' + s) : s;
@@ -844,10 +1255,13 @@ export function biqParseMatheoItems(textItems) {
     // followed the last item of the previous page and garbled it (Mathéo J7117 items 6+13,
     // Russel 2026-08-07). Match by content: these lines repeat identically on every page.
     const isFurniture = t => /supplier name|purchase order|quote #|consultant\s*:|adderss|math.o|blinds\s*\.\s*curtains|^blind designs\b|^bd [a-z ]+blind$|tel\s*:|email\s*:|^date\s*:|name\s*:|job #|page \d+\s*\/|shop \d+|kyalami|ivanseth|johannesburg \d+|witpoort|midrand|^abn\b/i.test(biqLc(biqNorm(t)));
+    // Every page repeats the order header; any line printed above the column titles on page 1
+    // ("Moreletapark, 0181 Pretoria" — the dealer's address) is furniture wherever it reappears.
+    const headerText = new Set(lines.slice(0, hi).map(l => biqLc(l.parts.map(p => p.s).join(' '))));
     for (let li = hi + 1; li < lines.length; li++) {
         const l = lines[li]; const first = l.parts[0]; const joined = l.parts.map(p => p.s).join(' ');
         if (/Sub Total|Grand Total|Discount|Vat\(|Rounding|Page \d/i.test(joined)) { if (/Sub Total|Grand Total/i.test(joined)) break; else continue; }
-        if (isFurniture(joined)) continue;
+        if (isFurniture(joined) || headerText.has(biqLc(joined))) continue;
         // Priced accessory blocks ("#. Accessory" / "1. Wire Side Guides - Floor fix  745.0  1  745.00")
         // belong to the item ABOVE, not to its option columns (Russel 2026-08-07: accessory ->
         // option on the blind where the sheet has it, price ignored — BlindIQ prices itself).
@@ -861,10 +1275,43 @@ export function biqParseMatheoItems(textItems) {
             if (/^(price|qty|total)\b/i.test(biqNorm(joined))) continue;
             cur._accBlock = false;                                   // block ended — fall through
         }
+        // A remark printed under a row from the left margin, left of the "#" column ("Blind 3 & 4 To
+        // have one cassette", "Back material: 5 Screen Platinum"): the item's notes, never its cells.
+        if (cur && first.x < cols[0].x - 6 && !/^\d+$/.test(first.s.trim())) { cur._remark = biqNorm((cur._remark ? cur._remark + ' ' : '') + joined); continue; }
         if (/^\d+$/.test(first.s.trim()) && first.x < cols[1].x) { cur = {}; rowsOut.push(cur); l.parts.forEach(p => assign(cur, p)); }
         else if (cur) { l.parts.forEach(p => assign(cur, p)); }
     }
     return { meta, rows: rowsOut };
+}
+// Control words Mathéo's narrow Controls cell wraps mid-word ("Inte rmediate", "Interm ediate").
+const BIQ_MATHEO_CTL_WORDS = new RegExp(['intermediate', 'chain', 'motor', 'coupled', 'dual', 'crank', 'spring']
+    .map(w => w.split('').join('\\s*')).join('|'), 'gi');
+// Mathéo "BD Valances Linear" sheet -> a BlindIQ Valance line: Type "108mm Linear Valance- Reveal"
+// is the range, "Material Colour" the colour; Returns / End Caps / End Cap Colour / Topboard map
+// onto the valance sheet. Every Mathéo valance stored since June says Type of Blind = Roller Blind
+// (31 of 31) — the sheet doesn't print it, so that is filled and noted.
+function biqMatheoValance(mappings, it, raw) {
+    const ty = biqNorm(raw['Type'] || '');
+    const rm = ty.match(/([a-z ]*valance)/i);
+    it.range = rm ? biqNorm(rm[1].replace(/^\d+\s*mm\s*/i, '')).replace(/\b\w/g, c => c.toUpperCase()) : ty;
+    if (!biqResolveRange(mappings, it.blindType, it.range).known && /linear/i.test(ty)) it.range = 'Linear Valance';
+    it.colour = raw['Material Colour'] || raw['Colour'] || '';
+    it.fix = raw['Fix'] || (/- *reveal/i.test(ty) ? 'Reveal' : /- *face/i.test(ty) ? 'Face' : '');
+    it.drop = '0'; it.controlDrop = '0'; it.control1 = ''; it.control2 = '';
+    it.variants = biqTemplateFor2(mappings, it.blindType, it.range);
+    const spec = biqVariantSpec(mappings, it.blindType, it.range) || [];
+    const opt = re => spec.find(o => re.test(o.k));
+    const set = (o, v) => { if (o && v) biqSetVar(it.variants, o.k, v); };
+    const tob = opt(/^type of blind$/i);
+    if (tob && (tob.values || []).some(v => /^roller blind$/i.test(v))) { set(tob, 'Roller Blind'); it.notes = (it.notes ? it.notes + ' | ' : '') + 'Type of Blind: Roller Blind (not on the valance sheet)'; }
+    set(opt(/^val(ance)?\s*returns$/i), cleanVal(raw['Returns']));
+    const side = v => { const x = biqLc(cleanVal(v)); return !x ? '' : /return/.test(x) ? 'Return End Cap' : /joiner/.test(x) ? 'Joiner' : /end\s*cap/.test(x) ? 'End Cap' : /none/.test(x) ? 'None' : cleanVal(v); };
+    set(opt(/^lh side$/i), side(raw['LH End Caps']));
+    set(opt(/^rh side$/i), side(raw['RH End Caps']));
+    set(opt(/^end cap colou?r$/i), cleanVal(raw['End Cap Colour']));
+    const tb = cleanVal(raw['Topboard']), tbm = tb.match(/(\d{2,3})\s*mm/);
+    const tbo = opt(/^top\s*board/i);
+    if (tbm && tbo) set(tbo, (tbo.values || []).find(v => new RegExp('\\b' + tbm[1] + 'mm\\b', 'i').test(v)) || tb);
 }
 export function biqNormalizeMatheo(mappings, p) {
     const o = biqBlankOrder();
@@ -875,15 +1322,31 @@ export function biqNormalizeMatheo(mappings, p) {
     o.notes = [p.meta.quote ? ('Quote ' + p.meta.quote) : '', p.meta.job ? ('Job ' + p.meta.job) : ''].filter(Boolean).join(' | ');
     // map the "BD ..." title to a BlindIQ blind type (the per-row "Type" is a price group, not a type)
     const tp = biqLc(p.meta.product || '');
-    const titleType = /outdoor/.test(tp) ? 'Outdoor Free Hang' : /urban shutter|shutter/.test(tp) ? 'Urban Hinged Shutter'
-        : /allusion/.test(tp) ? 'Allusion Blind' : /vision/.test(tp) ? 'Element Vision' : /wood/.test(tp) ? 'Element Wood' : /cellular/.test(tp) ? 'Cellular Skylight Lantern'
+    const titleType = /zip\s*x/.test(tp) ? 'Outdoor Zip X' : /outdoor/.test(tp) ? 'Outdoor Free Hang' : /urban shutter|shutter/.test(tp) ? 'Urban Hinged Shutter'
+        : /allusion/.test(tp) ? 'Allusion Blind' : /vision/.test(tp) ? 'Element Vision' : /venetian/.test(tp) ? 'Wood Venetian' : /wood/.test(tp) ? 'Element Wood'
+            : /cellular/.test(tp) ? 'Cellular Skylight Lantern' : /valance/.test(tp) ? 'Valance'
             : /double roller/.test(tp) ? 'Double Roller Blinds' : /roller/.test(tp) ? 'Element Roller Sys 40' : '';
+    const designer = /designer/.test(tp);
     p.rows.forEach(raw => {
-        const it = biqBlankItem(raw['#'] || '');
+        // The "#" cell can also hold a remark printed beside the number ("3 Blind 3 & 4 To have one
+        // cassette"): the number is the item code, the words go to the notes.
+        const numM = biqNorm(raw['#'] || '').match(/^(\d+)\s+(\S.*)$/);
+        const it = biqBlankItem(numM ? numM[1] : (raw['#'] || ''));
+        if (numM) it.notes = numM[2];
+        if (raw._remark) it.notes = (it.notes ? it.notes + ' | ' : '') + raw._remark;
         it.qty = '1'; it.location = raw['Location'] || '';
         it.width = raw['Width'] || ''; it.drop = raw['Height'] || '';
-        it.blindType = titleType || raw['Type'] || '';
+        // One sheet, several BlindIQ products — the row's price group says which: the roller sheet
+        // carries System 55 and double rollers ("TBD Element (Sys 55)- Group B", "Element Double -
+        // Group B"; 22 + 18 lines since June came out as System 40), the venetian sheet aluminium
+        // and retro slats.
+        let rowType = titleType;
+        { const ty = biqLc(raw['Type'] || '');
+          if (titleType === 'Element Roller Sys 40') { if (/sys\s*55/.test(ty)) rowType = 'Roller System 55'; else if (/\bdouble\b/.test(ty)) rowType = 'Double Roller Blind'; }
+          if (titleType === 'Wood Venetian') { if (/alu/.test(ty)) rowType = '35mm Aluminium'; else if (/retro/.test(ty)) rowType = 'Retro Venetian'; } }
+        it.blindType = rowType || raw['Type'] || '';
         if (titleType && raw['Type'] && !(titleType === 'Allusion Blind' && biqNorm(raw['Material'] || ''))) it.notes = (it.notes ? it.notes + ' | ' : '') + raw['Type'];  // price group; Allusion skips when fabric is set
+        if (titleType === 'Valance') { biqMatheoValance(mappings, it, raw); o.items.push(it); return; }
         let mat = biqNorm(raw['Material'] || '');
         let rng = mat;
         if (!biqResolveRange(mappings, it.blindType, rng).known) {
@@ -907,8 +1370,23 @@ export function biqNormalizeMatheo(mappings, p) {
             }
         }
         it.range = rng; it.colour = raw['Colour'] || '';
+        // Designer rollers: the price group is the BlindIQ range ("Designer - Group I" -> Designer
+        // Fab I) and the colour is fabric + colour ("Bd Des Argent" + "Gold" -> "Argent Gold 2050mm @").
+        // Only when that colour is on the Designer range: the sheet also sells plain ranges under a
+        // designer price group ("Bd Chatsworth" + "White" is range Chatsworth).
+        if (designer) {
+            const g = biqNorm(raw['Type'] || '').match(/group\s*([a-z])\b/i);
+            const cand = g ? 'Designer Fab ' + g[1].toUpperCase() : '';
+            const col = biqNorm(mat.replace(/^bd\s+(des(igner)?\b\.?\s*)?/i, '') + ' ' + (raw['Colour'] || ''));
+            if (cand && biqResolveRange(mappings, it.blindType, cand).known && biqResolveColour(mappings, cand, col, it.blindType).onRange) {
+                it.range = cand; it.colour = col;
+            }
+        }
         it.fix = raw['Fix'] || '';
-        const ctl = biqLc(raw['Controls'] || '');
+        // Narrow cells wrap mid-word ("RH Inte" / "rmediate", "RH Interm" / "ediate"): rejoin the
+        // control words before reading them (42 + 34 intermediate lines since June read as pin / chain).
+        const ctlText = biqNorm(raw['Controls'] || raw['Control'] || '').replace(BIQ_MATHEO_CTL_WORDS, w => w.replace(/\s+/g, ''));
+        const ctl = biqLc(ctlText);
         const rhS = /\brh\b|\bright\b/.test(ctl), lhS = /\blh\b|\bleft\b/.test(ctl);
         // Allusion Monocommand (Russel 2026-08-31): BlindIQ drive is Wand Lh And Rh. Stack stays on control2.
         if (titleType === 'Allusion Blind' && /mono\s*command/.test(ctl)) {
@@ -916,26 +1394,39 @@ export function biqNormalizeMatheo(mappings, p) {
         }
         else if (/intermediate/.test(ctl)) {
             // "LH Chain & RH Intermediate (S40)" must not trip chain+RH -> Lh Pin / Rh Chain
-            // (Russel 2026-08-29, PO082611850 line 5). Pairing then sets Intermediate Bracket.
-            const leftBit = (ctl.match(/(?:lh|left)\b[^&]*/) || [''])[0];
-            const rightBit = (ctl.match(/(?:rh|right)\b[^&]*/) || [''])[0];
+            // (Russel 2026-08-29, PO082611850 line 5). Costing is reconciled from these controls.
+            // One Touch Dual drives are BlindIQ's own "LH Dual"/"RH Dual" controls (Paul's One
+            // Touch Dual rule) — stored that way on Mathéo intermediate pairs (e.g. 671745) — so a
+            // "Dual" side must win over the generic motor wording.
+            // sides are joined by "&" or "+" ("LH Motor + RH Intermediate")
+            const leftBit = (ctl.match(/(?:lh|left)\b[^&+]*/) || [''])[0];
+            const rightBit = (ctl.match(/(?:rh|right)\b[^&+]*/) || [''])[0];
             const drive = (bit, pref) => /intermediate/.test(bit) ? pref + ' Intermediate'
                 : /chain/.test(bit) ? pref + ' Chain'
+                : /\bdual\b/.test(bit) ? pref + ' Dual'
                 : /motor/.test(bit) ? pref + ' Motor' : '';
             const c1 = drive(leftBit, 'Lh'), c2 = drive(rightBit, 'Rh');
             if (c1) it.control1 = c1;
             if (c2) it.control2 = c2;
-            if (/intermediate/i.test(c1 + ' ' + c2)) it._bracketWith = 'intermediate';
+            // The stated controls ARE the geometry; costing (Intermediate Bracket Yes on the
+            // Rh-Intermediate blind) is reconciled from them in biqApplyBracketPairs. No
+            // "pair with next line" here: partners are not always adjacent, and pairing with a
+            // neighbour re-sided that unrelated blind.
         }
         else if (ctl.includes('chain') && rhS) { it.control1 = 'Lh Pin'; it.control2 = 'Rh Chain'; }
         else if (ctl.includes('chain') && lhS) { it.control1 = 'Lh Chain'; it.control2 = 'Rh Pin'; }
+        else if (/\bdual\b/.test(ctl) && rhS && !lhS) { it.control1 = 'Lh Pin'; it.control2 = 'Rh Dual'; }
+        else if (/\bdual\b/.test(ctl) && lhS && !rhS) { it.control1 = 'Lh Dual'; it.control2 = 'Rh Pin'; }
         // "RH Motor" = motor on the RIGHT -> it belongs on Control R, with the idle pin on the
         // left (Russel 2026-08-07, Mathéo outdoor J6966). Mirrored for LH. A motor with no side
         // stays on Control 1 unresolved so it flags rather than guessing.
         else if (ctl.includes('motor') && rhS) { it.control1 = 'Lh Pin'; it.control2 = 'Rh Motor'; }
         else if (ctl.includes('motor') && lhS) { it.control1 = 'Lh Motor'; it.control2 = 'Rh Pin'; }
-        else if (ctl.includes('motor')) { it.control1 = raw['Controls']; it.control2 = ''; }
-        else { it.control1 = raw['Controls'] || ''; }
+        else if (ctl.includes('motor')) { it.control1 = ctlText; it.control2 = ''; }
+        // Venetians name the control side only: "LHS" / "RHS" (31 lines since June unmapped)
+        else if (/venetian|alumin|wood/i.test(it.blindType) && /^(lhs?|left)(\s*side)?$/.test(ctl)) it.control1 = 'Left';
+        else if (/venetian|alumin|wood/i.test(it.blindType) && /^(rhs?|right)(\s*side)?$/.test(ctl)) it.control1 = 'Right';
+        else { it.control1 = ctlText; }
         if (titleType === 'Allusion Blind') {
             const canon = s => biqLc(s).replace(/[^a-z0-9]/g, '');
             const stkKey = Object.keys(raw).find(k => {
@@ -954,36 +1445,78 @@ export function biqNormalizeMatheo(mappings, p) {
             }
         }
         { const cd = biqNorm(raw['Control Drop'] || '');
-          it.controlDrop = biqComputeControlDropV2(mappings, /^\d/.test(cd) ? cd : '', it.drop, it.blindType, it.range);
-          it._cdAuto = !/^\d/.test(cd); }
+          it.controlDrop = biqComputeControlDropV2(mappings, biqStatedControlLength(cd), it.drop, it.blindType, it.range);
+          it._cdAuto = !biqStatedControlLength(cd); }
         it.variants = biqTemplateFor2(mappings, it.blindType || 'roller', it.range);
         const mv = (src, key) => { const v = cleanVal(raw[src]); if (v) biqSetVar(it.variants, key, v); };
         mv('H/ware Colour', 'Mech Colour');
+        if (cleanVal(raw['H/ware Colour'])) it._hwFromOrder = true;     // a stated White colours the cassette too
         // "Covered Aluminium" = an aluminium bar matching the hardware colour (Russel 2026-08-07).
-        // Hardware colours with no aluminium bar in BlindIQ (e.g. Beige) get a WHITE aluminium
-        // bar — factory practice confirmed by Russel 2026-08-07 — with the substitution noted.
+        // Hardware colours with no aluminium bar of their own follow factory practice (BlindIQ
+        // order history): GREY hardware -> SILVER aluminium (95%), BEIGE -> WHITE aluminium (85%),
+        // with the substitution noted. (Grey used to fall through to White: one Mathéo order on
+        // 1 Oct 2026 needed 8 bars changed to Silver by hand.)
         {
             const bb = cleanVal(raw['Bottom Bar']);
             if (/covered/i.test(bb)) {
-                const hw = biqNorm(cleanVal(raw['H/ware Colour']).replace(/\([^)]*\)/g, ' '));
+                const hw = biqNorm(cleanVal(raw['H/ware Colour']).replace(/\([^)]*\)/g, ' ')).replace(/^(tb[ac]|to be (confirmed|advised))$/i, '');
                 const spec = biqVariantSpec(mappings, it.blindType, it.range) || [];
                 const bbo = spec.find(s => /^bottom\s*bar$/i.test(s.k));
                 const vals = (bbo && bbo.values) || [];
-                const exact = hw && vals.find(x => biqLc(x) === biqLc(hw + ' Aluminium'));
-                const white = vals.find(x => biqLc(x) === 'white aluminium');
-                const real = exact || white;
+                const exact = hw && vals.find(x => biqLc(x).replace(/[^a-z]/g, '') === biqLc(hw + ' Aluminium').replace(/[^a-z]/g, ''));
+                const real = exact || biqHardwareMatch(vals, hw, 'bar') || vals.find(x => biqLc(x) === 'white aluminium');
                 if (real) {
                     biqSetVar(it.variants, 'Bottom Bar', real);
                     it.notes = (it.notes ? it.notes + ' | ' : '') + 'Bottom Bar "' + bb + '" read as ' + real
-                        + (exact ? '' : ' (no ' + (hw || 'matching') + ' aluminium bar — white fitted as standard)');
+                        + (exact ? '' : ' (no ' + (hw || 'matching') + ' aluminium bar — ' + biqLc(real).replace(/\s*aluminium$/, '') + ' fitted as standard)');
                 } else biqSetVar(it.variants, 'Bottom Bar', bb);
-            } else if (bb) biqSetVar(it.variants, 'Bottom Bar', bb);
+            } else if (bb && !(/^(std\.?|standard)$/i.test(bb) && !(biqVariantSpec(mappings, it.blindType, it.range) || []).some(s => /^bottom\s*bar$/i.test(s.k))))
+                biqSetVar(it.variants, 'Bottom Bar', bb);       // "Std" on a sheet without a Bottom Bar option (venetians) says nothing
         }
-        mv('Roll Type', 'Roll Type');
+        { const rt = cleanVal(raw['Roll Type']), sp = biqVariantSpec(mappings, it.blindType, it.range);
+          if (rt && (!sp || sp.some(o => /^roll\s*type$/i.test(o.k)))) biqSetVar(it.variants, 'Roll Type', rt); }   // Zip X has none
         if (/steel/i.test(raw['Chain'] || '')) biqSetVar(it.variants, 'Steel Ball Chain', 'Yes');
         if (/yes/i.test(raw['Cord Tidy'] || '')) biqSetVar(it.variants, 'Chain Tidy', 'Yes');
-        mv('Cassette', 'Sys 40 70mm Cassette');
-        mv('Fabric Insert 70mm Cassette', 'Fabric Insert for 70mm Cassette');
+        // Cassette cell: "2400mm | Sys 40 70mm Cassette", "TBD 1200mm | ...", "TBD Closed Cassette Sys55
+        // 2100mm" — a fitted cassette (its colour follows the hardware, biqApplyHardwareColours),
+        // never a colour value (186 converted cassette blinds since June imported without one).
+        // Fabric Insert cell: the insert length ("2400", "TBD 1800", ".600") = Yes.
+        {
+            const cas = cleanVal(raw['Cassette']);
+            if (cas) {
+                const spec = biqVariantSpec(mappings, it.blindType, it.range) || [];
+                const colourValued = o => /cassette/i.test(o.k) && !/end\s*cap|insert|pvc/i.test(o.k) && (o.values || []).length && !(o.values || []).every(x => /^(yes|no)$/i.test(x));
+                const casO = (/closed/i.test(cas) && spec.find(o => /closed\s*cassette/i.test(o.k))) || spec.find(o => colourValued(o) && !/closed/i.test(o.k)) || spec.find(colourValued);
+                const fitted = /cassette|\d{3,4}\s*mm/i.test(cas);
+                biqSetVar(it.variants, casO ? casO.k : 'Sys 40 70mm Cassette', fitted ? 'Yes' : cas);
+            }
+            const fi = cleanVal(raw['Fabric Insert 70mm Cassette']);
+            if (fi) biqSetVar(it.variants, 'Fabric Insert for 70mm Cassette', /^(yes|y)$/i.test(fi) || /\d/.test(fi) ? 'Yes' : fi);
+        }
+        // Double rollers on the roller sheet: the row's material + colour is one fabric ("Bd E Texblock"
+        // + "Graphite" -> Blockout Fabric "Texblock Graphite") and the remark under the row names the
+        // other ("Back material: 5 Screen Platinum"). BlindIQ's double roller sheet has no Mech Colour,
+        // so the hardware colour goes straight onto its cassette (Grey -> Silver) — as stored on all 18
+        // Mathéo double rollers since June.
+        if (/double roller/i.test(it.blindType)) {
+            const spec = biqVariantSpec(mappings, it.blindType, it.range) || [];
+            const bo = spec.find(o => /^blockout\s*fabric$/i.test(o.k)), vo = spec.find(o => /^view\s*fabric$/i.test(o.k));
+            const pick = (fab) => { const f = biqLc(fab); if (!f) return;
+                const o = /block/.test(f) ? bo : vo; if (!o) return;
+                const hit = (o.values || []).find(x => biqLc(x).replace(/\s+/g, '') === f.replace(/\s+/g, ''));
+                biqSetVar(it.variants, o.k, hit || biqNorm(fab)); };
+            const front = biqNorm(mat.replace(/^bd\s+element\s+|^bd\s*e\s+|^bd\s+|^element\s+/i, '') + ' ' + (raw['Colour'] || ''));
+            pick(front);
+            const back = ((raw._remark || '').match(/back\s*(?:material|fabric)\s*:?\s*(.+?)(?:\s*\||$)/i) || [])[1];
+            if (back) pick(back);
+            if (front && (bo || vo)) it.colour = '';
+            const hw = cleanVal(raw['H/ware Colour']).replace(/\([^)]*\)/g, ' ');
+            const cc = spec.find(o => /^cassette\s*colou?r$/i.test(o.k));
+            const ccRow = cc ? it.variants.find(v => biqLc(v[0]) === biqLc(cc.k)) : null;
+            if (cc && hw && (!ccRow || /^(yes|)$/i.test(biqNorm(ccRow[1])) || !(cc.values || []).some(x => biqLc(x) === biqLc(ccRow[1])))) {
+                const m = biqHardwareMatch(cc.values, hw, 'cassette'); if (m && cleanVal(raw['Cassette'])) biqSetVar(it.variants, cc.k, m);
+            }
+        }
         mv('Side Channels', 'Side Channels');
         mv('Powder Coat Colour', 'Powder Coat Colour');
         mv('Hold Downs', 'Hold Downs');
@@ -991,10 +1524,29 @@ export function biqNormalizeMatheo(mappings, p) {
         // Outdoor: "Brackets: Black" is the bracket COLOUR (Russel 2026-08-07, J6966). Folded
         // only where the sheet actually has a Bracket Colour option, so other sheets are untouched.
         {
-            const br = cleanVal(raw['Brackets']);
+            const br = cleanVal(raw['Brackets']) || cleanVal(raw['Bracket Colour']);
             const spec = biqVariantSpec(mappings, it.blindType, it.range) || [];
             const bco = spec.find(s => /^bracket\s*colou?r$/i.test(s.k));
             if (br && bco) biqSetVar(it.variants, bco.k, br);
+            // Outdoor sheets (Zip X): a column titled like one of the sheet's own options goes there
+            // ("Bottom Bar Rubber Seal", "Side Channel Fixing"); a Crank Handle cell naming an option
+            // of its own ("Pull Pole 1.5m") sets that option and leaves no crank; the "Handle" column
+            // is BlindIQ's Hold Downs when its text is one of those values.
+            if (/outdoor/i.test(it.blindType)) {
+                const canon = x => biqLc(x).replace(/[^a-z0-9]/g, '');
+                const has = k => { const f = it.variants.find(v => biqLc(v[0]) === biqLc(k)); return f && biqNorm(f[1]); };
+                Object.keys(raw).forEach(k => {
+                    const o = spec.find(s => canon(s.k) === canon(k)); const val = cleanVal(raw[k]);
+                    if (o && val && !has(o.k) && !/^(crank\s*handle|control)$/i.test(o.k)) biqSetVar(it.variants, o.k, val);
+                });
+                const chRaw = cleanVal(raw['Crank Handle']), ch = spec.find(s => /^crank\s*handle$/i.test(s.k));
+                const own = chRaw && spec.find(s => canon(s.k) === canon(chRaw));
+                if (own) { biqSetVar(it.variants, own.k, 'Yes'); const none = ch && (ch.values || []).find(x => /^none$/i.test(x)); if (none) biqSetVar(it.variants, ch.k, none); }
+                else if (chRaw && ch) biqSetVar(it.variants, ch.k, chRaw);
+                const hdl = cleanVal(raw['Handle']), hdO = spec.find(s => /^hold\s*downs?$/i.test(s.k));
+                const hdv = hdl && hdO && (hdO.values || []).find(x => canon(x) === canon(hdl));
+                if (hdv && !has(hdO.k)) biqSetVar(it.variants, hdO.k, hdv);
+            }
         }
         // The sheet's own "Control" option (crank colour / Motor) mirrors the Controls column:
         // exact value match first, else a motorised blind is the sheet's 'Motor'. A motorised
@@ -1005,7 +1557,8 @@ export function biqNormalizeMatheo(mappings, p) {
             const co = spec.find(s => /^control$/i.test(s.k));
             if (co && !gv2(co.k)) {
                 const cval = (co.values || []).find(x => biqLc(x) === ctl)
-                    || (ctl.includes('motor') ? (co.values || []).find(x => /^motor$/i.test(x)) : null);
+                    || (ctl.includes('motor') ? (co.values || []).find(x => /^motor$/i.test(x)) : null)
+                    || (co.values || []).find(x => new RegExp('\\b' + biqLc(x).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b').test(ctl));   // "LH Spring" -> Spring
                 if (cval) biqSetVar(it.variants, co.k, cval);
             }
             const ch = spec.find(s => /^crank\s*handle$/i.test(s.k));
@@ -1068,6 +1621,10 @@ export function biqNormalizeMatheo(mappings, p) {
             const hc = [rawX('Hinge Configuration'), raw._hingeCfg ? biqNorm(String(raw._hingeCfg).replace(/^hinge\s+configurator\s*:?\s*/i, '')) : '']
                 .filter(Boolean).join(' / ');
             if (hc) note('Hinge config: ' + hc);
+            if (/shutter/i.test(it.blindType) && !biqNorm(it.control1)) {
+                const hcode = biqShutterHingeControl(mappings, it, rawX('Hinge Configuration')) || biqShutterHingeControl(mappings, it, raw._hingeCfg ? String(raw._hingeCfg).replace(/^hinge\s+configurator\s*:?\s*/i, '') : '');
+                if (hcode) { it.control1 = hcode; it.control2 = ''; }
+            }
             const mrb = rawX('Mid Rebate'); if (mrb) note('Mid Rebate: ' + mrb);
             const lk = rawX('Locks'); if (lk) note('Locks: ' + lk);
         }
@@ -1089,8 +1646,7 @@ export function biqNormalizeMatheo(mappings, p) {
             const spec = biqVariantSpec(mappings, it.blindType, it.range) || [];
             const wsg = spec.find(s => /wire\s*side\s*guide/i.test(s.k));
             if (/wire\s*side\s*guide/i.test(acc) && wsg) biqSetVar(it.variants, wsg.k, 'Yes');
-            else biqAddMotorSundry(mappings, o, acc, qty,
-                /motor|\brts\b|remote|adapter|adaptor|situo|maestria|sonesse|smoove|tahoma|telis|glydea|zigbee|\bio\b/i.test(acc));
+            else biqAddMotorSundry(mappings, o, acc, qty, BIQ_MOTORISH_RE.test(acc));
             it.notes = (it.notes ? it.notes + ' | ' : '') + 'Accessory: ' + acc;
         });
         o.items.push(it);
@@ -1202,8 +1758,8 @@ export function biqNormalizeBdPo(mappings, p) {
         if (/^stack/i.test(c1) && !c2) { c2 = c1; c1 = ''; }
         it.control1 = c1; it.control2 = c2;
         { const cd = biqNorm(r['Cont. Drop'] || '');
-          it.controlDrop = biqComputeControlDropV2(mappings, /^\d/.test(cd) ? cd : '', it.drop, it.blindType, it.range);
-          it._cdAuto = !/^\d/.test(cd); }
+          it.controlDrop = biqComputeControlDropV2(mappings, biqStatedControlLength(cd), it.drop, it.blindType, it.range);
+          it._cdAuto = !biqStatedControlLength(cd); }
         it.variants = biqTemplateFor2(mappings, it.blindType, it.range);
         if (r._notes) it.notes = r._notes;
         const spec = biqVariantSpec(mappings, it.blindType, it.range) || [];
@@ -1243,8 +1799,9 @@ export function biqNormalizeBdPo(mappings, p) {
         }
         o.items.push(it);
     });
+    const OV = biqOrderableSundryView(mappings);           // active, non-component sundries only
     p.sundries.forEach(s => {
-        const hit = biqResolveSundry(mappings, s.code) || biqResolveSundry(mappings, s.name) || { sundry: '', type: '' };
+        const hit = biqResolveSundry(OV, s.code) || biqResolveSundry(OV, s.name) || { sundry: '', type: '' };
         const disp = (mappings.sundryNames && mappings.sundryNames[String(hit.sundry)]) || s.name;
         o.sundries.push({ code: '', qty: s.qty, type: String(hit.type == null ? '' : hit.type), sundry: String(hit.sundry == null ? '' : hit.sundry), notes: disp, _src: s.name + ' (' + s.code + ')' });
     });
@@ -1257,8 +1814,8 @@ export function biqNormalizeBdPo(mappings, p) {
     const seenIds = new Set(o.sundries.map(su => String(su.sundry)).filter(Boolean));
     Object.values(agg).forEach(h => {
         if (h.code && seenCodes.has(h.code)) return;
-        const fz = biqFuzzySundry(mappings, h.name);
-        const hit = (h.code && biqResolveSundry(mappings, h.code)) || biqResolveSundry(mappings, h.name)
+        const fz = biqFuzzySundry(OV, h.name);
+        const hit = (h.code && biqResolveSundry(OV, h.code)) || biqResolveSundry(OV, h.name)
             || (fz && fz.sundry != null ? fz : null);
         const id = hit && hit.sundry != null ? String(hit.sundry) : '';
         if (id && seenIds.has(id)) return;
@@ -1330,8 +1887,8 @@ export function biqNormalizeBDForm(mappings, p, gridByRow) {
         else if (side === 'right') { it.control1 = 'Lh Pin'; it.control2 = 'Rh Chain'; }
         else { it.control1 = raw['Control'] || ''; }
         { const cd = biqNorm(raw['Control Drop'] || '');
-          it.controlDrop = biqComputeControlDropV2(mappings, /^\d/.test(cd) ? cd : '', it.drop, it.blindType, it.range);
-          it._cdAuto = !/^\d/.test(cd); }
+          it.controlDrop = biqComputeControlDropV2(mappings, biqStatedControlLength(cd), it.drop, it.blindType, it.range);
+          it._cdAuto = !biqStatedControlLength(cd); }
         it.variants = biqTemplateFor2(mappings, it.blindType, it.range);
         if (cleanVal(raw['Hardware'])) biqSetVar(it.variants, isVen ? 'Hardware' : 'Mech Colour', cleanVal(raw['Hardware']));
         if (cleanVal(raw['Valance Size'])) biqSetVar(it.variants, 'Val Size', cleanVal(raw['Valance Size']));
@@ -1392,6 +1949,15 @@ export function biqParseLifestyle(textItems) {
     }
     return { meta, rows };
 }
+// The fabric half of a Lifestyle description, whatever the separator: "ELEMENT ROLLER 5 SCREEN - DUNE
+// GREY", "ELEMENT ROLLER FILTER-GREY", "BD-ROLLER FILTER GREY" (23 lines since June left the whole
+// text as the range). The catalogue then splits it into range + colour (biqSplitFabric).
+export function biqLifestyleFabric(desc) {
+    const d = biqNorm(desc).replace(/^bd\s*-\s*/i, '');
+    const m = d.match(/^(?:element\s+)?(?:roller|vertical(?:\s+blinds?)?|(?:\d+\s*mm\s+)?(?:wood\s+)?venetian|wood)\b\s*(.*)$/i);
+    const rest = m ? m[1] : d;
+    return biqNorm(rest.replace(/\s*-\s*/g, ' ').replace(/^\d+\s*mm\s+/i, ''));
+}
 // "ELEMENT ROLLER 5 SCREEN - DUNE GREY" -> {blindType, range, colour}
 export function biqLifestyleDesc(desc) {
     const segs = desc.split(/\s+-\s*|\s-(?=[A-Za-z])/).map(s => biqNorm(s)).filter(Boolean);
@@ -1410,6 +1976,7 @@ export function biqNormalizeLifestyle(mappings, p) {
     o.source = 'lifestyle'; o.sourceDesc = 'Lifestyle Blinds order';
     o.customer = 'Lifestyle Blinds'; o.orderNumber = p.meta.orderNumber || ''; o.orderDate = biqParseDate(p.meta.orderDate);
     let express = false, n = 0;
+    const cassettes = [];
     p.rows.forEach(r => {
         const dl = biqLc(r.desc);
         const hasDim = /\d{3,}/.test((r.width || '') + ' ' + (r.drop || ''));
@@ -1433,6 +2000,9 @@ export function biqNormalizeLifestyle(mappings, p) {
             }
             o.notes = (o.notes ? o.notes + ' | ' : '') + r.desc; return;
         }
+        // A "SYS 40 70MM CASSETTE -GREY" row is the cassette OF a blind listed above (same location /
+        // width) — an option on that blind, not a line of its own.
+        if (/cassette/.test(dl) && !/roller|venetian|vertical|wood/.test(dl)) { cassettes.push(r); return; }
         // brackets, cut-out specs and any dimensionless free-text are not blinds -> notes
         if (/specification|cut\s*out|bracket/.test(dl) || !hasDim) { o.notes = (o.notes ? o.notes + ' | ' : '') + r.desc; return; }
         const it = biqBlankItem(String(++n));
@@ -1443,9 +2013,40 @@ export function biqNormalizeLifestyle(mappings, p) {
         else if (cs === 'r') { it.control1 = 'Lh Pin'; it.control2 = 'Rh Chain'; }
         const d = biqLifestyleDesc(r.desc);
         it.blindType = d.blindType; it.range = d.range; it.colour = d.colour;
+        // the same words in BlindIQ's order: "FILTER OXFORD - SANDSTONE" is range Oxford Filter
+        if (!biqResolveRange(mappings, it.blindType, it.range).known && it.range) {
+            const words = x => biqLc(x).split(/[^a-z0-9%]+/).filter(Boolean).sort().join(' ');
+            const same = biqRangeNamesFor(mappings, it.blindType).filter(n => words(n) === words(it.range));
+            if (same.length === 1) it.range = same[0];
+        }
+        // range + colour from the catalogue when the description's own split doesn't resolve
+        if (!biqResolveRange(mappings, it.blindType, it.range).known) {
+            const fab = biqLifestyleFabric(r.desc);
+            // a plain "VENETIAN" is whichever venetian sells that colour (Brushed Silver = 35mm Aluminium)
+            if (/venetian/.test(dl) && !/wood/.test(dl)) {
+                const vt = ['Wood Venetian', '35mm Aluminium', 'Retro Venetian'].filter(t => biqRangesWithColour(mappings, t, fab).length);
+                if (vt.length === 1) it.blindType = vt[0];
+            }
+            const f = biqSplitFabric(mappings, fab, it.blindType);
+            // no range in the text at all ("ELEMENT WOOD MAHOGANY"): a colour-only line — the range
+            // is then taken from the colour (biqInferRangeFromColour)
+            if (!f.colour && !biqResolveRange(mappings, it.blindType, f.range).known) { it.range = ''; it.colour = fab; }
+            else { it.range = f.range; it.colour = f.colour; }
+            it._origFabric = fab;
+        }
         it.controlDrop = biqComputeControlDropV2(mappings, '', it.drop, it.blindType, it.range); it._cdAuto = true;
         it.variants = biqTemplateFor2(mappings, it.blindType || 'roller', it.range);
         o.items.push(it);
+    });
+    cassettes.forEach(r => {
+        const loc = biqLc(r.location), w = (String(r.width || '').match(/\d{3,}/) || [''])[0];
+        const host = o.items.find(it => !it._lsCassette && biqLc(it.location) === loc && (!w || (String(it.width).match(/\d{3,}/) || [''])[0] === w))
+            || o.items.find(it => !it._lsCassette && biqLc(it.location) === loc);
+        const col = biqNorm((r.desc.match(/-\s*([^-]+?)\s*$/) || [])[1] || '').replace(/\s*with\s+fabric\s+insert.*$/i, '');
+        if (!host) { o.notes = (o.notes ? o.notes + ' | ' : '') + r.desc + (r.location ? ' (' + r.location + ')' : ''); return; }
+        host._lsCassette = true;
+        biqSetVar(host.variants, 'Sys 40 70mm Cassette', col || 'Yes');
+        if (/fabric\s+insert/i.test(r.desc)) biqSetVar(host.variants, 'Fabric Insert for 70mm Cassette', 'Yes');
     });
     if (express) o.notes = (o.notes ? o.notes + ' | ' : '') + 'EXPRESS ORDER (5 working days)';
     return o;
@@ -1465,10 +2066,14 @@ const BIQ_CNBW_COLS = {
 // white" — mink is a fabric colour, not on the cassette list, so the order is proven by the
 // values themselves); a wrong guess on a future template surfaces immediately as a
 // value-not-in-list flag on the cassette option.
-function biqCnbwHeaderCols(hl) {
-    const cols = []; let colourSeq = 0;
+function biqCnbwHeaderCols(hl, above) {
+    // a group title printed above a Colour header ("Components", "Casette") names that column
+    const titleOver = x => ((above && above.parts) || []).map(q => [biqLc(q.s), q.x]).filter(([t, qx]) => Math.abs(qx - x) < 25).map(([t]) => t).join(' ');
+    const cols = [];
     hl.parts.forEach(p => {
         const t = biqLc(biqNorm(p.s)); if (!t) return;
+        // "Components Casette" printed as one merged header: two columns, ~40px apart
+        if (/component/.test(t) && /cas+ette/.test(t)) { cols.push(['compcolour', p.x], ['cassette', p.x + 40]); return; }
         let k;
         if (/^num/.test(t)) k = 'num';
         else if (/location/.test(t)) k = 'location';
@@ -1481,9 +2086,18 @@ function biqCnbwHeaderCols(hl) {
         else if (/^control/.test(t)) k = 'control';
         else if (/chain/.test(t)) k = 'chain';
         else if (/fix|face\s*or\s*recess/.test(t)) k = 'fixing';
+        else if (/^fabric\s*type\s*1/.test(t)) k = 'fab1';                 // double roller sheet: front / back fabric + colour
+        else if (/^fabric\s*type\s*2/.test(t)) k = 'fab2';
+        else if (/^colou?r\s*1$/.test(t)) k = 'col1';
+        else if (/^colou?r\s*2$/.test(t)) k = 'col2';
         else if (/roll\s*type/.test(t)) k = 'rolltype';
         else if (/type\s*of\s*blind/.test(t)) k = 'type';
-        else if (/^colou?r/.test(t)) { k = ['colour', 'casscolour', 'compcolour'][Math.min(colourSeq, 2)]; colourSeq++; }
+        else if (/^blind\s*type/.test(t)) k = 'fabric';                // fabric column when "Roll type" holds the roll type
+        else if (/^component/.test(t)) k = 'compcolour';              // hardware colour
+        else if (/^cas+ette/.test(t)) k = 'cassette';                  // "Casette": a colour, or Yes + a Colour column after it
+        else if (/^waterfall/.test(t)) k = 'waterfall';
+        else if (/^(valance|facia|fascia)/.test(t)) k = 'valance';
+        else if (/^colou?r/.test(t)) k = '?colour';
         else if (/insert/.test(t)) k = 'insert';
         else if (/motor/.test(t)) k = 'motor';
         else if (/corner/.test(t)) k = 'corner';
@@ -1491,6 +2105,25 @@ function biqCnbwHeaderCols(hl) {
         else if (/cut\s*out\s*right/.test(t)) k = 'cutr';
         else k = 'x' + cols.length;                                // price / admin / spring / unknown -> sink
         cols.push([k, p.x]);
+    });
+    // Colour columns. The FIRST is always the fabric's (a "Component" title can sit over it on some
+    // sheets — "5% SCREEN | WHITE GREY"); one right after a Casette / Valance column is that part's
+    // colour; the rest are named by the title above them, else — on the sheet with three bare
+    // Colour columns and no Components / Casette column — they run cassette, then components
+    // (Ron Harriesunker order 2026-08-11: "texfilter | mink | white | white").
+    const explicit = cols.some(([k]) => k === 'compcolour' || k === 'cassette');
+    let n = 0;
+    cols.forEach((c, i) => {
+        if (c[0] !== '?colour') return;
+        const prev = i ? cols[i - 1][0] : '';
+        if (prev === 'cassette') c[0] = 'casscolour';
+        else if (prev === 'valance') c[0] = 'valcolour';
+        else if (n === 0) c[0] = 'colour';
+        else {
+            const over = titleOver(c[1]);
+            c[0] = /component/.test(over) ? 'compcolour' : /cas+ette/.test(over) ? 'casscolour' : explicit ? 'x' + i : (n === 1 ? 'casscolour' : 'compcolour');
+        }
+        n++;
     });
     return cols;
 }
@@ -1507,14 +2140,16 @@ export function biqParseCnbw(textItems) {
     const heads = hl.parts.map(p => biqLc(p.s));
     let product = 'roller';
     if (heads.some(h => /shutter/.test(h))) product = 'shutter';
-    else if (heads.some(h => /motorised/.test(h))) product = 'outdoor';
+    else if (heads.some(h => /^fabric\s*type\s*[12]/.test(h)) || /double\s+rollers?\s+order/i.test(full)) product = 'drb';
+    else if (heads.some(h => /motorised/.test(h)) && !/roller\s+blinds?\s+order/i.test(full)) product = 'outdoor';   // the roller sheet has a Motorised column too
     else if (heads.some(h => /type\s*of\s*blind/.test(h)) || /venetian\s+blinds?\s+order/i.test(full)) product = 'venetian';
     // newer layouts (venetian sheet, roller template with roll type / cassette / insert
     // columns): anchor on the header line itself instead of the legacy fixed x table
-    const dynamic = product === 'venetian'
-        || heads.some(h => /roll\s*type|insert/.test(h))
+    const dynamic = product === 'venetian' || product === 'drb'
+        || heads.some(h => /roll\s*type|insert|component|cas+ette|waterfall/.test(h))
         || heads.filter(h => /^colou?r/.test(h)).length > 1;
-    const cols = dynamic ? biqCnbwHeaderCols(hl) : BIQ_CNBW_COLS[product];
+    const hi = lines.indexOf(hl);
+    const cols = dynamic ? biqCnbwHeaderCols(hl, lines[hi - 1]) : BIQ_CNBW_COLS[product];
     const rows = [];
     for (let li = lines.indexOf(hl) + 1; li < lines.length; li++) {
         const parts = lines[li].parts; const joined = parts.map(p => p.s).join(' ');
@@ -1523,14 +2158,28 @@ export function biqParseCnbw(textItems) {
         const row = {};
         const put = (k, v) => { v = biqNorm(v); if (v) row[k] = row[k] ? row[k] + ' ' + v : v; };
         parts.forEach(p => {
-            let best = null, bd = 1e9; cols.forEach(([n, x]) => { const d = Math.abs(p.x - x); if (d < bd) { bd = d; best = n; } });
+            let best = null, bd = 1e9;
+            // header-anchored layouts print each value from its cell's left edge, i.e. at or right of
+            // its header (the "Single roller order template" puts 3037 21px right of "Width", 23px
+            // left of "Drop"): the column is the last header starting at or before the value.
+            if (dynamic) cols.forEach(([n, x]) => { if (x <= p.x + 6 && p.x - x < bd) { bd = p.x - x; best = n; } });
+            if (best == null) cols.forEach(([n, x]) => { const d = Math.abs(p.x - x); if (d < bd) { bd = d; best = n; } });
             put(best, p.s);
         });
         // split the merged fragments
         if (row.numloc) { const mm = row.numloc.match(/^(\S+)\s+(.+)$/); if (mm) { row.num = mm[1]; row.location = mm[2]; } else row.num = row.numloc; }
+        // header-anchored sheets print "1 Scullery" as one fragment left of the Location header
+        if (row.num && !row.location) { const mm = row.num.match(/^(\d+[a-z]?)\s+(.+)$/i); if (mm) { row.num = mm[1]; row.location = mm[2]; } }
+        // ... and the double roller sheet prints "1 TV ROOM" (quantity + location) under Qnty
+        if (row.qnty && !row.location) { const mm = row.qnty.match(/^(\d+)\s+(.+)$/); if (mm) { row.qnty = mm[1]; row.location = mm[2]; } }
         if (row.dropctl) { const mm = row.dropctl.match(/^(\d+)\s+(.+)$/); if (mm) { row.drop = mm[1]; row.control = mm[2]; } else row.drop = row.dropctl; }
         if (row.winwidth) { const mm = row.winwidth.match(/^(\d{1,3})\s+(\d{2,})$/); if (mm) { row.window = mm[1]; row.width = mm[2]; } else row.width = row.winwidth; }
         if (row.ctlchain) { const mm = row.ctlchain.match(/^(left|right|l|r)\b\s*(.*)$/i); if (mm) { row.control = mm[1]; row.chain = biqNorm(mm[2]); } else row.control = row.ctlchain; }
+        // "2345 right": the drop cell carries the control side on this template
+        if (row.drop && !row.dropctl) {
+            const mm = row.drop.match(/^(\d{2,5})\s+(left|right|l|r)\b/i);
+            if (mm) { row.drop = mm[1]; if (row.ctlchain && !/^(left|right|l|r)\b/i.test(row.ctlchain)) row.chain = row.ctlchain; row.control = mm[2]; }
+        }
         rows.push(row);
     }
     return { meta, product, rows };
@@ -1571,12 +2220,46 @@ export function biqNormalizeCnbw(mappings, p) {
             const note = s => { it.notes = (it.notes ? it.notes + ' | ' : '') + s; };
             if (cleanVal(r.corner)) note('Corner window: ' + cleanVal(r.corner));
             if (cleanVal(r.motor)) note('Motor: ' + cleanVal(r.motor));
-        } else {
+        } else if (p.product === 'drb') {
+            // Double roller sheet: front / back fabric + colour each ("TEX BLOCK" + "BEIGE", "5 SCREEN" +
+            // "WHITE STONE") are BlindIQ's Blockout / View Fabric options; the range is the double-roller
+            // family selling the blockout fabric; Cassette YES + its Colour, Fabric Insert.
+            it.blindType = 'Double Roller Blind';
             const drive = /motor/.test(ctl) ? 'Motor' : 'Chain';
             if (side === 'L') { it.control1 = 'Lh ' + drive; it.control2 = 'Rh Pin'; }
             else if (side === 'R') { it.control1 = 'Lh Pin'; it.control2 = 'Rh ' + drive; }
+            const sq = x => biqLc(x).replace(/[^a-z0-9]/g, '');
+            const fabs = [[r.fab1, r.col1], [r.fab2, r.col2]].map(([f, c]) => [biqNorm(String(f || '').replace(/\bduoscreen\b/ig, 'Duo Screen').replace(/\b(\d{1,2})\s*%\s*(screen)\b/ig, '$1 $2')), biqNorm(c || '')]).filter(([f]) => f);
+            const family = f => { for (const t of [f, f.replace(/\s+/g, '')]) { const rr = biqResolveRange(mappings, it.blindType, t); if (rr.known) return (mappings.rangeNames || {})[String(rr.id)] || t; } return ''; };
+            const blk = fabs.find(([f]) => /block/i.test(f)) || fabs[0];
+            it.range = (blk && family(blk[0])) || fabs.map(([f]) => family(f)).find(Boolean) || (blk ? blk[0] : '');
+            it.colour = '';
+            it.controlDrop = biqComputeControlDropV2(mappings, '', it.drop, it.blindType, it.range); it._cdAuto = true;
+            it.variants = biqTemplateFor2(mappings, it.blindType, it.range);
+            const spec = biqVariantSpec(mappings, it.blindType, it.range) || [];
+            const bo = spec.find(o => /^blockout\s*fabric$/i.test(o.k)), vo = spec.find(o => /^view\s*fabric$/i.test(o.k));
+            fabs.forEach(([f, c]) => {
+                const o = /block/i.test(f) ? bo : vo, want = biqNorm(f + ' ' + c); if (!o) return;
+                biqSetVar(it.variants, o.k, (o.values || []).find(x => sq(x) === sq(want)) || want);
+            });
+            const cassVal = cleanVal(r.cassette), cc = spec.find(o => /^cassette\s*colou?r$/i.test(o.k));
+            if (cc && cassVal && !/^(no|none|n)$/i.test(cassVal) && cleanVal(r.casscolour)) {
+                const m = (cc.values || []).find(x => biqLc(x) === biqLc(cleanVal(r.casscolour))) || biqHardwareMatch(cc.values, cleanVal(r.casscolour), 'cassette');
+                if (m) biqSetVar(it.variants, cc.k, m);
+            }
+            if (cleanVal(r.insert) && /^y/i.test(biqNorm(r.insert))) biqSetVar(it.variants, 'Fabric Insert for 70mm Cassette', 'Yes');
+        } else {
+            // a motor named in the Motorised column (or the control cell) makes the drive a motor
+            const motorText = cleanVal(r.motor) && !/^(no|n|none)$/i.test(cleanVal(r.motor)) ? cleanVal(r.motor)
+                : (/\b(sonesse|somfy|rts|one\s*touch|ot\s*dual)\b/i.test(r.control || '') ? biqNorm(String(r.control).replace(/^yes\s+/i, '')) : '');
+            const drive = /motor/.test(ctl) || (p.product === 'roller' && motorText) ? 'Motor' : 'Chain';
+            if (side === 'L') { it.control1 = 'Lh ' + drive; it.control2 = 'Rh Pin'; }
+            else if (side === 'R') { it.control1 = 'Lh Pin'; it.control2 = 'Rh ' + drive; }
             it.blindType = p.product === 'outdoor' ? 'Outdoor Free Hang' : 'Element Roller Sys 40';
-            const fab = biqNorm((r.rolltype || r.fabric || '').replace(/\b(outdoor\s+)?blind\b/ig, ''));
+            // "Roll type" holds the fabric on most roller sheets; where a separate fabric column
+            // ("Blind Type") exists it holds the real roll type ("WATERFALL DROP").
+            const rollIsType = !!r.fabric && /^(standard|waterfall|reverse)/i.test(biqNorm(r.rolltype || ''));
+            const fab = biqNorm(((rollIsType ? r.fabric : (r.rolltype || r.fabric)) || '').replace(/\b(outdoor\s+)?blind\b/ig, ''));
             const f = biqSplitFabric(mappings, fab + (r.colour ? ' ' + r.colour : ''), it.blindType);
             if (f.range && f.colour) { it.range = f.range; it.colour = f.colour; }
             else { it.range = fab; it.colour = r.colour || ''; }
@@ -1584,15 +2267,28 @@ export function biqNormalizeCnbw(mappings, p) {
             it.controlDrop = biqComputeControlDropV2(mappings, '', it.drop, it.blindType, it.range); it._cdAuto = true;
             it.variants = biqTemplateFor2(mappings, it.blindType, it.range);
             if (p.product === 'outdoor' && cleanVal(r.motor)) biqAddMotorSundry(mappings, o, cleanVal(r.motor), +it.qty || 1, true);
+            if (p.product === 'roller' && motorText) biqAddMotorSundry(mappings, o, motorText, +it.qty || 1, true);
             if (p.product === 'roller') {
                 if (/standard|waterfall/i.test(r.chain || '')) biqSetVar(it.variants, 'Roll Type', biqNorm(r.chain));
                 else if (/steel/i.test(r.chain || '')) biqSetVar(it.variants, 'Steel Ball Chain', 'Yes');
-                // newer template: cassette colour / components colour / fabric insert columns.
-                // Generic keys here — biqFoldCassette folds them onto the range's own sheet keys
-                // ("Sys 40 70mm Cassette", "Fabric Insert for 70mm Cassette").
-                if (cleanVal(r.casscolour)) biqSetVar(it.variants, 'Cassette Colour', cleanVal(r.casscolour));
+                if (rollIsType) biqSetVar(it.variants, 'Roll Type', /waterfall/i.test(r.rolltype) ? 'Waterfall' : 'Standard');
+                if (/^y/i.test(biqNorm(r.waterfall || ''))) biqSetVar(it.variants, 'Roll Type', 'Waterfall');
+                // Components = the hardware colour ("silver grey" = Grey mechanism, Silver bar and
+                // cassette, as stored on every such line); a cassette is a colour, or Yes with its colour
+                // in the next column, and with no Components column its colour is the hardware's too
+                // ("YES | GREY" -> Grey / Silver / Silver). Generic keys — biqFoldCassette and
+                // biqApplyHardwareColours put them on the range's own sheet keys.
+                const hwWord = x => { const t = biqLc(cleanVal(x) || ''); return /grey|gray|silver/.test(t) ? 'Grey' : /white/.test(t) ? 'White' : /black/.test(t) ? 'Black'
+                    : /beige|cream|ivory/.test(t) ? 'Beige' : /anthracite|charcoal/.test(t) ? 'Anthracite' : ''; };
+                const cassVal = cleanVal(r.cassette), cassOn = !!cassVal && !/^(no|none|n|nil|n\/a)$/i.test(cassVal);
+                const cassColour = hwWord(r.casscolour) || (cassOn ? hwWord(cassVal) : '');
+                const hw = hwWord(r.compcolour) || cassColour;
+                if (hw) {                                       // the bar follows the hardware: clear the template's White
+                    biqSetVar(it.variants, 'Mech Colour', hw); it._hwFromOrder = true;
+                    const bar = it.variants.find(v => biqLc(v[0]) === 'bottom bar'); if (bar) bar[1] = '';
+                }
+                if (cassOn || cassColour) biqSetVar(it.variants, 'Cassette Colour', cassColour || 'Yes');
                 if (cleanVal(r.insert) && /^y/i.test(biqNorm(r.insert))) biqSetVar(it.variants, 'Fabric Insert', 'Yes');
-                if (cleanVal(r.compcolour)) biqSetVar(it.variants, 'Mech Colour', cleanVal(r.compcolour));
             }
         }
         o.items.push(it);
@@ -1849,6 +2545,19 @@ export function biqNormalizeTbd(mappings, p, fileName) {
             it.notes = (it.notes ? it.notes + ' | ' : '') + 'Fabrics: ' + it.range + ' / colours: ' + cs.join(' + ');
         } else it.colour = col;
 
+        // TBD's software prints BlindIQ's own ids in front of the options ("BlindIQ: Type 25 · Range
+        // 756 · Colour 2444 · Fix 1 · Ctrl 9/18"). They were glued onto the first option's key
+        // (~50 lines since June: "BlindIQ: Type 25 · … Mech Colour=White" withheld). Taken apart,
+        // the type / range / colour / fix ids that exist in the catalogue decide those fields. The
+        // Ctrl pair is NOT used: it reads 9/18 (Lh Chain / Rh Pin) whatever the Controls column says,
+        // and the stored orders follow the Controls column (15 lines) far more often than it (5).
+        const idm = String(r.options || '').match(/BlindIQ\s*:\s*((?:(?:Type|Range|Colour|Color|Fix|Ctrl)\s+[\d/]+\s*[·•|,;]?\s*)+)/i);
+        const ids = {};
+        if (idm) {
+            r.options = String(r.options).replace(idm[0], ' ');
+            idm[1].replace(/(Type|Range|Colou?r|Fix)\s+([\d/]+)/gi, (_, k, val) => { ids[biqLc(k).replace('color', 'colour')] = val; return ''; });
+            biqApplyBlindIqIds(mappings, it, ids);
+        }
         const opts = biqTbdOptions(r.options || '');
         it.variants = biqTemplateFor2(mappings, it.blindType || 'roller', it.range);
         let leftEnd = '', rightEnd = '', joined = '';
@@ -1890,7 +2599,11 @@ export function biqNormalizeTbd(mappings, p, fileName) {
         if (!c1 && !c2) {
             const ctl = biqNorm(r.ctl || '');
             const lm = ctl.match(/L\s*:\s*([A-Za-z]+)/i), rm = ctl.match(/R\s*:\s*([A-Za-z]+)/i);
-            if (lm || rm) { c1 = biqTbdDrive(lm && lm[1]); c2 = biqTbdDrive(rm && rm[1]); }
+            // newer TBD prints BlindIQ's own names, one per side: "Lh Pin / Rh Chain" — the Lh/Rh
+            // prefix rule below read that as a left chain (15 lines since June stored the other way)
+            const both = ctl.match(/^(?:lh|left)\s+(.+?)\s*\/\s*(?:rh|right)\s+(.+)$/i);
+            if (both) { c1 = biqTbdDrive(both[1]); c2 = biqTbdDrive(both[2]); }
+            else if (lm || rm) { c1 = biqTbdDrive(lm && lm[1]); c2 = biqTbdDrive(rm && rm[1]); }
             else if (/^(LH|RH)/i.test(ctl)) {
                 const d = biqTbdDrive(ctl.replace(/^(LH|RH)C?M?/i, '')) || (/C$/i.test(ctl) ? 'Chain' : /M$/i.test(ctl) ? 'Motor' : '');
                 if (/^LH/i.test(ctl)) { c1 = d; c2 = 'Pin'; } else { c1 = 'Pin'; c2 = d; }
@@ -1914,6 +2627,25 @@ export function biqNormalizeTbd(mappings, p, fileName) {
     });
     biqExpandValances(mappings, o);
     return o;
+}
+// BlindIQ ids printed on an order -> catalogue names. Only ids the catalogue knows are used; a
+// field that changes is noted with the order's own wording.
+export function biqApplyBlindIqIds(mappings, it, ids) {
+    const set = (field, names, id) => {
+        const name = id != null && (names || {})[String(id)];
+        if (!name) return;
+        if (biqNorm(it[field]) && biqLc(it[field]) !== biqLc(name)) it.notes = (it.notes ? it.notes + ' | ' : '') + field + ' "' + it[field] + '" -> ' + name + ' (BlindIQ id on the order)';
+        it[field] = name;
+    };
+    if (ids.type) set('blindType', mappings.blindTypeNames, ids.type);
+    if (ids.range) set('range', mappings.rangeNames, ids.range);
+    if (ids.colour) set('colour', mappings.colourNames, ids.colour);
+    if (ids.fix) set('fix', mappings.fixNames, ids.fix);
+    if (ids.ctrl) {
+        const [a, b] = String(ids.ctrl).split('/');
+        if (a) set('control1', mappings.controlNames, a);
+        if (b) set('control2', mappings.controlNames, b);
+    }
 }
 
 // Inline valance data on a blind line: OPTION or SPLIT? BlindIQ's own variant
@@ -2191,7 +2923,7 @@ export function biqOrderPreviewHtml(mappings, order) {
         : '<span class="bad">' + (H(name) || '—') + '</span>';
     const rows = order.items.map((it, i) => {
         const rt = biqResolve(mappings, 'blindTypes', it.blindType), rr = biqResolveRange(mappings, it.blindType, it.range),
-            rc = biqResolveColour(mappings, it.range, it.colour), rf = biqResolve(mappings, 'fixes', it.fix),
+            rc = biqResolveColour(mappings, it.range, it.colour, it.blindType), rf = biqResolve(mappings, 'fixes', it.fix),
             r1 = biqResolve(mappings, 'control1', it.control1), r2 = biqResolve(mappings, 'control2', it.control2);
         const emitted = biqEmittedVariants(mappings, it).map(v => H(v[0]) + '=' + H(v[1]));
         const withheld = biqDroppedVariants(mappings, it).map(d => '<span class="bad">✗ ' + H(d.k) + '=' + H(d.v) + '</span>');
@@ -2207,7 +2939,7 @@ export function biqOrderPreviewHtml(mappings, order) {
   <td>${H(s.code)}</td><td>${H(s.qty)}</td><td class="num">${H(s.type)}</td><td class="num">${s.sundry ? H(s.sundry) : '<span class="bad">—</span>'}</td><td>${H(s.notes)}</td>
 </tr>`).join('\n');
     const meta = [
-        ['Order No', order.orderNumber], ['Order Date', order.orderDate], ['Required Date', order.requiredDate],
+        ['Order No', biqOrderNumberForBiq(order.orderNumber)], ['Order Date', order.orderDate], ['Required Date', order.requiredDate],
         ['Delivery Method', order.deliveryMethod], ['Packing Type', order.packingType],
         ['BlindIQ Order ID', order.orderId || '0'], ['Source', order.sourceDesc]
     ].map(([k, v]) => `<tr><th>${H(k)}</th><td>${H(v) || '—'}</td></tr>`).join('');
@@ -2307,14 +3039,44 @@ export const BIQ_EXTRACTION_SCHEMA = {
     required: ["customerCompany", "orderNumber", "lineItems"]
 };
 
+// What the AI is told BlindIQ sells: the live blind types and, per type, its live orderable ranges
+// in BlindIQ's own spelling. The previous list was the global unique-name map only, which leaves out
+// every range name that more than one blind type uses — 13 of the 25 range names ordered most in
+// 2026 ("Edge Block", "Pop Filter", "Linear Valance" ...) were never offered to the AI. Falls back
+// to the old lists until the catalogue linkage is imported. Discontinued-stock ranges are not offered.
+export function biqExtractionVocabulary(mappings) {
+    const btn = mappings.blindTypeNames || {}, bth = mappings.blindTypeHidden || {};
+    const rn = mappings.rangeNames || {}, rbt = mappings.rangeBlindType || {}, rh = mappings.rangeHidden || {}, vsi = mappings.variantSheetIndex || {};
+    if (!Object.keys(rbt).length || !Object.keys(bth).length)
+        return { ranges: Object.keys(mappings.ranges || {}), types: Object.keys(mappings.blindTypes || {}) };
+    const hasSheets = Object.keys(vsi).length > 0, byType = {};
+    Object.keys(rn).forEach(rid => {
+        const t = rbt[rid];
+        if (t == null || +rh[rid] === 1 || +bth[String(t)] === 1) return;
+        if (hasSheets && vsi[t + '|' + rid] == null) return;              // no option sheet = not orderable
+        if (/^discontinued\b/i.test(biqNorm(rn[rid]))) return;
+        const tn = biqNorm(btn[String(t)] || ''); if (!tn) return;
+        (byType[tn] = byType[tn] || new Set()).add(biqNorm(rn[rid]));
+    });
+    const ranges = {};
+    Object.keys(byType).sort().forEach(t => { ranges[t] = [...byType[t]].sort((a, b) => a.localeCompare(b)); });
+    return { ranges, types: Object.keys(ranges) };
+}
 export function biqBuildExtractionPrompt(knownRanges, knownBlindTypes) {
+    // knownRanges: a flat list (legacy) or {blindType: [ranges]} from biqExtractionVocabulary.
+    const perType = knownRanges && !Array.isArray(knownRanges) && typeof knownRanges === 'object';
+    const rangeRule = perType
+        ? `
+- BlindIQ's current blind types and the fabric ranges each one offers (use EXACTLY these spellings when the document matches one; a range belongs to the blind type it is listed under — the same fabric can be spelled differently per type, e.g. Roller System 55 "5 Screen / Aventus 5%"):
+${Object.entries(knownRanges).map(([t, rs]) => '  • ' + t + ': ' + rs.join(', ')).join('\n')}`
+        : (knownRanges && knownRanges.length ? `
+- Known fabric ranges (use EXACTLY these spellings when the document matches one): ${knownRanges.join(', ')}.` : '');
     return `You are extracting a window-blind customer order from the attached document(s) for import into Blind Designs' manufacturing system (BlindIQ).
 
 RULES:
 - Extract EVERY line item. One output line item per physical blind.
 - Measurements: millimetres, digits only. South African number formats. Width is horizontal, drop/height vertical.
-- "range" is the fabric collection name; "colour" is the colour name. NEVER combine them: if the document shows "5 Screen Charcoal Grey", range="5 Screen", colour="Charcoal Grey".${knownRanges && knownRanges.length ? `
-- Known fabric ranges (use EXACTLY these spellings when the document matches one): ${knownRanges.join(', ')}.` : ''}${knownBlindTypes && knownBlindTypes.length ? `
+- "range" is the fabric collection name; "colour" is the colour name. NEVER combine them: if the document shows "5 Screen Charcoal Grey", range="5 Screen", colour="Charcoal Grey".${rangeRule}${knownBlindTypes && knownBlindTypes.length ? `
 - Known blind types: ${knownBlindTypes.join(', ')}.` : ''}
 - Controls: chain/pin/motor and which side. A control written as just "Left" on a roller blind means chain on the left (controlLeft="Lh Chain", controlRight="Rh Pin"); "Right" means chain right (controlLeft="Lh Pin", controlRight="Rh Chain").
 - Put every other specification (mechanism/hardware colour, bottom bar, roll type, cassette, motor, remotes, valance, ladder tape, etc.) into "options" as "Key=Value" strings.
@@ -2351,8 +3113,8 @@ export function biqAiResultToOrder(mappings, ai) {
         it.fix = biqNorm(li.fix);
         it.control1 = biqNorm(li.controlLeft); it.control2 = biqNorm(li.controlRight);
         { const cd = biqNorm(li.controlDrop || '');
-          it.controlDrop = biqComputeControlDropV2(mappings, /^\d/.test(cd) ? cd : '', it.drop, it.blindType, it.range);
-          it._cdAuto = !/^\d/.test(cd); }
+          it.controlDrop = biqComputeControlDropV2(mappings, biqStatedControlLength(cd), it.drop, it.blindType, it.range);
+          it._cdAuto = !biqStatedControlLength(cd); }
         it.variants = biqTemplateFor2(mappings, it.blindType, it.range);
         (li.options || []).forEach(opt => {
             const i = String(opt).indexOf('=');
@@ -2375,7 +3137,7 @@ export function biqAiResultToOrder(mappings, ai) {
         biqAddMotorSundry(mappings, o, desc, +qty || 1, true);
         const su = o.sundries[o.sundries.length - 1];
         if (o.sundries.length > before && su && !su.sundry) {
-            const h = biqFuzzySundry(mappings, desc);
+            const h = biqFuzzySundry(biqOrderableSundryView(mappings), desc);
             if (h && h.sundry != null) { su.type = String(h.type); su.sundry = String(h.sundry); }
         }
     });
@@ -2445,12 +3207,59 @@ export function biqCanonicalCustomerName(mappings, name) {
 // (from BlindIQ's Customer Address table), fill empty header fields with them.
 export function biqApplyCustomerDefaults(mappings, order) {
     const r = biqResolveCustomer(mappings, order.customer);
-    if (!r.known) return;
-    // alias -> rewrite to the one true BlindIQ account name before export
-    if (biqLc(order.customer) !== r.canonicalKey) order.customer = biqCanonicalCustomerName(mappings, order.customer);
-    const e = r.entry;
-    if (!order.deliveryMethod && e.dm) order.deliveryMethod = e.dm;
-    if (!order.packingType && e.pt) order.packingType = e.pt;
+    // A packing type this code filled is remembered (_ptAuto), so a later courier rule may replace
+    // it — but one the order or the capturer set never is.
+    const ptIsAuto = () => !biqNorm(order.packingType) || (order._ptAuto && biqLc(order.packingType) === biqLc(order._ptAuto));
+    if (r.known) {
+        // alias -> rewrite to the one true BlindIQ account name before export
+        if (biqLc(order.customer) !== r.canonicalKey) order.customer = biqCanonicalCustomerName(mappings, order.customer);
+        const e = r.entry;
+        if (!order.deliveryMethod && e.dm) order.deliveryMethod = e.dm;
+        if (!order.packingType && e.pt) { order.packingType = e.pt; order._ptAuto = e.pt; }
+    }
+    // Courier delivery means BOXED packing: 9,292 of 9,311 courier orders in BlindIQ this year
+    // (Triton / Other / First Freight). Applies to an empty packing type or one taken from the
+    // customer's defaults — a customer whose default is Standard still ships boxed by courier.
+    if (/courier/i.test(biqNorm(order.deliveryMethod)) && ptIsAuto() && biqLc(order.packingType) !== 'boxed'
+        && biqResolve(mappings, 'packingTypes', 'Boxed').known) { order.packingType = 'Boxed'; order._ptAuto = 'Boxed'; }
+}
+// BlindIQ's own size warnings (BlindTypes width/drop thresholds + SizeWarnings messages), checked
+// at conversion so a misread size ("50" for 500) or an impossible blind is caught before import
+// instead of at capture. Returns [{dim, op, level, v, msg, value, fatal}] for one item. "Cannot be
+// made" limits are fatal; the rest are BlindIQ's advisories ("Consider using System 55"). A
+// motor-only limit ("cannot accommodate a motor") applies only to a motorised blind.
+export function biqSizeWarnings(mappings, it) {
+    const bt = biqResolve(mappings, 'blindTypes', it.blindType);
+    if (!bt.known) return [];
+    const rules = (mappings.sizeWarnings || {})[String(bt.id)] || [];
+    const motorised = /motor|dual/i.test((it.control1 || '') + ' ' + (it.control2 || ''));
+    const out = [];
+    rules.forEach(r => {
+        const value = parseFloat(r.dim === 'w' ? it.width : it.drop);
+        if (!(value > 0) || !(+r.v > 0)) return;
+        if (!(r.op === 'lt' ? value < +r.v : value > +r.v)) return;
+        if (/\bmotor\b/i.test(r.msg) && !motorised) return;
+        out.push(Object.assign({}, r, { value, fatal: /can\s*not\s+be\s+made|cannot\s+accommodate/i.test(r.msg) }));
+    });
+    return out;
+}
+const biqSizeText = (it, s) => (s.dim === 'w' ? 'width ' : 'drop ') + s.value + 'mm (BlindIQ ' + (it.blindType || '') + ' '
+    + (s.op === 'lt' ? 'minimum ' : 'maximum ') + s.v + 'mm): "' + s.msg + '"';
+// Advisory list (amber in the UI) — kept OUT of biqCollectProblems so consumers that treat every
+// problem as blocking (the server-side automation) are not stopped by BlindIQ's heads-ups.
+export function biqCollectWarnings(mappings, order) {
+    const out = [];
+    (order ? order.items : []).forEach((it, i) => {
+        const w = 'Item ' + (it.code || i + 1) + ': ';
+        biqSizeWarnings(mappings, it).filter(s => !s.fatal).forEach(s => out.push({ t: w + biqSizeText(it, s), sev: 'warn' }));
+        if (it._discontinued) out.push({ t: w + it._discontinued + ' is retired in BlindIQ — moved to ' + it.range + ' / ' + it.colour + ' (discontinued stock: confirm availability).', sev: 'warn' });
+        (it._sizeChecks || []).forEach(t => out.push({ t: w + t + '.', sev: 'warn' }));
+        if (it._intPartnerOf && /intermediate/i.test(it.control1 || ''))
+            out.push({ t: w + 'left side set to Lh Intermediate as the partner of item ' + it._intPartnerOf + '\'s Rh Intermediate — confirm the pair.', sev: 'warn' });
+        if (it._upgradeAsk && !it.variants.some(v => biqLc(v[0]) === biqLc(it._upgradeAsk) && /^yes$/i.test(biqNorm(v[1]))))
+            out.push({ t: w + 'the sheet asks for ' + it._upgradeAsk + ' (Upgrade Mechanism) — set the option if this blind needs it.', sev: 'warn' });
+    });
+    return out;
 }
 export function biqCollectProblems(mappings, order) {
     const probs = [];
@@ -2473,12 +3282,58 @@ export function biqCollectProblems(mappings, order) {
     order.items.forEach((it, i) => {
         const w = 'Item ' + (it.code || i + 1) + ': ';
         if (!biqResolve(mappings, 'blindTypes', it.blindType).known) probs.push({ t: w + 'blind type "' + (it.blindType || '?') + '" not mapped.', cat: 'blindTypes', name: it.blindType });
+        // Retired (hidden) catalogue items: BlindIQ hides them from capture but the importer
+        // takes the id — TBD "Widescreen" / "Roller 45" still mapped to retired "Z" types.
+        {
+            const bt = biqResolve(mappings, 'blindTypes', it.blindType), rr = biqResolveRange(mappings, it.blindType, it.range);
+            const btn = mappings.blindTypeNames || {}, rbt = mappings.rangeBlindType || {};
+            if (bt.known && +(mappings.blindTypeHidden || {})[String(bt.id)] === 1) {
+                const live = biqResolve(mappings, 'blindTypes', String(btn[String(bt.id)] || '').replace(/^z\s+/i, ''));
+                probs.push({ t: w + 'blind type "' + (btn[String(bt.id)] || it.blindType) + '" is RETIRED in BlindIQ'
+                    + (live.known && live.id !== bt.id && +(mappings.blindTypeHidden || {})[String(live.id)] !== 1 ? ' — the live product is "' + (btn[String(live.id)] || '') + '".' : ' — check with the customer which current product they want.'),
+                    cat: 'blindTypes', name: it.blindType });
+            }
+            if (rr.known && +(mappings.rangeHidden || {})[String(rr.id)] === 1)
+                probs.push({ t: w + 'range "' + it.range + '" is RETIRED in BlindIQ — check with the customer which current fabric they want.', cat: 'ranges', name: it.range, blindType: it.blindType });
+            if (rr.known && bt.known && rbt[String(rr.id)] != null && String(rbt[String(rr.id)]) !== String(bt.id))
+                probs.push({ t: w + 'range "' + it.range + '" (id ' + rr.id + ') belongs to "' + (btn[String(rbt[String(rr.id)])] || rbt[String(rr.id)]) + '" in BlindIQ, not "' + it.blindType + '".', cat: 'ranges', name: it.range, blindType: it.blindType });
+            const rcol = biqLc(it.colour) ? biqResolveColour(mappings, it.range, it.colour, it.blindType) : { known: false };
+            if (rcol.known && +(mappings.colourHidden || {})[String(rcol.id)] === 1)
+                probs.push({ t: w + 'colour "' + it.colour + '" is RETIRED in BlindIQ.', cat: 'colours', name: it.range + '|' + it.colour });
+        }
         if (biqNeedsSplit(mappings, it)) probs.push({ t: w + 'fabric "' + it.range + '" needs splitting into range + colour.', split: i });
         else if (!biqResolveRange(mappings, it.blindType, it.range).known) probs.push({ t: w + 'range "' + (it.range || '?') + '" not mapped' + (biqResolve(mappings, 'blindTypes', it.blindType).known ? ' for blind type "' + it.blindType + '"' : '') + '.', cat: 'ranges', name: it.range, blindType: it.blindType });
-        const rc = biqResolveColour(mappings, it.range, it.colour);
+        const rc = biqResolveColour(mappings, it.range, it.colour, it.blindType);
+        const rangeCols = biqRangeColourIds(mappings, it.blindType, it.range);   // null = unknown
         if (!rc.known && biqLc(it.colour)) probs.push({ t: w + 'colour "' + it.colour + '" (range ' + (it.range || '?') + ') not mapped.', cat: 'colours', name: it.range + '|' + it.colour });
-        if (!biqLc(it.colour) && !/curtain/i.test(it.blindType)) probs.push({ t: w + 'colour is empty.' });
+        if (!biqLc(it.colour) && !/curtain/i.test(it.blindType) && !(rangeCols && !rangeCols.length)) probs.push({ t: w + 'colour is empty.' });
+        // BlindIQ's own range->colour links (Relate_Range_Colours): a colour the range doesn't
+        // offer imports as the wrong fabric ("129 White" — a Retro Venetian colour — went in on
+        // all 48 Blockout blinds of one order on 25 Jul 2026 and was fixed by hand).
+        if (rc.known && rc.onRange === false) {
+            if (!rangeCols.length) probs.push({ t: w + 'range "' + it.range + '" has no colours in BlindIQ — "' + it.colour + '" belongs in the options or the item notes.' });
+            else {
+                const cn = mappings.colourNames || {};
+                const names = rangeCols.map(id => cn[String(id)]).filter(Boolean);
+                const elsewhere = biqRangesWithColour(mappings, it.blindType, it.colour).map(id => (mappings.rangeNames || {})[String(id)])
+                    .filter(n => n && biqLc(n) !== biqLc(it.range));
+                probs.push({ t: w + 'colour "' + it.colour + '" is not offered on range "' + it.range + '" in BlindIQ (' + names.slice(0, 8).join(' / ') + (names.length > 8 ? ' …' : '') + ')'
+                    + (elsewhere.length ? ' — "' + it.colour + '" is on ' + elsewhere.slice(0, 3).join(' / ') + (elsewhere.length > 3 ? ' …' : '') : '') + '.', cat: 'colours', name: it.range + '|' + it.colour });
+            }
+        }
         if (!biqResolve(mappings, 'fixes', it.fix).known && biqLc(it.fix)) probs.push({ t: w + 'fix "' + it.fix + '" not mapped.', cat: 'fixes', name: it.fix });
+        // BlindIQ's own range->fix links (Relate_Range_Fixes): since June 0.48% of imported blinds
+        // are stored with a fix their range doesn't offer (two thirds of them curtains), against
+        // 0.07% of manually captured ones.
+        {
+            const rfx = biqRangeFixIds(mappings, it.blindType, it.range), rfi = biqResolve(mappings, 'fixes', it.fix);
+            if (rfx && biqLc(it.fix) && rfi.known && rfi.id !== -1) {
+                const fn = mappings.fixNames || {};
+                if (!rfx.length) probs.push({ t: w + 'range "' + it.range + '" takes no fix in BlindIQ — clear the fix "' + it.fix + '" (or put it in the options / notes).' });
+                else if (!rfx.some(id => String(id) === String(rfi.id)))
+                    probs.push({ t: w + 'fix "' + it.fix + '" is not offered on range "' + it.range + '" in BlindIQ (' + rfx.map(id => fn[String(id)] || ('#' + id)).join(' / ') + ').' });
+            }
+        }
         if (!biqResolve(mappings, 'control1', it.control1).known && biqLc(it.control1)) probs.push({ t: w + 'control "' + it.control1 + '" not mapped.', cat: 'control1', name: it.control1 });
         if (!biqResolve(mappings, 'control2', it.control2).known && biqLc(it.control2)) probs.push({ t: w + 'control "' + it.control2 + '" not mapped.', cat: 'control2', name: it.control2 });
         if (biqRequiresDualControl(mappings, it.blindType) && (!biqLc(it.control1) || !biqLc(it.control2)))
@@ -2503,6 +3358,7 @@ export function biqCollectProblems(mappings, order) {
                 if (!f || !biqNorm(f[1])) probs.push({ t: w + 'option "' + o.k + '" is required for ' + it.blindType + (o.values && o.values.length ? ' (' + o.values.slice(0, 4).join(' / ') + (o.values.length > 4 ? ' …' : '') + ')' : '') + '.' }); }
         });
         if (!(+it.width > 0)) probs.push({ t: w + 'width missing/invalid.' });
+        biqSizeWarnings(mappings, it).filter(s => s.fatal).forEach(s => probs.push({ t: w + biqSizeText(it, s) }));
         // Valance AND curtain-track lines carry no drop — 0 (or blank -> 0 in the XML) is
         // correct (Russel 2026-08-07; TBD's BD POs print curtain drops as 0, 2026-08-11).
         const isNoDrop = (() => { const r = biqResolve(mappings, 'blindTypes', it.blindType); return r.known && [14, 27, 13, 17, 18, 20].includes(r.id); })();
@@ -2513,6 +3369,13 @@ export function biqCollectProblems(mappings, order) {
         const w = 'Sundry ' + (s.code || i + 1) + ': ';
         if (!/^\d+$/.test(biqNorm(s.type))) probs.push({ t: w + 'SundryType_Link must be a number.' });
         if (!/^\d+$/.test(biqNorm(s.sundry))) probs.push({ t: w + 'Sundry_Link must be a number.' });
+        else {
+            const nm = (mappings.sundryNames || {})[biqNorm(s.sundry)] || s.notes || s.sundry;
+            const t13 = String((mappings.sundryTypes || {})['components motor'] || 13);
+            if (+(mappings.sundryInactive || {})[biqNorm(s.sundry)] === 1) probs.push({ t: w + '"' + nm + '" is INACTIVE in BlindIQ — pick the current part.' });
+            else if (biqNorm(s.type) === t13 && Object.keys(mappings.sundryTypes || {}).length)
+                probs.push({ t: w + '"' + nm + '" is a factory component record (Components Motor), not an orderable sundry — pick the item under its motor sundry type.' });
+        }
         if (!(+s.qty > 0)) probs.push({ t: w + 'qty missing/invalid.' });
     });
     return probs;
@@ -2549,6 +3412,7 @@ function tag(name, val, opts) {
     }
     return '<' + name + '>' + esc(val) + '</' + name + '>';
 }
+export const biqOrderNumberForBiq = n => String(n == null ? '' : n).replace(/[\s\-\u2013\u2014]+/g, '');
 export function biqGenerateXML(mappings, order) {
     biqAssignSundryCodes(order);
     biqApplyCustomerDefaults(mappings, order);
@@ -2561,7 +3425,11 @@ export function biqGenerateXML(mappings, order) {
     x += '<CustomerOrders' + XSI + '>';
     x += tag('CustomerOrderID', order.orderId || '0');
     x += tag('CO_Customer_Link', c.customer);
-    x += tag('CO_Customer_Order_Number', order.orderNumber);
+    // BlindIQ order numbers carry no spaces or dashes: capturers re-key them ("A0410-Langebaan
+    // Boutique Hotel" -> "A0410LangebaanBoutiqueHotel"). This year 1.8% of manually captured order
+    // numbers contain a space and 0.2% a hyphen, against 5.4% with spaces on imported orders.
+    // Slashes are kept (manual capture keeps them at the same rate as imports).
+    x += tag('CO_Customer_Order_Number', biqOrderNumberForBiq(order.orderNumber));
     x += tag('CO_Required_Date', order.requiredDate ? order.requiredDate + 'T00:00:00' : '');
     x += tag('CO_DeliveryAddress_Link', c.address);
     x += tag('CO_DeliveryMethod_Link', idOr(dm));
@@ -2572,8 +3440,8 @@ export function biqGenerateXML(mappings, order) {
     x += '</CustomerOrders>';
     order.items.forEach(it => {
         const rt = biqResolve(mappings, 'blindTypes', it.blindType), rr = biqResolveRange(mappings, it.blindType, it.range),
-            rc = biqResolveColour(mappings, it.range, it.colour), rf = biqResolve(mappings, 'fixes', it.fix),
-            r1 = biqResolve(mappings, 'control1', it.control1), r2 = biqResolve(mappings, 'control2', it.control2);
+            rc = biqResolveColour(mappings, it.range, it.colour, it.blindType), rf = biqResolve(mappings, 'fixes', it.fix),
+            r1 = biqResolveControlScoped(mappings, 'c1', it.control1, it.blindType, it.range), r2 = biqResolveControlScoped(mappings, 'c2', it.control2, it.blindType, it.range);
         x += '<CustomerOrderItems' + XSI + '>';
         x += tag('COI_ItemCode', it.code);
         x += tag('COI_Qty', it.qty);
@@ -2720,7 +3588,7 @@ export function biqBuildDiscernment(mappings, order, shortlistN) {
         };
         if (!biqResolve(mappings, 'blindTypes', it.blindType).known) add('blindType', it.blindType);
         if (!biqNeedsSplit(mappings, it) && !biqResolveRange(mappings, it.blindType, it.range).known) add('range', it.range, { blindType: it.blindType });
-        if (!biqResolveColour(mappings, it.range, it.colour).known) add('colour', it.colour, { range: it.range });
+        if (!biqResolveColour(mappings, it.range, it.colour, it.blindType).known) add('colour', it.colour, { range: it.range });
         if (!biqResolve(mappings, 'control1', it.control1).known) add('control1', it.control1);
         if (!biqResolve(mappings, 'control2', it.control2).known) add('control2', it.control2);
         if (!biqResolve(mappings, 'fixes', it.fix).known) add('fix', it.fix);
@@ -2731,8 +3599,8 @@ export function biqBuildDiscernment(mappings, order, shortlistN) {
     (order.sundries || []).forEach((s, i) => {
         if (/^\d+$/.test(biqNorm(s.sundry)) && /^\d+$/.test(biqNorm(s.type))) return;
         const raw = biqNorm(s._src || s.notes); if (!raw) return;
-        const motorish = /motor|\brts\b|remote|adapter|adaptor|situo|maestria|sonesse|smoove|tahoma|telis|glydea|zigbee|\bio\b|charger|solar|battery|receiver|wall switch|one\s*touch|\bdual\b|crown|wire\s*free|li-?ion|rechargeable|extension|matter|\bhub\b|timer/i.test(raw);
-        const view = motorish ? biqMotorSundryView(mappings) : mappings;
+        const motorish = BIQ_MOTORISH_RE.test(raw);
+        const view = motorish ? biqMotorSundryView(mappings) : biqOrderableSundryView(mappings);
         // Type-13 "Components Motor" records are factory parts, never orderable — they must
         // not be offered as candidates on ANY path (the Crown Retro Fit lesson, Russel 2026-08-07).
         const t13 = String((mappings.sundryTypes || {})['components motor'] || 13);
@@ -2810,7 +3678,7 @@ export function biqApplyDiscernment(mappings, order, matches, opts) {
     (order.sundries || []).forEach((s, i) => {
         const m = byId['s' + i + '.sundry'];
         if (!m || !biqNorm(m.match)) return;
-        const hit = biqResolveSundry(mappings, m.match);
+        const hit = biqResolveSundry(biqOrderableSundryView(mappings), m.match);
         if (!hit || hit.sundry == null || hit.sundry === '' || hit.type == null || hit.type === '') return;
         const conf = +m.confidence || 0;
         const from = biqNorm(s._src || s.notes);
@@ -2832,7 +3700,7 @@ export function biqApplyDiscernment(mappings, order, matches, opts) {
 // Accept a pending sundry suggestion (capturer clicked it).
 export function biqAcceptSundrySuggestion(mappings, order, sidx) {
     const s = (order.sundries || [])[sidx]; if (!s || !s._ai || s._ai.mode !== 'suggest') return false;
-    const hit = biqResolveSundry(mappings, s._ai.to);
+    const hit = biqResolveSundry(biqOrderableSundryView(mappings), s._ai.to);
     if (!hit || hit.sundry == null || hit.sundry === '') return false;
     s.type = String(hit.type); s.sundry = String(hit.sundry);
     if (s._ai.from && !biqNorm(s._src)) s._src = s._ai.from;
@@ -2863,7 +3731,7 @@ export function biqLearnFromAI(mappings, order) {
             else if (field === 'control1') { const r = biqResolve(mappings, 'control1', it.control1); rec('control1', biqLc(orig), r.id); }
             else if (field === 'control2') { const r = biqResolve(mappings, 'control2', it.control2); rec('control2', biqLc(orig), r.id); }
             else if (field === 'range') { const r = biqResolveRange(mappings, it.blindType, it.range); if (r.known) { const bt = biqResolve(mappings, 'blindTypes', it.blindType); if (bt.known) { const k = bt.id + '|' + biqLc(orig); if (mappings.rangesScoped[k] == null) { mappings.rangesScoped[k] = r.id; learned.push({ cat: 'rangesScoped', key: k, id: r.id }); } } } }
-            else if (field === 'colour') { const r = biqResolveColour(mappings, it.range, it.colour); if (r.known) rec('colours', '|' + biqLc(orig), r.id); }
+            else if (field === 'colour') { const r = biqResolveColour(mappings, it.range, it.colour, it.blindType); if (r.known) rec('colours', '|' + biqLc(orig), r.id); }
         });
     });
     // Confirmed sundry matches learn the dealer's wording as an exact alias.
@@ -3028,11 +3896,30 @@ export function biqFoldOptionSynonyms(mappings, order) {
             // "4x steel collapsable" (tight PDF kerning glues the count to the x) -> "4 x ..." (J6966)
             const spacedX = biqNorm(val.replace(/\b(\d+)\s*x\b/gi, '$1 x'));
             const cands = [stripped, spacedX, biqNorm(stripped.replace(/\b(\d+)\s*x\b/gi, '$1 x'))];
-            const real = cands.map(c => c && c !== val ? o.values.find(x => biqLc(x) === biqLc(c)) : null).find(Boolean);
+            let real = cands.map(c => c && c !== val ? o.values.find(x => biqLc(x) === biqLc(c)) : null).find(Boolean);
+            // Qualifier AND a broken word together: Mathéo's PDF prints "Anthracit e (S40)" (17 lines
+            // since June, all stored as Anthracite); US spellings ("Aluminum", "Gray") and Blind Guys'
+            // "Steel Collapsible" (BlindIQ: "Collapsable", 13 hold-down lines) are the same part.
+            const sp2 = s => cn(String(s).replace(/aluminum/gi, 'aluminium').replace(/\bgray\b/gi, 'grey').replace(/\bcolor\b/gi, 'colour').replace(/ible\b/gi, 'able'));
+            if (!real) { const hs = o.values.filter(x => sp2(x) === sp2(stripped)); if (hs.length === 1) real = hs[0]; }
+            // A light shade of a colour BlindIQ sells in one shade: TBD's "Light Grey" mechanism is the
+            // Grey one (all 8 converted lines stored as Grey). Colour options only, never a darker shade.
+            if (!real && /colou?r/i.test(o.k)) {
+                const base = stripped.replace(/^(light|lt\.?)\s+/i, '');
+                if (base !== stripped) { const hs = o.values.filter(x => sp2(x) === sp2(base)); if (hs.length === 1) real = hs[0]; }
+            }
+            // The value followed by the dealer's remark: Mathéo shutters "100mm >1200 height" (9 lines,
+            // all stored 100mm). The longest catalogue value that starts the text as a whole word wins.
+            if (!real) {
+                const lv = biqLc(stripped);
+                real = o.values.filter(x => { const xl = biqLc(x); return xl.length >= 2 && lv.length > xl.length && lv.startsWith(xl) && /^[\s,;:>\-–(]/.test(lv.slice(xl.length)); })
+                    .sort((a, b) => b.length - a.length)[0];
+            }
             if (real) { v[1] = real; it.notes = (it.notes ? it.notes + ' | ' : '') + v[0] + ' "' + val + '" read as ' + real; }
         });
     });
     biqFoldCassette(mappings, order);
+    biqApplyHardwareColours(mappings, order);
 }
 
 // Dealers (TBD software especially) write a cassette as plain keys — "Cassette=Yes",
@@ -3049,7 +3936,13 @@ export function biqFoldCassette(mappings, order) {
         const idxOf = re => it.variants.findIndex(v => re.test(biqLc(v[0])));
         const colourCassette = spec.find(o => /cassette/i.test(o.k) && (o.values || []).length
             && !(o.values || []).every(x => /^(yes|no)$/i.test(x)));
-        const ci = idxOf(/^cassette$/), coli = idxOf(/^cassette\s+colou?r$/);
+        const ci = idxOf(/^cassette$/);
+        let coli = idxOf(/^cassette\s+colou?r$/);
+        // Double Roller (and others) call their OWN option "Cassette Colour": that row is already
+        // the real key — folding it onto itself and then splicing the "dealer" row deleted the
+        // colour (Blind Guys DRB: Cassette Colour=Anthracite came out empty + "required").
+        const coliIsReal = coli >= 0 && colourCassette && biqLc(it.variants[coli][0]) === biqLc(colourCassette.k);
+        if (coliIsReal && ci < 0) coli = -1;
         if (colourCassette && (ci >= 0 || coli >= 0)) {
             const on = ci >= 0 ? isYes(it.variants[ci][1]) : true;   // a colour alone implies a cassette
             const colour = coli >= 0 ? biqNorm(it.variants[coli][1]) : '';
@@ -3057,13 +3950,103 @@ export function biqFoldCassette(mappings, order) {
                 const match = (colourCassette.values || []).find(x => biqLc(x) === biqLc(colour));
                 biqSetVar(it.variants, colourCassette.k, match || colour || 'Yes');
             }
-            [ci, coli].filter(x => x >= 0).sort((a, b) => b - a).forEach(x => it.variants.splice(x, 1));
+            [ci, coliIsReal ? -1 : coli].filter(x => x >= 0).sort((a, b) => b - a).forEach(x => it.variants.splice(x, 1));
         }
         const fii = idxOf(/^fabric\s+insert$/);
         const fiOpt = spec.find(o => /fabric\s+insert/i.test(o.k));
         if (fii >= 0 && fiOpt && biqLc(fiOpt.k) !== 'fabric insert') {
             if (isYes(it.variants[fii][1])) biqSetVar(it.variants, fiOpt.k, 'Yes');
             it.variants.splice(fii, 1);
+        }
+    });
+}
+
+// Hardware-coloured parts follow the Mech Colour. BlindIQ order history (System 40, 2024–2026,
+// ~40,000 blinds) is unambiguous: bottom bars and cassettes match the hardware — Black,
+// Anthracite and White bars 97–99% their own colour (cassettes 95–99%); GREY hardware gets SILVER
+// (BlindIQ has no grey bar or cassette) 95–96%; BEIGE hardware gets a WHITE aluminium bar 85%
+// (cassettes do come in Beige, 96%). Returns the catalogue value from `values`, or '' when nothing fits.
+const BIQ_HW_SUBST = { bar: { grey: 'silver', gray: 'silver', beige: 'white' }, cassette: { grey: 'silver', gray: 'silver' } };
+export function biqHardwareMatch(values, hw, kind) {
+    // letters only: Mathéo prints "Anthracit e (S40)" — 17 bars since June fell back to White
+    const sq = s => biqLc(s).replace(/[^a-z]/g, '');
+    const h0 = biqLc(String(hw == null ? '' : hw).replace(/\([^)]*\)/g, ' '));
+    if (!h0 || !(values || []).length) return '';
+    const known = Object.keys(BIQ_HW_SUBST[kind] || {}).concat(values.map(x => biqLc(x).replace(/\s*aluminium$/, '')));
+    const h = known.find(k => sq(k) === sq(h0)) || h0;
+    const sub = (BIQ_HW_SUBST[kind] || {})[h];
+    const cands = kind === 'bar' ? [h + ' aluminium', sub ? sub + ' aluminium' : ''] : [h, sub || ''];
+    for (const c of cands) {
+        if (!c) continue;
+        const v = values.find(x => sq(x) === sq(c));
+        if (v) return v;
+    }
+    return '';
+}
+// Dealer wording that names the standard part without a catalogue colour: Mathéo's "Covered
+// Aluminium" (= aluminium bar in the hardware colour, Russel 2026-08-07), "Std", "Matching"...
+const BIQ_BAR_GENERIC = /^(covered(\s+alu(minium|minum)?)?|alu(minium|minum)?|std\.?(\s+alu(minium|minum)?)?|standard(\s+alu(minium|minum)?)?|match(ing|es)?(\s+(to\s+)?(the\s+)?(hardware|h\/ware|mech(anism)?))?|to\s+match|as\s+(per\s+)?hardware|hardware(\s+colou?r)?)$/i;
+const BIQ_CASSETTE_GENERIC = /^(yes|y|true|std\.?|standard|70\s*mm(\s+cassette)?|cassette|open(\s+cassette)?|match(ing|es)?(\s+(to\s+)?(the\s+)?(hardware|h\/ware|mech(anism)?))?|to\s+match|as\s+(per\s+)?hardware|hardware(\s+colou?r)?)$/i;
+// Apply the hardware rule to the item's own option sheet. Never overrides a valid explicit value;
+// interprets generic / colour-only wording that would otherwise be withheld at export ("Covered
+// Aluminium" with Grey hardware -> Silver Aluminium, not White — 8 bars fixed by hand on one order),
+// turns a bare "Cassette=Yes" into the hardware-coloured cassette, and gives a set cassette its
+// Cassette End Cap: "Full End Cap" is what BlindIQ orders carry 97% of the time the option is
+// used (Mathéo 33 + Galaxy 46 manual end-cap fixes since Aug 2026). The option only exists since
+// 11 Aug 2026; from then on 465 of 551 manually captured Roller System 40 cassette blinds carry
+// Full End Cap, 16 Sliding, 70 none. Generic wording needs a Mech Colour on the sheet (rollers);
+// colour-only wording ("Grey" cassette -> Silver) does not.
+// A cassette replaces the bracket covers: of 4,122 manually captured 2026 cassette blinds only 13
+// keep "Remove Bracket Covers = Yes", so a sheet's Yes is dropped (noted) once a cassette is on.
+export function biqApplyHardwareColours(mappings, order) {
+    (order ? order.items : []).forEach(it => {
+        const spec = biqVariantSpec(mappings, it.blindType, it.range); if (!spec) return;
+        const mechO = spec.find(o => /^mech(anism)?\s*colou?r$/i.test(o.k));
+        const row = re => it.variants.find(v => re.test(biqLc(v[0])));
+        const inList = (o, val) => (o.values || []).some(x => biqLc(x) === biqLc(val));
+        const note = t => { if (!biqLc(it.notes).includes(biqLc(t))) it.notes = (it.notes ? it.notes + ' | ' : '') + t; };
+        const mechRow = mechO ? row(/^mech(anism)?\s*colou?r$/) : null;
+        // Templates pre-fill the sheet default (White), so only a hardware colour that DIFFERS from
+        // it is known to come from the order; the default itself proves nothing.
+        // A parser that read the hardware colour off the order marks it (_hwFromOrder), so an
+        // explicit "White" counts as stated too.
+        const hwStated = mechRow && (it._hwFromOrder || biqLc(mechRow[1]) !== biqLc(mechO.def)) ? biqNorm(mechRow[1]) : '';
+        const hw = hwStated || (mechO ? biqNorm(mechO.def) : '');   // unstated hardware = the sheet's standard
+        // Bottom bar
+        const barO = mechO && spec.find(o => /^bottom\s*bar$/i.test(o.k));
+        if (barO && (barO.values || []).length) {
+            const r = row(/^bottom\s*bar$/), cur = r ? biqNorm(r[1]) : '';
+            if (!cur && hwStated) {
+                const m = biqHardwareMatch(barO.values, hwStated, 'bar');
+                if (m) { biqSetVar(it.variants, barO.k, m); it._optDefaulted = true; }
+            } else if (cur && !inList(barO, cur)) {
+                const generic = BIQ_BAR_GENERIC.test(cur);
+                const m = generic ? biqHardwareMatch(barO.values, hw, 'bar') : biqHardwareMatch(barO.values, cur, 'bar');
+                if (m) { r[1] = m; note('Bottom Bar "' + cur + '" read as ' + m + (generic && hw ? ' (' + hw + ' hardware)' : '')); }
+            }
+        }
+        // Cassette colour (a colour-valued *Cassette* option: "Sys 40 70mm Cassette", "Cassette Colour", ...)
+        const casO = spec.find(o => /cassette/i.test(o.k) && !/end\s*cap|insert|pvc/i.test(o.k) && (o.values || []).length
+            && !(o.values || []).every(x => /^(yes|no)$/i.test(x)));
+        if (casO) {
+            const r = it.variants.find(v => biqLc(v[0]) === biqLc(casO.k)), cur = r ? biqNorm(r[1]) : '';
+            if (cur && !inList(casO, cur) && !/^(no|none|false|n)$/i.test(cur)) {
+                // A bare "Yes" takes the colour of the hardware the ORDER states; with no hardware
+                // colour on the order it stays flagged — the cassette colour is never guessed.
+                const generic = BIQ_CASSETTE_GENERIC.test(cur);
+                const m = (generic ? (hwStated ? biqHardwareMatch(casO.values, hwStated, 'cassette') : '') : biqHardwareMatch(casO.values, cur, 'cassette'))
+                    || (generic && casO.values.length === 1 ? casO.values[0] : '');
+                if (m) { r[1] = m; note(casO.k + ' "' + cur + '" read as ' + m + (generic && hwStated ? ' (' + hwStated + ' hardware)' : '')); }
+            }
+            // A cassette that is ON gets the standard end cap unless the order says otherwise.
+            const capO = spec.find(o => /^cassette\s*end\s*cap$/i.test(o.k));
+            const full = capO && (capO.values || []).find(x => /^full\s*end\s*cap$/i.test(x));
+            const on = r && inList(casO, r[1]);
+            const capRow = capO ? it.variants.find(v => biqLc(v[0]) === biqLc(capO.k)) : null;
+            if (full && on && !(capRow && biqNorm(capRow[1]))) { biqSetVar(it.variants, capO.k, full); it._optDefaulted = true; }
+            const rbc = on && !it._rbcChecked ? it.variants.find(v => /^remove\s*bracket\s*covers?$/i.test(biqLc(v[0]))) : null;
+            if (on) it._rbcChecked = true;                 // once: a capturer's own Yes in the editor stays
+            if (rbc && /^yes$/i.test(biqNorm(rbc[1]))) { rbc[1] = ''; note('Remove Bracket Covers dropped — the cassette replaces the brackets'); }
         }
     });
 }
@@ -3081,10 +4064,67 @@ const BIQ_VALUE_SYNONYMS = [
     [/^(both(\s*sides)?|lhs?\s*(&|and|\+|\/)\s*rhs?|left\s*(&|and|\+|\/)\s*right)$/i, 'LH & RH'],
     [/^(none|no|nil|n\/a)$/i, 'None']
 ];
+// A "Top" fix on a range that doesn't take one. No live BlindIQ range offers Top, and a blind fixed
+// up into the recess is what BlindIQ calls Reveal: capturers turned all 15 converted Roller System 40
+// "Top" lines since June (Mathéo "T Fix" and others) into Reveal, and manual valance capture never
+// uses Top (Reveal 7,544, Face 4,260). Only where the range's own list has Reveal and lacks Top;
+// curtain tracks (no item fix at all) keep their fix wording for the Top Fix option.
+export function biqRepairTopFix(mappings, it) {
+    const rf = biqResolve(mappings, 'fixes', it.fix);
+    if (!rf.known || biqLc((mappings.fixNames || {})[String(rf.id)]) !== 'top') return;
+    const rfx = biqRangeFixIds(mappings, it.blindType, it.range);
+    const rev = (mappings.fixes || {}).reveal;
+    const has = id => (rfx || []).some(x => String(x) === String(id));
+    if (!rfx || !rfx.length || has(rf.id) || rev == null || !has(rev)) return;
+    it.notes = (it.notes ? it.notes + ' | ' : '') + 'Fix "' + it.fix + '" read as Reveal (no top fix on ' + it.range + ' in BlindIQ)';
+    it.fix = (mappings.fixNames || {})[String(rev)] || 'Reveal';
+}
 export function biqApplyOptionDefaults(mappings, order) {
     (order ? order.items : []).forEach(it => {
+        biqRepairTopFix(mappings, it);
         const spec = biqVariantSpec(mappings, it.blindType, it.range);
         if (!spec) return;
+        // Template leftovers: a line built before its range was known carries the blind type's union
+        // template ("Val Type = Standard" — 106 Blind Guys wood venetian lines since June flagged as
+        // not importable). Once the range's own sheet is known, a key that sheet doesn't have and that
+        // still holds the template's default (or nothing) never came from the order.
+        {
+            const bt = biqResolve(mappings, 'blindTypes', it.blindType);
+            const tpl = bt.known ? ((mappings.variantTemplates || {})[String(bt.id)] || []) : [];
+            if (tpl.length && tpl !== spec) it.variants = it.variants.filter(v => {
+                if (spec.some(o => biqLc(o.k) === biqLc(v[0]))) return true;
+                const t = tpl.find(o => biqLc(o.k) === biqLc(v[0]));
+                return !t || biqLc(v[1]) !== biqLc(t.def || '');
+            });
+        }
+        // A vertical blind's Track Colour, when the order gives none, is White: all 13 converted
+        // verticals since June that arrived without one were stored White (as are 3 in 4 of 2026's
+        // verticals). Noted; decided once per line, so a capturer's own choice stays.
+        if (!it._trackDefaulted && biqLc((mappings.blindTypeNames || {})[String(biqResolve(mappings, 'blindTypes', it.blindType).id)] || '') === '90mm vertical blind') {
+            const tk = spec.find(o => biqLc(o.k) === 'track colour');
+            const white = tk && (tk.values || []).find(x => biqLc(x) === 'white');
+            if (white) {
+                const row = it.variants.find(v => biqLc(v[0]) === 'track colour');
+                if (!row || !biqNorm(row[1])) {
+                    biqSetVar(it.variants, tk.k, white);
+                    it.notes = (it.notes ? it.notes + ' | ' : '') + 'Track Colour not on the order — White assumed';
+                }
+                it._trackDefaulted = true;
+            }
+        }
+        // Curtain tracks carry the FIX in their options too (Top Fix / Face Fix / Double Face Fix /
+        // Other Fix?) — their ranges offer no item fix at all. Manual capture leaves the item fix
+        // empty on 2,821 of 2,837 curtain lines in 2026; imported curtain lines (mostly TBD's) arrived
+        // with Top / Face / Face Single / Face Double as the item fix, none of which a curtain range offers.
+        const fixOpts = spec.filter(o => /^(top|face|double\s*face)\s*fix$|^other\s*fix\??$/i.test(biqNorm(o.k)));
+        if (fixOpts.length && biqNorm(it.fix)) {
+            const f = biqLc(it.fix), byName = re => fixOpts.find(o => re.test(biqNorm(o.k)));
+            const dbl = byName(/^double\s*face\s*fix$/i), face = byName(/^face\s*fix$/i), top = byName(/^top\s*fix$/i), other = byName(/^other\s*fix\??$/i);
+            const target = /double|dbl|2\s*x\s*face/.test(f) ? (dbl || face) : /^t\b|top|ceiling/.test(f) ? top : /face|f\/f|wall/.test(f) ? face : null;
+            const cur = o => { const r = it.variants.find(v => biqLc(v[0]) === biqLc(o.k)); return r ? biqNorm(r[1]) : ''; };
+            if (target && (target.values || []).length) { if (!cur(target)) biqSetVar(it.variants, target.k, target.values.find(x => /^yes$/i.test(x)) || target.values[0]); it.fix = ''; }
+            else if (!target && other) { if (!cur(other)) biqSetVar(it.variants, other.k, biqNorm(it.fix)); it.fix = ''; }
+        }
         // Curtain tracks (and any product whose sheet carries its own "Colour" option) take the
         // colour in the OPTIONS, not on the order item (Russel 2026-08-11, TBD tracks PO): a
         // BlindIQ capture leaves the item colour empty and picks the track colour on the sheet.
@@ -3099,6 +4139,31 @@ export function biqApplyOptionDefaults(mappings, order) {
             if (!rowVal && match) { biqSetVar(it.variants, colOpt.k, match); it.colour = ''; }
             else if (rowVal && cnc(rowVal) === cnc(it.colour)) it.colour = '';
         }
+        // Ranges that carry no colours in BlindIQ (Double Roller families, bamboo, headrails) take the
+        // fabric/colour in their options ("Blockout Fabric = Duo Block Basalt"). When an option already
+        // carries the item colour, the item colour is redundant; when exactly one empty option value
+        // ends with it, it moves there. Anything else stays on the item for the range-colour flag.
+        {
+            const rcIds = biqNorm(it.colour) ? biqRangeColourIds(mappings, it.blindType, it.range) : null;
+            if (rcIds && !rcIds.length) {
+                const c = biqLc(it.colour), endsWith = x => biqLc(x) === c || biqLc(x).endsWith(' ' + c);
+                const carried = it.variants.some(v => biqNorm(v[1]) && endsWith(v[1]));
+                if (carried) it.colour = '';
+                else {
+                    const cands = [];
+                    spec.forEach(o => {
+                        const row = it.variants.find(v => biqLc(v[0]) === biqLc(o.k));
+                        if (row && biqNorm(row[1])) return;
+                        (o.values || []).filter(endsWith).forEach(x => cands.push([o.k, x]));
+                    });
+                    if (cands.length === 1) {
+                        biqSetVar(it.variants, cands[0][0], cands[0][1]);
+                        it.notes = (it.notes ? it.notes + ' | ' : '') + 'Colour "' + it.colour + '" -> ' + cands[0][0] + ' = ' + cands[0][1];
+                        it.colour = '';
+                    }
+                }
+            }
+        }
         spec.forEach(o => {
             const f = it.variants.find(v => biqLc(v[0]) === biqLc(o.k));
             // A value that isn't one of the spec's allowed values is silently dropped from the
@@ -3109,6 +4174,24 @@ export function biqApplyOptionDefaults(mappings, order) {
                 const hit = BIQ_VALUE_SYNONYMS.find(([re]) => re.test(biqNorm(f[1])));
                 const want = hit && (o.values || []).find(v => biqLc(v) === biqLc(hit[1]));
                 if (want) { f[1] = want; it._optCoerced = true; }
+                // A required option with ONE legal value, written as part of it: double rollers have a
+                // single roll type, "Top Waterfall Bottom Standard", and dealers write "Standard" (all 34
+                // converted double rollers since June were stored with the BlindIQ value). A value that
+                // says something else ("Sys 55 (with 40+ Bracket) for Motor Only") and colours stay flagged.
+                else if (o.req && o.values.length === 1 && !/colou?r/i.test(o.k)
+                    && biqLc(f[1]).split(/[^a-z0-9]+/).filter(Boolean).every(w => biqLc(o.values[0]).split(/[^a-z0-9]+/).includes(w))) {
+                    it.notes = (it.notes ? it.notes + ' | ' : '') + o.k + ' "' + biqNorm(f[1]) + '" read as ' + o.values[0] + ' (the only value BlindIQ offers)';
+                    f[1] = o.values[0]; it._optCoerced = true;
+                }
+            }
+            // A motorised outdoor blind has no crank: BlindIQ stores Crank Handle = None on all 130 manually
+            // captured motorised outdoor blinds in 2026; sheets still printed a crank on some.
+            if (/^crank\s*handle$/i.test(o.k) && /motor/i.test((it.control1 || '') + ' ' + (it.control2 || ''))) {
+                const none = (o.values || []).find(x => /^none$/i.test(x));
+                if (none && (!f || biqLc(f[1]) !== 'none')) {
+                    if (f && biqNorm(f[1])) it.notes = (it.notes ? it.notes + ' | ' : '') + 'Crank Handle "' + biqNorm(f[1]) + '" dropped — motorised';
+                    biqSetVar(it.variants, o.k, none); it._optDefaulted = true; return;
+                }
             }
             if (f && biqNorm(f[1])) return;            // already set
             const vals = (o.values || []).map(biqLc);
@@ -3134,6 +4217,15 @@ export function biqApplyOptionDefaults(mappings, order) {
                 if (motorOnly.length && others.length === 1 && ctl && !/motor/i.test(ctl)) {
                     biqSetVar(it.variants, o.k, others[0]); it._optDefaulted = true; return;
                 }
+            }
+            // Forced choice: a REQUIRED option whose list holds exactly ONE value has nothing to decide
+            // — e.g. System Choice = "Sys 55 Large Bracket" on every Roller System 55 sheet (capturers
+            // set it by hand 28 times since June), Headrail Colour = White on Perfect Fit, Lining Colour on
+            // Ripple Shade. Applies to colour options too: with one legal value nothing is guessed.
+            // A single entry holding a comma ("50mm,100mm" — Urban shutter Rail Size) is BlindIQ
+            // data entry for two values (biqVariantSpec splits it), so it stays with the capturer.
+            if (o.req && (o.values || []).length === 1 && !/,/.test(o.values[0])) {
+                biqSetVar(it.variants, o.k, o.values[0]); it._optDefaulted = true; return;
             }
             if (o.req) {
                 if (isColour) return;                  // leave blank so collectProblems flags it for the capturer
@@ -3182,7 +4274,65 @@ export function biqRequiresDualControl(mappings, blindType) {
         if (v === bt.id && /roller|vision/.test(k) && !/valance/.test(k)) return true;
     return false;
 }
+// Venetian operation (Control 2). BlindIQ's 2026 orders (lines set to Grouped or Split) are
+// unambiguous: wood and retro venetians narrower than 600mm are Split (1,603 of 1,649 wood, 432 of
+// 453 retro), 600mm and wider Grouped (6,716 of 6,788 wood, 2,170 of 2,205 retro), and 35mm
+// Aluminium is always Grouped (2,518 of 2,518). Most dealer sheets never state it (TBD / Galaxy / Mathéo venetian lines arrive with no
+// operation and capturers set it by hand), so an empty operation takes the size rule. A stated
+// "Grouped" on a narrow wood/retro blind becomes Split, with the change noted. Each line is
+// decided once, so a capturer's own choice in the editor is never overridden on refresh.
+const BIQ_VENETIAN_SPLIT_BELOW = 600;
+export function biqApplyVenetianOperation(mappings, order) {
+    const btn = mappings.blindTypeNames || {};
+    (order ? order.items : []).forEach(it => {
+        if (it._opDecided) return;
+        const bt = biqResolve(mappings, 'blindTypes', it.blindType);
+        if (!bt.known) return;
+        const name = biqLc(btn[String(bt.id)] || '');   // "Wood Venetian" / older "Element Wood" names
+        const alu = /^(element )?35mm aluminium$/.test(name), wood = /^(element )?(wood|retro)( venetian)?$/.test(name);
+        if (!alu && !wood) return;
+        const w = parseInt(String(it.width || '').replace(/\D/g, ''), 10);
+        const c2 = biqLc(it.control2);
+        if (!c2) {
+            if (alu) it.control2 = 'Grouped';
+            else if (w > 0) it.control2 = w < BIQ_VENETIAN_SPLIT_BELOW ? 'Split' : 'Grouped';
+            else return;                                   // no width yet — decide once it is known
+        } else if (wood && c2 === 'grouped' && w > 0 && w < BIQ_VENETIAN_SPLIT_BELOW) {
+            it.control2 = 'Split';
+            it.notes = (it.notes ? it.notes + ' | ' : '') + 'Operation Split: ' + w + 'mm is under ' + BIQ_VENETIAN_SPLIT_BELOW + 'mm (order said Grouped) — confirm';
+        }
+        it._opDecided = true;
+    });
+}
+// One Touch Dual motors are BlindIQ's own "LH Dual" / "RH Dual" controls (Paul's One Touch Dual rule),
+// but dealer sheets give the side as "LH Motor" / "RH Motor" and name the motor elsewhere: the Blind
+// Guys Motor column, the BD-PO "Motor=One Touch Dual Motor …" option, Mathéo's priced accessory rows
+// ("OT Dual Motor Lithium Ion 2.0nm"). Capturers changed 75 converted motor sides since June to Dual
+// by hand. A line naming its own motor decides by that; otherwise an order whose only motors are One
+// Touch Dual makes its motor sides Dual. Decided once per line, so a capturer's choice stays.
+const BIQ_OT_DUAL = /\b(one\s*touch|o\.?\s?t\.?)\s*dual\b|\b1\s*td\b/i;
+const BIQ_OTHER_MOTOR = /somfy|sonesse|smoove|mercure|altus|ysia|glydea|movelite|tuya|zigbee|dooya|acmeda|automate|rollease|zemismart|\bnice\b|\bmotor\s*pack/i;
+export function biqApplyOneTouchDual(mappings, order) {
+    const items = (order && order.items) || [];
+    const ref = it => [it._motorText || '', ...String(it.notes || '').split('|').filter(t => /motor|accessory/i.test(t) && !/read as/i.test(t))].join(' | ');
+    const all = items.map(ref).join(' | ') + ' | ' + ((order && order.sundries) || []).map(su => (su.notes || '') + ' ' + (su._src || '')).join(' | ');
+    const orderDual = BIQ_OT_DUAL.test(all) && !BIQ_OTHER_MOTOR.test(all.replace(new RegExp(BIQ_OT_DUAL.source + '[^|]*', 'gi'), ''));
+    items.forEach(it => {
+        if (it._dualDecided) return;
+        const sides = [['control1', 'c1', 'LH Dual'], ['control2', 'c2', 'RH Dual']].filter(([f]) => /^(lh|rh)\s*motor$/i.test(biqNorm(it[f])));
+        if (!sides.length) return;
+        it._dualDecided = true;
+        const own = ref(it), mine = BIQ_OT_DUAL.test(own) ? true : (BIQ_OTHER_MOTOR.test(own) ? false : null);
+        if (!(mine === true || (mine === null && orderDual))) return;
+        sides.forEach(([f, side, dual]) => {
+            const want = /^lh/i.test(biqNorm(it[f])) ? 'LH Dual' : 'RH Dual';
+            if (biqControlAllowed(mappings, it.blindType, side, want, it.range) !== false && biqResolve(mappings, side === 'c1' ? 'control1' : 'control2', want).known) it[f] = want;
+        });
+    });
+}
 export function biqInferControls(mappings, order) {
+    biqApplyVenetianOperation(mappings, order);
+    biqApplyOneTouchDual(mappings, order);
     (order ? order.items : []).forEach(it => {
         if (/allusion/i.test(it.blindType || '')) return;
         if (!biqRequiresDualControl(mappings, it.blindType)) return;
@@ -3239,6 +4389,20 @@ export function biqControlAllowed(mappings, blindType, side, controlName, range)
     const cn = mappings.controlNames || {};
     const rn = biqLc(cn[String(r.id)] || '');
     return !!rn && ids.some(id => biqLc(cn[String(id)] || '') === rn);
+}
+// The control id to export. BlindIQ keeps twin records under one name (Stack Left 29/45, Stack Right
+// 30/46, Wand 28/57, Lh Spring 186/187) and the flat name map holds only one of them; when the
+// item's own range lists the twin, that is the id BlindIQ uses there (verticals store Stack Left as
+// 29 — the export sent 45 on all 44 converted vertical lines since June).
+export function biqResolveControlScoped(mappings, side, name, blindType, range) {
+    const r = biqResolve(mappings, side === 'c2' ? 'control2' : 'control1', name);
+    if (!r.known || r.id === -1) return r;
+    const m = biqControlMatrixFor(mappings, blindType, range);
+    const ids = (m && m[side]) || [];
+    if (!ids.length || ids.some(id => String(id) === String(r.id))) return r;
+    const cn = mappings.controlNames || {}, rn = biqLc(cn[String(r.id)] || '');
+    const twin = rn ? ids.find(id => biqLc(cn[String(id)] || '') === rn) : undefined;
+    return twin !== undefined ? Object.assign({}, r, { id: twin }) : r;
 }
 // Human-readable list of what IS allowed (for flags/pickers).
 export function biqAllowedControlNames(mappings, blindType, side, range) {
@@ -3437,6 +4601,39 @@ export function biqApplyCoupledPair(mappings, order, i, j) {
     biqSetVar(b.variants, biqBracketOptionKey(mappings, b, 'coupled'), 'No');
     a._bracketRole = 'coupled-1'; b._bracketRole = 'coupled-2';
 }
+// Intermediate PARTNERS. A shared intermediate bracket joins a blind whose right side is "Rh
+// Intermediate" and the blind to its right, whose left side is "Lh Intermediate" — but dealer sheets
+// (Mathéo above all) state only the first blind. Where a blind said Rh Intermediate and the next line
+// of the same window had a plain pin on its left, capturers made that side Lh Intermediate in 37 of
+// 45 converted Mathéo cases since June. So when the order holds more right-side than left-side
+// intermediates, the next line becomes the partner if it is the same blind type, its location starts
+// with the same word, and its left side is a pin (or empty) that may be Lh Intermediate — noted on the
+// line, with an amber "confirm". Decided once per line, so a capturer's own choice survives refresh.
+// Returns the indices it paired.
+export function biqPairIntermediatePartners(mappings, order) {
+    const items = (order && order.items) || [], paired = [];
+    const rightInt = it => /intermediate/i.test(it.control2 || '');
+    const leftInt = it => /intermediate/i.test(it.control1 || '');
+    let spare = items.filter(rightInt).length - items.filter(leftInt).length;
+    const word = s => (biqLc(s).match(/[a-z]{3,}/) || [''])[0];
+    const lhInt = biqResolve(mappings, 'control1', 'Lh Intermediate');
+    for (let i = 0; i + 1 < items.length && spare > 0; i++) {
+        const a = items[i], b = items[i + 1];
+        if (!rightInt(a) || b._intPartnerDecided) continue;
+        const ta = biqResolve(mappings, 'blindTypes', a.blindType), tb = biqResolve(mappings, 'blindTypes', b.blindType);
+        if (!ta.known || !tb.known) continue;                       // decide once the products are known
+        b._intPartnerDecided = true;
+        if (leftInt(b) || !(!biqNorm(b.control1) || /^(lh\s*)?pin$/i.test(biqNorm(b.control1)))) continue;
+        if (String(ta.id) !== String(tb.id)) continue;
+        if (!word(a.location) || word(a.location) !== word(b.location)) continue;
+        if (!lhInt.known || biqControlAllowed(mappings, b.blindType, 'c1', 'Lh Intermediate', b.range) === false) continue;
+        b.control1 = 'Lh Intermediate';
+        b._intPartnerOf = a.code || String(i + 1);
+        b.notes = (b.notes ? b.notes + ' | ' : '') + 'Lh Intermediate: partner of item ' + b._intPartnerOf + "'s Rh Intermediate (shared bracket) — confirm";
+        paired.push(i, i + 1); spare--;
+    }
+    return paired;
+}
 // Detect/apply shared brackets across the order. Manual "couple with next line" (it._bracketWith)
 // wins; otherwise consecutive lines flagged (notes or an explicit Yes) are paired two-by-two.
 // A flagged line with no pair is marked (_bracketOdd) so collectProblems can surface it.
@@ -3484,6 +4681,7 @@ export function biqApplyBracketPairs(mappings, order) {
             consumed.add(i); consumed.add(i + 1);
         }
     }
+    biqPairIntermediatePartners(mappings, order).forEach(x => consumed.add(x));
     let i = 0;                                                     // auto: pair consecutive flagged lines
     while (i < items.length) {
         if (consumed.has(i) || !flag(items[i])) { i++; continue; }
@@ -3494,11 +4692,49 @@ export function biqApplyBracketPairs(mappings, order) {
             if (f === 'coupled') biqApplyCoupledPair(mappings, order, run[k], run[k + 1]); else biqApplyIntermediatePair(mappings, order, run[k], run[k + 1]);
             consumed.add(run[k]); consumed.add(run[k + 1]);
         }
-        if (k < run.length) { items[run[k]]._bracketOdd = f; consumed.add(run[k]); }
+        // A lone intermediate line whose own controls already name its shared side is complete as
+        // stated: BlindIQ stores the partner with its own drive (Blind Guys stacker doors: "Lh Chain /
+        // Rh Intermediate" beside "Lh Chain / Rh Pin" on 7 of 8 such pairs) and the bracket is costed
+        // on the Rh-Intermediate blind. Only a flag with no stated side is left for the capturer.
+        if (k < run.length) {
+            const it = items[run[k]];
+            if (!(f === 'intermediate' && /intermediate/i.test((it.control1 || '') + ' ' + (it.control2 || '')))) it._bracketOdd = f;
+            consumed.add(run[k]);
+        }
         i = j;
     }
     // signal now lives in controls + the Intermediate/Coupled Bracket options — drop any phantom key
     items.forEach(it => { it.variants = it.variants.filter(v => !/\b(centre|center|middle)\s+brackets?\b/i.test(biqLc(v[0]))); });
+    biqReconcileIntermediateCosting(mappings, order);
+}
+// Intermediate COSTING follows the controls, not line order. Each shared intermediate bracket joins
+// a blind whose RIGHT side is "Rh Intermediate" and one whose LEFT side is "Lh Intermediate", and
+// BlindIQ costs it once — on the right-side blind in 26 of 27 imported Mathéo pairs as finally
+// stored (29 Aug – 8 Oct 2026); 10 of those 27 right-side blinds had arrived without the Yes and
+// were fixed by hand (costing depended on the two blinds being consecutive lines). So:
+// every blind with an intermediate RIGHT side carries Yes; a blind intermediate on its LEFT only
+// carries No — except when the order holds more left-sides than right-sides (a partner missing from
+// this order), where the surplus left-only blinds keep a Yes so every bracket is costed exactly once.
+export function biqReconcileIntermediateCosting(mappings, order) {
+    const items = ((order && order.items) || []).filter(it => {
+        const spec = biqVariantSpec(mappings, it.blindType, it.range);
+        return spec && spec.some(o => /interm/i.test(o.k));
+    });
+    const rightInt = it => /intermediate/i.test(it.control2 || '') || /^rh\s+intermediate$/i.test(biqNorm(it.control1));
+    const leftInt = it => /intermediate/i.test(it.control1 || '') && !/^rh\s/i.test(biqNorm(it.control1));
+    const R = items.filter(rightInt), Lonly = items.filter(it => leftInt(it) && !rightInt(it));
+    if (!R.length) return;
+    const nLeftSides = items.filter(leftInt).length;
+    let surplus = Math.max(0, nLeftSides - R.length);
+    const all = order.items;
+    const set = (it, val) => biqSetVar(it.variants, biqBracketOptionKey(mappings, it, 'intermediate'), val);
+    R.forEach(it => set(it, 'Yes'));
+    // surplus left-only blinds: prefer the ones whose neighbour is NOT a right-intermediate blind
+    const ranked = Lonly.slice().sort((a, b) => {
+        const nb = it => { const i = all.indexOf(it); return [all[i - 1], all[i + 1]].some(x => x && rightInt(x)) ? 1 : 0; };
+        return nb(a) - nb(b);
+    });
+    ranked.forEach(it => { if (surplus > 0) { set(it, 'Yes'); surplus--; } else set(it, 'No'); });
 }
 
 // ---------- per-customer FORMAT PROFILES (the format learner) ----------
@@ -3537,10 +4773,10 @@ export function biqApplyFormatProfile(mappings, profiles, order) {
             if (e && e.n >= 1 && biqResolve(mappings, cat, e.value).known) { it[f] = e.value; applied.push({ i, field: f, from: cur, to: e.value }); }
         });
         // colour is scoped by range
-        if (!biqResolveColour(mappings, it.range, it.colour).known) {
+        if (!biqResolveColour(mappings, it.range, it.colour, it.blindType).known) {
             const term = biqLc((it._orig && it._orig.colour) || it.colour || '');
             const e = term && p.vocab.colours && p.vocab.colours[biqLc(it.range) + '|' + term];
-            if (e && e.n >= 1 && biqResolveColour(mappings, it.range, e.value).known) { it.colour = e.value; applied.push({ i, field: 'colour', from: it.colour, to: e.value }); }
+            if (e && e.n >= 1 && biqResolveColour(mappings, it.range, e.value, it.blindType).known) { it.colour = e.value; applied.push({ i, field: 'colour', from: it.colour, to: e.value }); }
         }
     });
     if (!order.deliveryMethod && p.defaults && p.defaults.deliveryMethod) order.deliveryMethod = p.defaults.deliveryMethod;
@@ -3586,8 +4822,8 @@ export function biqLearnFormat(mappings, profiles, order) {
         });
         const cterm = (o.colour != null ? o.colour : it.colour), cval = it.colour;
         if (cterm && cval && biqLc(cterm) !== biqLc(cval)
-            && !biqResolveColour(mappings, it.range, cterm).known
-            && biqResolveColour(mappings, it.range, cval).known) rec('colours', biqLc(it.range) + '|' + cterm, cval);
+            && !biqResolveColour(mappings, it.range, cterm, it.blindType).known
+            && biqResolveColour(mappings, it.range, cval, it.blindType).known) rec('colours', biqLc(it.range) + '|' + cterm, cval);
         // FIELD-MOVE detection (data only — recorded, never auto-applied): a value the converter put
         // in field A that the capturer moved to field B. Reveals where this customer's format misplaces things.
         BIQ_MOVE_FIELDS.forEach(A => {
@@ -3615,7 +4851,7 @@ export function biqCanonicalize(mappings, order) {
     (order ? order.items : []).forEach(it => {
         const bt = biqResolve(N, 'blindTypes', it.blindType); if (bt.known && N.blindTypeNames && N.blindTypeNames[bt.id]) it.blindType = N.blindTypeNames[bt.id];
         const rr = biqResolveRange(N, it.blindType, it.range); if (rr.known && N.rangeNames && N.rangeNames[rr.id]) it.range = N.rangeNames[rr.id];
-        const rc = biqResolveColour(N, it.range, it.colour); if (rc.known && N.colourNames && N.colourNames[rc.id]) it.colour = N.colourNames[rc.id];
+        const rc = biqResolveColour(N, it.range, it.colour, it.blindType); if (rc.known && N.colourNames && N.colourNames[rc.id]) it.colour = N.colourNames[rc.id];
         const r1 = biqResolve(N, 'control1', it.control1); if (r1.known && r1.id != null && N.controlNames && N.controlNames[r1.id]) it.control1 = N.controlNames[r1.id];
         const r2 = biqResolve(N, 'control2', it.control2); if (r2.known && r2.id != null && N.controlNames && N.controlNames[r2.id]) it.control2 = N.controlNames[r2.id];
         const rf = biqResolve(N, 'fixes', it.fix); if (rf.known && rf.id != null && N.fixNames && N.fixNames[rf.id]) it.fix = N.fixNames[rf.id];

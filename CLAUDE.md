@@ -101,6 +101,15 @@ When extracting more modules to `js/`, follow this pattern: named exports only (
 - Temperature: Gemini 3+ models run at their default (Google: lowering it can cause looping or degraded output). Call sites only pin the old low temperatures (0.1 / 0.2 / 0) for 2.x models, via `isGemini3()` in `js/config.js`, so reverting a constant also restores that model's original settings.
 - History: `gemini-3.1-pro-preview` was tried for extraction in Apr 2026 and reverted for lower-quality comparisons — that run used temperature 0.1, against Google's Gemini 3 guidance.
 
+## Comparison AI context (prompt v2.3, Oct 2026)
+
+`processSingleComparison` (index.html) builds the prompt from `js/comparison-context.js` (pure, tested in node) plus the converter:
+- **Corrections** (`orderbot_feedback`): `selectRelevantFeedback` + `formatCorrectionExamples` show the capturer's own words (`userExplanation`) and the cleaned AI rewrite. Before v2.3 only `enhancedExplanation` was used, which 47 of the first 63 corrections (July 2025) don't have, so they reached the AI as "undefined".
+- **`BD_STANDARDS`**: what Blind Designs supplies when the customer is silent (White hardware, bar/cassette follow hardware, 5 mm size steps, control-drop formulas, Out of Warranty limits, venetian split/grouped, vertical chain colour = track, 107 mm Allusion, Urban rails, cellular White, System X cranks, master carriers by stack) and dealer name synonyms. It also names what follows from what the customer did state, so the critical-field rule doesn't flag it: the pin opposite a stated chain side, Linear Valance for a roller blind's valance whose style isn't named (403 of 520 valance lines in 2026 orders; not for venetian valances), and item letters shifted by Blind IQ's separate valance lines. Keep it in step with the converter rules above.
+- **`NOT_SPECIFIED`** result (`RESULT_VALUES`): a field or specification the customer document doesn't mention at all is information, rendered grey "not on order", not counted as a flag or low confidence. Never for Paul's `CRITICAL_FIELDS` — the prompt says so and `applyConfidenceThresholds` turns any critical NOT_SPECIFIED back into OMISSION. Over half of the 13,679 flags in the first 841 comparisons were such values.
+- **Converter reading**: `biqReadCustomerFile` (js/biq-converter-ui.js) runs each customer PDF through the Drawings tab's own layout detection (`biqDetectPdf` / `biqDetectXlsx`, shared with `loadPdf` / `loadXlsx`) and rule pipeline (`biqRunRulePipeline` — keep in step with `refresh()`), never the AI; `describeConverterReading` gives the AI the lines in Blind IQ names, options equal to the sheet default marked "(default)", and the converter's notes. Unrecognised layouts and images add nothing.
+- `PROMPT_VERSION` 'v2.3' is stored with each comparison (`pv`).
+
 ## Critical Rules for Future Changes
 
 ### 1. One concern per commit

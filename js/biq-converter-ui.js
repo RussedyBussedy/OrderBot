@@ -18,8 +18,8 @@ import {
     biqParseLifestyle, biqNormalizeLifestyle, biqParseCnbw, biqNormalizeCnbw, biqCnbwCoherent,
     biqParseTbd, biqNormalizeTbd, biqTbdCoherent, biqOrderPreviewHtml,
     biqParseBDFields, biqNormalizeBDForm,
-    biqBuildExtractionPrompt, biqAiResultToOrder,
-    biqCollectProblems, biqGenerateXML, biqPrettyXML, biqImportSafetyScan,
+    biqBuildExtractionPrompt, biqExtractionVocabulary, biqAiResultToOrder,
+    biqCollectProblems, biqCollectWarnings, biqGenerateXML, biqPrettyXML, biqImportSafetyScan, biqOrderNumberForBiq,
     biqToComparisonShape, biqExtractCheckResults
 } from './biq-converter.js';
 import { biqDetectForm, biqParseSpecForm, biqElementGridOptions } from './biq-form-specs.js';
@@ -286,7 +286,8 @@ async function fileToB64(f) {
 }
 async function aiExtract(files) {
     setStatus('AI is reading the document… (Gemini)');
-    const parts = [{ text: biqBuildExtractionPrompt(Object.keys(MAPS.ranges), Object.keys(MAPS.blindTypes)) }];
+    const voc = biqExtractionVocabulary(MAPS);       // live ranges per blind type once the catalogue is imported
+    const parts = [{ text: biqBuildExtractionPrompt(voc.ranges, voc.types) }];
     for (const f of files) { const b = await fileToB64(f); parts.push({ inlineData: b }); }
     const proxyPayload = {
         model: D.EXTRACTION_MODEL,
@@ -430,12 +431,17 @@ function renderCustomerTag() {
 
 const BIQ_FIELD_CAT = { blindType:'blindTypes', range:'ranges', colour:'colours', control1:'control1', control2:'control2', fix:'fixes' };
 function prodTag(i, field, res) {
+    // A colour BlindIQ doesn't offer on the item's range (Relate_Range_Colours) resolves to a real
+    // id but would import the wrong fabric — show it as a problem, not a tick.
+    const offRange = res.known && res.onRange === false;
     if (!biqIsAdmin()) {                             // capture mode: no IDs, no catalogue picker
         if (res.empty) return '';
+        if (offRange) return '<span class="biq-tag biq-tag-miss" title="Not offered on this range in BlindIQ — use ✉ Send to mapping">not on range</span>';
         if (res.known) return '<span class="biq-tag biq-tag-ok">✓</span>';
         return '<span class="biq-tag biq-tag-miss" title="Unknown — use ✉ Send to mapping">unknown</span>';
     }
     if (res.empty) return '<span class="biq-tag biq-tag-na" data-biq-prodsearch="'+i+':'+field+'" title="Search the BlindIQ catalogue">+ find</span>';
+    if (offRange) return '<span class="biq-tag biq-tag-miss" data-biq-prodsearch="'+i+':'+field+'" title="BlindIQ does not offer this colour on this range — click to pick one of the range\'s colours">⚠ '+res.id+' not on range</span>';
     if (res.known) return '<span class="biq-tag biq-tag-ok" data-biq-prodsearch="'+i+':'+field+'" title="Correct? Click to search & change">✓ '+res.id+'</span>';
     return '<span class="biq-tag biq-tag-miss" data-biq-prodsearch="'+i+':'+field+'" title="Click to search the BlindIQ catalogue">? find</span>';
 }
@@ -456,7 +462,7 @@ function renderItems() {
     order.items.forEach((it, i) => {
         it._idx = i;
         const rt = biqResolve(MAPS, 'blindTypes', it.blindType), rr = biqResolveRange(MAPS, it.blindType, it.range),
-            rc = biqResolveColour(MAPS, it.range, it.colour), rf = biqResolve(MAPS, 'fixes', it.fix),
+            rc = biqResolveColour(MAPS, it.range, it.colour, it.blindType), rf = biqResolve(MAPS, 'fixes', it.fix),
             r1 = biqResolve(MAPS, 'control1', it.control1), r2 = biqResolve(MAPS, 'control2', it.control2);
         const DL = { blindType: 'biq-dl-bt', fix: 'biq-dl-fix', control1: 'biq-dl-c1', control2: 'biq-dl-c2' };
         // column widths now come from the table's colgroup, so inputs must not carry a min-width
@@ -545,10 +551,16 @@ function checkFlagsFor(i) {
 
 function renderProblems() {
     const probs = biqCollectProblems(MAPS, order);
+    // BlindIQ's own advisories (size warnings) — amber, never blocking.
+    const warns = biqCollectWarnings(MAPS, order);
+    const warnHtml = warns.length
+        ? `<div class="mt-2 p-2 rounded bg-amber-50 border border-amber-200 text-amber-800"><b>BlindIQ heads-up${warns.length > 1 ? 's' : ''} (${warns.length}) — check with the customer if unsure:</b><ul class="list-disc pl-5 mt-1">`
+            + warns.map(p => '<li>' + escH(p.t) + '</li>').join('') + '</ul></div>'
+        : '';
     const el = $('biq-problems');
     if (!probs.length) {
         el.className = 'mt-3 p-3 rounded-lg text-sm bg-green-50 border border-green-200 text-green-800';
-        el.innerHTML = '✔ All names mapped and required fields present — the XML is ready to import into BlindIQ.';
+        el.innerHTML = '✔ All names mapped and required fields present — the XML is ready to import into BlindIQ.' + warnHtml;
         return;
     }
     el.className = 'mt-3 p-3 rounded-lg text-sm bg-red-50 border border-red-200 text-red-800';
@@ -556,7 +568,7 @@ function renderProblems() {
         + probs.map(p => '<li>' + escH(p.t)
             + (p.split != null ? ` <span class="biq-fixlink" data-biq-split="${p.split}">split it now</span>` : '')
             + (p.cat ? ` <span class="biq-fixlink" data-biq-assign='${escH(JSON.stringify([p.cat, String(p.name), p.blindType || '']))}'>map it now</span>` : '')
-            + '</li>').join('') + '</ul>';
+            + '</li>').join('') + '</ul>' + warnHtml;
 }
 
 // ---------------------------------------------------------------- checks (torque etc.)
@@ -604,14 +616,14 @@ function renderPreview() {
     const fmt = d => { if (!d) return '—'; const dd = new Date(d); return isNaN(dd) ? d : dd.toLocaleDateString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric' }); };
     const warn = (cat, name) => (!biqLc(name) || biqResolve(MAPS, cat, name).known) ? '' : ' <span class="text-red-600 font-bold">⚠</span>';
     let h = `<div class="border border-slate-300 rounded overflow-hidden text-xs bg-white">
-      <div class="bg-slate-800 text-white px-3 py-2 font-bold flex justify-between"><span>Purchase Order — BlindIQ import preview</span><span>${escH(order.orderNumber)}</span></div>
+      <div class="bg-slate-800 text-white px-3 py-2 font-bold flex justify-between"><span>Purchase Order — BlindIQ import preview</span><span>${escH(biqOrderNumberForBiq(order.orderNumber))}</span></div>
       <div class="grid grid-cols-3 border-b border-slate-200">
         <div class="p-2 border-r border-slate-100"><div class="uppercase text-slate-400 font-semibold mb-1" style="font-size:10px">Customer (dealer)</div>
           <div><b>${escH(order.customer || '—')}</b>${cust.known ? '' : ' <span class="text-red-600 font-bold">unknown</span>'}</div>
           ${biqIsAdmin() ? `<div>IQ: cust ${c.customer} / addr ${c.address} / op ${c.operator}</div>` : ''}
           <div>End client: ${escH(order.client || '—')}</div></div>
         <div class="p-2 border-r border-slate-100"><div class="uppercase text-slate-400 font-semibold mb-1" style="font-size:10px">Order</div>
-          <div>Ref: <b>${escH(order.orderNumber || '—')}</b> · IQ ID ${escH(order.orderId)}</div>
+          <div>Ref: <b>${escH(biqOrderNumberForBiq(order.orderNumber) || '—')}</b> · IQ ID ${escH(order.orderId)}</div>
           <div>Order date: ${fmt(order.orderDate)}</div><div>Required: <b>${fmt(order.requiredDate)}</b></div><div>Notes: ${escH(order.notes || '—')}</div></div>
         <div class="p-2"><div class="uppercase text-slate-400 font-semibold mb-1" style="font-size:10px">Delivery</div>
           <div>Method: ${escH(order.deliveryMethod || '—')}${warn('deliveryMethods', order.deliveryMethod)}</div>
@@ -622,10 +634,10 @@ function renderPreview() {
       <table class="w-full"><tr class="bg-slate-50 text-slate-500 uppercase" style="font-size:10px">
         <th class="text-left px-2 py-1">Item</th><th class="text-left px-1">Qty</th><th class="text-left px-1">Location</th><th class="text-left px-1">Blind type</th><th class="text-left px-1">Range</th><th class="text-left px-1">Colour</th><th class="text-left px-1">Width</th><th class="text-left px-1">Drop</th><th class="text-left px-1">Ctrl drop</th><th class="text-left px-1">Control L</th><th class="text-left px-1">Control R</th><th class="text-left px-1">Fix</th></tr>`;
     order.items.forEach(it => {
-        const rc = biqResolveColour(MAPS, it.range, it.colour);
+        const rc = biqResolveColour(MAPS, it.range, it.colour, it.blindType);
         h += `<tr class="border-t border-slate-100"><td class="px-2 py-1 font-bold">${escH(it.code)}</td><td class="px-1">${escH(it.qty)}</td><td class="px-1">${escH(it.location)}</td>
           <td class="px-1">${escH(it.blindType)}${warn('blindTypes', it.blindType)}</td><td class="px-1">${escH(it.range)}${(!biqLc(it.range) || biqResolveRange(MAPS, it.blindType, it.range).known) ? '' : ' <span class="text-red-600 font-bold">⚠</span>'}</td>
-          <td class="px-1">${escH(it.colour)}${(!biqLc(it.colour) || rc.known) ? '' : ' <span class="text-red-600 font-bold">⚠</span>'}</td>
+          <td class="px-1">${escH(it.colour)}${(!biqLc(it.colour) || (rc.known && rc.onRange !== false)) ? '' : ' <span class="text-red-600 font-bold">⚠</span>'}</td>
           <td class="px-1">${escH(it.width)}</td><td class="px-1">${escH(it.drop)}</td><td class="px-1">${escH(it.controlDrop)}</td>
           <td class="px-1">${escH(it.control1)}${warn('control1', it.control1)}</td><td class="px-1">${escH(it.control2)}${warn('control2', it.control2)}</td><td class="px-1">${escH(it.fix)}${warn('fixes', it.fix)}</td></tr>`;
         const vs = biqEmittedVariants(MAPS, it).map(v => escH(v[0]) + '=' + escH(v[1])).join(' | ');
@@ -813,12 +825,14 @@ function applyProductPick(name) {
     // resolve the picked name's ID, then learn the original customer wording -> that ID
     let res, id;
     if (field === 'range') { res = biqResolveRange(MAPS, it.blindType, name); id = res.id; }
-    else if (field === 'colour') { res = biqResolveColour(MAPS, it.range, name); id = res.id; }
+    else if (field === 'colour') { res = biqResolveColour(MAPS, it.range, name, it.blindType); id = res.id; }
     else { res = biqResolve(MAPS, cat, name); id = res.id; }
     if (id != null && biqLc(original) && biqLc(original) !== biqLc(name)) {
         let saved = null;
         if (field === 'range') { const bt = biqResolve(MAPS, 'blindTypes', it.blindType); if (bt.known) { MAPS.rangesScoped[bt.id + '|' + biqLc(original)] = id; saved = 'rangesScoped'; } }
-        else if (field === 'colour') { MAPS.colours['|' + biqLc(original)] = id; saved = 'colours'; }
+        // Learn the colour for THIS range when the range resolves: the dealer's word can be a real
+        // colour elsewhere ("129 White" is Retro Venetian's) and a global alias would overwrite it.
+        else if (field === 'colour') { const rk = biqResolveRange(MAPS, it.blindType, it.range).known ? biqLc(it.range) : ''; MAPS.colours[rk + '|' + biqLc(original)] = id; saved = 'colours'; }
         else { MAPS[cat][biqLc(original)] = id; saved = cat; }
         if (saved) saveCategory(saved);
     }
@@ -929,7 +943,7 @@ function renderFsWords() {
     const colour = fsCtx.words.slice(fsCtx.cut).join(' ');
     $('biq-fs-range').textContent = range || '—'; $('biq-fs-colour').textContent = colour || '—';
     const rr = biqResolveRange(MAPS, fsCtx.blindType, range); $('biq-fs-rid').value = rr.known ? rr.id : '';
-    const rc = biqResolveColour(MAPS, range, colour); $('biq-fs-cid').value = rc.known ? rc.id : '';
+    const rc = biqResolveColour(MAPS, range, colour, fsCtx.blindType); $('biq-fs-cid').value = rc.known ? rc.id : '';
 }
 async function saveFabricSplit() {
     if (!fsCtx) return;

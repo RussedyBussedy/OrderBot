@@ -23,8 +23,3 @@ export const COMPARISON_MODEL = 'gemini-3.8-flash';
 // can cause looping or degraded output. Call sites only pin a low temperature for older (2.x)
 // models, so reverting a model constant above restores that model's original settings too.
 export const isGemini3 = (model) => /^gemini-(?:[3-9]|[1-9]\d)/.test(model || '');
-
-// Capture-lock: capturers convert, only admins map (decision: Paul + Russel, 21 Aug 2026 —
-// every wrong-product incident on record entered through the mapping tools). SHA-256 of the
-// admin PIN, lowercased. To change the PIN: sha256(newpin) -> replace this value.
-export const ADMIN_PIN_HASH = 'cadc3ae2777d765748cee4152314e4acc0f9fd1f485a566f7519aa0a918377b9';

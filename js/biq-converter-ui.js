@@ -23,7 +23,7 @@ import {
     biqToComparisonShape, biqExtractCheckResults
 } from './biq-converter.js';
 import { biqDetectForm, biqParseSpecForm, biqElementGridOptions } from './biq-form-specs.js';
-import { ADMIN_PIN_HASH, isGemini3 } from './config.js';
+import { isGemini3 } from './config.js';
 
 let D = null;            // injected deps
 let MAPS = null;         // live mappings (seeds + Firestore)
@@ -39,23 +39,22 @@ const escH = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g
 // mapped to Element Wood, Waybury attached to LMC's customer IDs, the Zigbee mag charger
 // mapped to a motor part. So capture sessions have NO mapping ability and never write to
 // the shared database; problem orders go to Paul via the "Send to mapping" button instead.
-// Admin mode (PIN) keeps every existing tool.
+// Admin mode keeps every existing tool. Since 10 Oct 2026 (Russel) there is no PIN: the Admin
+// switch asks for a confirmation instead, so nobody enters admin mode by accident.
 function biqIsAdmin() { try { return localStorage.getItem('biq_admin') === '1'; } catch (e) { return false; } }
-async function biqTryUnlock() {
+function biqTryUnlock() {
     if (biqIsAdmin()) {
         if (confirm('Leave admin mode? Mapping tools will be hidden again.')) { localStorage.removeItem('biq_admin'); location.reload(); }
         return;
     }
-    const pin = prompt('Admin PIN:'); if (!pin) return;
-    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(pin).trim().toLowerCase()));
-    const hex = [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
-    if (hex === ADMIN_PIN_HASH) { localStorage.setItem('biq_admin', '1'); location.reload(); }
-    else D.showToast('Wrong PIN.', 'error');
+    if (!confirm('Switch to admin mode?\n\nMapping changes apply to every order. Admin mode is for Paul and Russel; capturers use ✉ Send to mapping.')) return;
+    try { localStorage.setItem('biq_admin', '1'); } catch (e) { D.showToast('This browser cannot store admin mode.', 'error'); return; }
+    location.reload();
 }
 function biqLockUi() {
     const adm = biqIsAdmin();
     const m = $('biq-openmaps'); if (m) m.style.display = adm ? '' : 'none';
-    const lk = $('biq-adminlock'); if (lk) { lk.textContent = adm ? '🔓 admin' : '🔒'; lk.title = adm ? 'Admin mode is ON — click to leave' : 'Admin unlock (mapping is managed by Paul & Russel)'; }
+    const lk = $('biq-adminlock'); if (lk) { lk.textContent = adm ? '🔓 admin' : 'Admin'; lk.title = adm ? 'Admin mode is ON — click to leave' : 'Admin mode (mapping is managed by Paul & Russel)'; }
 }
 // One escalation path instead of guessing: a pre-addressed mail to Paul listing every
 // unmapped name on the current order. The capturer attaches the original PDF and sends.
@@ -1172,7 +1171,7 @@ function injectMarkup() {
           <button id="biq-newblank" class="biq-btn-sm">+ New blank order</button>
           <button id="biq-openmaps" class="biq-btn-sm">⚙ BlindIQ ID mappings</button>
           <button id="biq-sendmap" class="biq-btn-sm" title="Email this order's unmapped names to Paul (attach the PDF before sending)">✉ Send to mapping</button>
-          <a id="biq-adminlock" class="biq-btn-sm cursor-pointer select-none" style="text-decoration:none">🔒</a>
+          <a id="biq-adminlock" class="biq-btn-sm cursor-pointer select-none" style="text-decoration:none">Admin</a>
           <button id="biq-help" class="biq-btn-sm">❔ How to use</button>
         </div>
       </div>

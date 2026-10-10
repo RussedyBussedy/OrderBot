@@ -219,18 +219,19 @@ async function handleFiles(files) {
         D.showToast('Could not read this file: ' + err.message, 'error');
     }
 }
-async function loadXlsx(f) {
-    const wb = XLSX.read(await f.arrayBuffer(), { type: 'array' });
+// The recognised dealer layouts, shared by the Drawings tab (loadXlsx / loadPdf) and the order
+// comparison (biqReadCustomerFile). Never the AI. Returns { order, format, sourceText }; order is
+// null when the layout isn't recognised, sourceText null when the file has no readable text.
+function biqDetectXlsx(buf) {
+    const wb = XLSX.read(buf, { type: 'array' });
     const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: null });
-    lastSourceText = rows.map(r => (r || []).join(' ')).join('\n');
+    const sourceText = rows.map(r => (r || []).join(' ')).join('\n');
     const p = biqParseBlindGuysRows(rows);
-    if (p) { setOrder(biqNormalizeBlindGuys(MAPS, p)); return; }
-    D.showToast('Spreadsheet layout not recognised — falling back to AI extraction.', 'info');
-    await aiExtract([f]);
+    return { order: p ? biqNormalizeBlindGuys(MAPS, p) : null, format: 'Blind Guys spreadsheet', sourceText };
 }
-async function loadPdf(f) {
-    const buf = await f.arrayBuffer();
+async function biqDetectPdf(buf, fileName) {
     const doc = await pdfjsLib.getDocument({ data: buf.slice(0) }).promise;
+    let sourceText = null;
     // 1) BD fillable form?
     const fields = {};
     for (let p = 1; p <= doc.numPages; p++) {
@@ -239,14 +240,14 @@ async function loadPdf(f) {
     }
     const filled = Object.values(fields).filter(v => !(v == null || v === '' || v === 'Off' || v === '/Off')).length;
     if (filled >= 3) {
-        lastSourceText = Object.entries(fields).map(([k, v]) => k + ' ' + v).join('\n');
+        sourceText = Object.entries(fields).map(([k, v]) => k + ' ' + v).join('\n');
         const formKey = biqDetectForm(fields);
         if (formKey && formKey !== 'element') {
             const o = biqParseSpecForm(MAPS, formKey, fields);
-            if (o.items.length || o.customer) { setOrder(o); return; }
+            if (o.items.length || o.customer) return { order: o, format: 'order form (' + formKey + ')', sourceText };
         }
         const p = biqParseBDFields(fields);
-        if (p && (p.items.length || p.meta.customerName)) { setOrder(biqNormalizeBDForm(MAPS, p, biqElementGridOptions(fields))); return; }
+        if (p && (p.items.length || p.meta.customerName)) return { order: biqNormalizeBDForm(MAPS, p, biqElementGridOptions(fields)), format: 'Blind Designs order form', sourceText };
     }
     // 2) Mathéo text layout?
     const textItems = [];
@@ -255,24 +256,81 @@ async function loadPdf(f) {
         tc.items.forEach(i => textItems.push({ s: i.str, x: i.transform[4], y: i.transform[5] - p * 10000 }));
     }
     if (textItems.map(i => i.s).join('').replace(/\s/g, '').length > 40) {
-        lastSourceText = textItems.map(i => i.s).join(' ');
+        sourceText = textItems.map(i => i.s).join(' ');
         const m = biqParseMatheoItems(textItems);
-        if (m && m.rows.length) { setOrder(biqNormalizeMatheo(MAPS, m)); return; }
+        if (m && m.rows.length) return { order: biqNormalizeMatheo(MAPS, m), format: 'Mathéo order sheet', sourceText };
         const bp = biqParseBdPo(textItems);
-        if (bp && bp.rows.length) { setOrder(biqNormalizeBdPo(MAPS, bp)); return; }
+        if (bp && bp.rows.length) return { order: biqNormalizeBdPo(MAPS, bp), format: 'Blind Designs online purchase order', sourceText };
         // Blind Guys workbook printed/flattened to PDF (form fields gone) — rebuild the grid
         // and use the workbook parser, so the 70mm cassette etc. resolve exactly like the xlsx.
         const bg = biqBgPrintToRows(textItems);
-        if (bg) { const pr = biqParseBlindGuysRows(bg); if (pr && pr.items.length) { const o = biqNormalizeBlindGuys(MAPS, pr); if (biqTbdCoherent(MAPS, o)) { setOrder(o); return; } } }
+        if (bg) { const pr = biqParseBlindGuysRows(bg); if (pr && pr.items.length) { const o = biqNormalizeBlindGuys(MAPS, pr); if (biqTbdCoherent(MAPS, o)) return { order: o, format: 'Blind Guys sheet (PDF)', sourceText }; } }
         const lf = biqParseLifestyle(textItems);
-        if (lf && lf.rows.length) { setOrder(biqNormalizeLifestyle(MAPS, lf)); return; }
+        if (lf && lf.rows.length) return { order: biqNormalizeLifestyle(MAPS, lf), format: 'Lifestyle order', sourceText };
         const cb = biqParseCnbw(textItems);
-        if (cb && cb.rows.length) { const o = biqNormalizeCnbw(MAPS, cb); if (biqCnbwCoherent(MAPS, o)) { setOrder(o); return; } }
+        if (cb && cb.rows.length) { const o = biqNormalizeCnbw(MAPS, cb); if (biqCnbwCoherent(MAPS, o)) return { order: o, format: 'Curtain & Blind Workshop order', sourceText }; }
         const tb = biqParseTbd(textItems);
-        if (tb && tb.rows.length) { const o = biqNormalizeTbd(MAPS, tb, f && f.name); if (biqTbdCoherent(MAPS, o)) { setOrder(o); return; } }
+        if (tb && tb.rows.length) { const o = biqNormalizeTbd(MAPS, tb, fileName); if (biqTbdCoherent(MAPS, o)) return { order: o, format: 'TBD order', sourceText }; }
     }
+    return { order: null, format: '', sourceText };
+}
+async function loadXlsx(f) {
+    const r = biqDetectXlsx(await f.arrayBuffer());
+    lastSourceText = r.sourceText;
+    if (r.order) { setOrder(r.order); return; }
+    D.showToast('Spreadsheet layout not recognised — falling back to AI extraction.', 'info');
+    await aiExtract([f]);
+}
+async function loadPdf(f) {
+    const r = await biqDetectPdf(await f.arrayBuffer(), f && f.name);
+    if (r.sourceText != null) lastSourceText = r.sourceText;
+    if (r.order) { setOrder(r.order); return; }
     // 3) unknown or scanned -> AI
     await aiExtract([f]);
+}
+// The same rule pipeline as refresh(), without the editor (keep the two lists in step).
+function biqRunRulePipeline(o) {
+    biqStampOriginals(o);
+    biqReSplitFabrics(MAPS, o);
+    biqRecomputeControlDrops(MAPS, o);
+    biqAssignSundryCodes(o);
+    biqApplyCustomerDefaults(MAPS, o);
+    biqApplyShutterConfig(MAPS, o);
+    biqFoldOptionSynonyms(MAPS, o);
+    biqApplyBracketPairs(MAPS, o);
+    biqApplyOptionDefaults(MAPS, o);
+    biqNormalizeControlSides(MAPS, o);
+    biqInferControls(MAPS, o);
+    biqApplyControlMatrix(MAPS, o);
+    biqApplyFormatProfile(MAPS, FORMATS, o);
+    biqCanonicalize(MAPS, o);
+    return o;
+}
+// The converter's reading of a customer file for the order comparison (index.html): the
+// recognised dealer layouts plus every converter rule, so the comparison AI sees the line items,
+// the Blind IQ names and the notes on values the customer didn't give. Never calls the AI and never
+// touches the Drawings tab. Returns { order, format } or null (unknown layout, scan, image, or the
+// mappings not loaded yet), defaults = per line, the Blind IQ sheet's default option values.
+export async function biqReadCustomerFile(f) {
+    if (!MAPS || !f || !f.name) return null;
+    const ext = f.name.split('.').pop().toLowerCase();
+    try {
+        let r = null;
+        if (ext === 'xlsx' || ext === 'xls') r = biqDetectXlsx(await f.arrayBuffer());
+        else if (ext === 'pdf') r = await biqDetectPdf(await f.arrayBuffer(), f.name);
+        if (!r || !r.order || !(r.order.items || []).length) return null;
+        const o = biqRunRulePipeline(r.order);
+        // each line's Blind IQ sheet defaults, so the comparison can tell a default from a value read off the order
+        const defaults = o.items.map(it => {
+            const d = {};
+            (biqTemplateFor2(MAPS, it.blindType, it.range) || []).forEach(([k, v]) => { if (biqNorm(v)) d[biqLc(k)] = biqLc(v); });
+            return d;
+        });
+        return { order: o, format: r.format, defaults };
+    } catch (e) {
+        console.warn('[OrderBot] converter reading skipped for ' + f.name + ':', e && e.message);
+        return null;
+    }
 }
 
 // ---------------------------------------------------------------- AI extraction

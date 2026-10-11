@@ -48,14 +48,26 @@ export const normColour = v => normName(v).replace(/^\d{2,5}\s+/, '').replace(/\
 // locations also drop the customer's own numbering ("1. Window 1" = "Window 1")
 export const normLocation = v => normName(s(v).replace(/^\s*\d{1,3}\s*[.)]\s+/, ''));
 
-const NORM = { location: normLocation, colour: normColour, range: normName, blindType: normName, fix: normName };
+// fixes keep their sizes: "Ext Reveal 130mm" is not "Ext Reveal", "Gasket 18 mm" is "Gasket 18mm"
+export const normFix = v => s(v).toLowerCase()
+    .replace(/[.'’`]/g, '')
+    .replace(/[@#^*]+/g, ' ')
+    .replace(/[,:;"()[\]{}\-_/\\|+]/g, ' ')
+    .replace(/(\d)\s+mm\b/g, '$1mm')
+    .replace(/\s+/g, ' ').trim();
+
+const NORM = { location: normLocation, colour: normColour, range: normName, blindType: normName, fix: normFix };
 
 // Blind IQ prints long names shortened ("Chef's Kitchen :" for "Chef's Kitchen : Window 1A",
 // "Collina Champagne" for "Collina Champagne Fizz 2050mm @"). The shorter must be a long prefix.
-const PREFIX_MIN = { location: 8, colour: 12, range: 12 };
-function isPrintedPrefix(a, b, min) {
+// A fix is cut inside a word ("Gasket 18m", "Universal Fra"): "Ext Face 80mm" is a fix of its own, not a shortened
+// "Ext Face 80mm (Waterfall)".
+const PREFIX_MIN = { location: 8, colour: 12, range: 12, fix: 9 };
+const MID_WORD_CUT = { fix: true };
+function isPrintedPrefix(a, b, min, midWord) {
     if (!a || !b || a === b) return false;
     const [short, long] = a.length < b.length ? [a, b] : [b, a];
+    if (midWord && long.charAt(short.length) === ' ') return false;
     return short.length >= min && long.startsWith(short);
 }
 
@@ -155,20 +167,117 @@ function acceptsOwnQuote(data, changes) {
 }
 
 // ---------------------------------------------------------------- 1. deterministic checks
-function autoMatch(field, reason, changes, where) {
+function autoMatch(field, reason, changes, where, result = 'MATCH') {
     field.aiResult = field.result;
-    field.result = 'MATCH';
+    field.result = result;
     field.autoMatched = reason;
     changes.push({ ...where, from: field.aiResult, reason });
+}
+// the same for a value the rule cannot call the same, only explain: the field becomes a NOTE
+const autoNote = (field, reason, changes, where) => autoMatch(field, reason, changes, where, 'NOTE');
+
+// A rule that knows the customer's value is a mistake in Blind IQ (the opposite of autoMatch): the field becomes a
+// MISMATCH with the rule in `ruleFlag`, the AI's own result and reading kept.
+function ruleFlag(field, customerText, reason, flags, where) {
+    if (field.aiResult === undefined) field.aiResult = field.result;
+    if (customerText && !s(field.customerValue).toLowerCase().includes(s(customerText).toLowerCase())) {
+        if (field.aiCustomerValue === undefined) field.aiCustomerValue = s(field.customerValue);
+        field.customerValue = s(customerText);
+    }
+    field.result = 'MISMATCH';
+    field.ruleFlag = reason;
+    flags.push({ ...where, from: field.aiResult, reason });
+}
+
+// ---------------------------------------------------------------- Perfect Fit (Russel, Oct 2026)
+// A Perfect Fit blind sits in its own frame, clipped into the window's beading on brackets ("clips", "gaskets")
+// sized to the bead depth. Blind IQ's fix is the Gasket of that size: 12 mm is "Gasket 12mm (18mm+foam)" (printed
+// "Gasket 12m"), then 18, 20, 22, 24, 30 and 38 mm, with Remove Universal Frame=Yes (every gasket line since June
+// 2026). The Universal Frame, a secondary frame with a 24 mm clip inside, is never the customer's option: with a clip
+// or gasket size on the order it is a mistake (BDO643569 "Perfect fit frame with 25mm clips" was made on a Universal
+// Frame and remade free on Gasket 24mm; BDO635086, BDO637782 and BDO645474 were re-ordered on 18, 38 and 30 mm
+// gaskets). A blind fitted to the reveal or face does not clip into the window: it goes on the Universal Frame.
+const PERFECT_FIT = /perfect\s*fit/i;
+export const PF_GASKETS = [12, 18, 20, 22, 24, 30, 38];
+// an option about the clips: "Clips=25mm clips", "Fix PF Only=18mm", "Frame depth: 15mm" (the bead depth)
+const CLIP_WORDS = /clip|gask|gass|bracket|bead|depth|\bfix\b/i;
+const NOT_THIS_LINE = /additional|extra|spare/i;   // "Need additional 20mm gaskets as well" (BDO649643)
+export function clipSizeOf(t) {
+    const v = s(t);
+    if (/\b18\s*(mm)?\s*(\+|plus|with|&|and)\s*foam/i.test(v)) return 12;   // the 18 mm bracket and foam is Gasket 12mm
+    const m = v.match(/(?:^|[^\d])(\d{2})\s*(?:mm)?(?![\d])/i);
+    const n = m ? +m[1] : NaN;
+    return n >= 10 && n <= 45 ? n : null;
+}
+// The clip size on the customer's line: a size in its fix, or in an option about clips, gaskets or the bead depth
+export function customerClipSize(item) {
+    const fix = s(item && item.fix && item.fix.customerValue);
+    if (fix && !isEmptyValue(fix) && clipSizeOf(fix) != null) return { size: clipSizeOf(fix), text: fix };
+    for (const sp of (item && item.specifications) || []) {
+        const c = s(sp && sp.specComparison && sp.specComparison.customerValue);
+        if (!c || isEmptyValue(c) || NOT_THIS_LINE.test(c) || !CLIP_WORDS.test(s(sp.specName) + ' ' + c)) continue;
+        if (clipSizeOf(c) != null) return { size: clipSizeOf(c), text: c };
+    }
+    return null;
+}
+export const gasketOf = v => { const m = s(v).match(/^gasket\s*(\d{2})/i); return m ? +m[1] : null; };
+// Louvolite's Perfect Fit beading depth chart (Sales Resource, Product Installation Instructions): a bracket of N mm
+// covers a bead of N - 2 to N + 1 mm with foam and goal packing, and the 18 mm bracket with foam (Blind IQ's
+// "Gasket 12mm (18mm+foam)") covers 12 to 15 mm. A bead depth Blind IQ has no Gasket for, inside the span of the
+// Gasket on the order, is a NOTE (BDO650118 "Frame depth: 15mm" on Gasket 12mm; BDO643569's 25 mm remade on 24 mm).
+export function chartFit(gasket, bead) {
+    if (gasket == null || bead == null || PF_GASKETS.includes(bead)) return '';
+    if (gasket === 12) return bead >= 12 && bead <= 15 ? 'the 18 mm bracket with foam (Gasket 12mm (18mm+foam))' : '';
+    if (gasket === 38) return '';                                     // not on the chart
+    return bead >= gasket - 2 && bead <= gasket + 1 ? `the ${gasket} mm bracket with foam and goal packing` : '';
+}
+const FACE_OR_REVEAL = /^(f|f\s*f|f\s*fix|face(\s*fix(ed)?)?|r|r\s*fix|reveal(\s*fix(ed)?)?|recess(\s*fit(ted)?)?|inside\s*reveal|i\s*r)$/;
+// the customer's word for Remove Universal Frame=Yes: "No universal Frame", "Please do not send Universal Frame",
+// "Remove PF universal", "NO FRAME"; a bare "No" depends on the customer's column and is left to the AI
+const NO_UNIVERSAL = /\b(no|without|remove[sd]?|do\s*n[o']?t\s*(send|supply|need|want|fit)|excl\w*)\b[^.]*\b(universal|frame|frome)/i;
+const isRemoveUf = (name, biq) => /remove\s*universa/i.test(name + ' ' + biq);
+const ufYes = v => /(^|=)\s*yes\s*$/i.test(s(v)) || /^remove\s*universa\S*\s*frame$/i.test(s(v));
+
+function perfectFitChecks(item, id, changes, flags) {
+    const bt = s(item.blindType && item.blindType.blindIQValue);
+    if (!PERFECT_FIT.test(bt) || !item.fix) return;
+    const where = f => ({ item: id, field: f });
+    const flagged = x => x && isFlag('fix', x.result);
+    const fx = item.fix, clip = customerClipSize(item), b = s(fx.blindIQValue), g = gasketOf(b), uf = /^universal\s*fr/i.test(b);
+    if (clip && g != null && clip.size === g) {
+        if (flagged(fx)) autoMatch(fx, 'the same gasket size (Perfect Fit)', changes, where('fix'));
+    } else if (clip && g != null && chartFit(g, clip.size)) {
+        if (flagged(fx)) autoNote(fx, `a ${clip.size} mm bead takes ${chartFit(g, clip.size)} on Louvolite's beading depth chart: confirm the bracket`, changes, where('fix'));
+    } else if (clip && g != null && PF_GASKETS.includes(clip.size) && fx.result !== 'MISMATCH') {
+        ruleFlag(fx, clip.text, `the customer's ${clip.size} mm gasket is Blind IQ's Gasket ${clip.size === 12 ? '12mm (18mm+foam)' : clip.size + 'mm'}`, flags, where('fix'));
+    } else if (clip && uf && !/universal/i.test(clip.text) && fx.result !== 'MISMATCH') {
+        ruleFlag(fx, clip.text, 'a clip or gasket size on a Perfect Fit order is the Gasket fix of that size; the Universal Frame is not a customer option', flags, where('fix'));
+    } else if (!clip && uf && flagged(fx) && FACE_OR_REVEAL.test(normFix(fx.customerValue))) {
+        autoNote(fx, 'a Perfect Fit blind fitted to the reveal or face goes on the Universal Frame', changes, where('fix'));
+    }
+    // options: Remove Universal Frame with a Gasket fix, and the clip size given as an option ("Fix PF Only=18mm")
+    (item.specifications || []).forEach(sp => {
+        const x = sp && sp.specComparison;
+        if (!x || !FLAG.has(x.result)) return;
+        const name = s(sp.specName), c = s(x.customerValue), bv = s(x.blindIQValue), at = { item: id, field: 'spec:' + name };
+        if (isRemoveUf(name, bv)) {
+            if (!ufYes(bv)) return;
+            if (g != null && isEmptyValue(c)) autoMatch(x, 'goes with the Gasket fix (Perfect Fit: no Universal Frame)', changes, at);
+            else if (NO_UNIVERSAL.test(c)) autoMatch(x, 'same meaning (no Universal Frame)', changes, at);
+        } else if (gasketOf(bv) != null && clipSizeOf(c) === gasketOf(bv)) {
+            autoMatch(x, 'the same gasket size (Perfect Fit)', changes, at);
+        }
+    });
 }
 
 // opts.catalogue (optional): { liveRanges(blindType), rangesForColour(blindType, colour) } from the converter's
 // catalogue (BiqUI.biqComparisonCatalogue); without it the range rule is skipped.
+// Returns { data, changes (rule matches), flags (rule mismatches) }.
 export function applyDeterministicChecks(data, opts = {}) {
-    const changes = [];
+    const changes = [], flags = [];
     const cat = opts && opts.catalogue;
-    if (!data || !Array.isArray(data.lineItems)) return { data, changes };
-    if (acceptsOwnQuote(data, changes)) return { data, changes };
+    if (!data || !Array.isArray(data.lineItems)) return { data, changes, flags };
+    if (acceptsOwnQuote(data, changes)) return { data, changes, flags };
     data.lineItems.forEach((item, idx) => {
         const id = s(item.item && (item.item.blindIQValue || item.item.customerValue)) || String(idx + 1);
         const bt = s(item.blindType && item.blindType.blindIQValue);
@@ -182,7 +291,7 @@ export function applyDeterministicChecks(data, opts = {}) {
             const c = NORM[f](item[f].customerValue), b = NORM[f](item[f].blindIQValue);
             if (!c || !b) continue;
             if (c === b) autoMatch(item[f], f === 'colour' && normName(item[f].customerValue) !== normName(item[f].blindIQValue) ? 'same colour (colour code)' : 'same value', changes, where(f));
-            else if (PREFIX_MIN[f] && isPrintedPrefix(c, b, PREFIX_MIN[f])) autoMatch(item[f], 'Blind IQ prints the name shortened', changes, where(f));
+            else if (PREFIX_MIN[f] && isPrintedPrefix(c, b, PREFIX_MIN[f], MID_WORD_CUT[f])) autoMatch(item[f], 'Blind IQ prints the name shortened', changes, where(f));
         }
 
         // range not given, and the only live range that fits: the blind type has one, or one sells the colour the
@@ -255,6 +364,10 @@ export function applyDeterministicChecks(data, opts = {}) {
             }
         }
 
+        // Perfect Fit: the gasket size in other words ("12mm White", "18 mm Gasket" against "Gasket 12m"), a bead depth
+        // on Louvolite's chart, a clip or gasket size against Blind IQ's Universal Frame, Remove Universal Frame
+        perfectFitChecks(item, id, changes, flags);
+
         // specifications: the same value once formatting is ignored
         (item.specifications || []).forEach(sp => {
             const x = sp && sp.specComparison;
@@ -263,7 +376,7 @@ export function applyDeterministicChecks(data, opts = {}) {
             if (c && b && c === b) autoMatch(x, 'same value', changes, { item: id, field: 'spec:' + s(sp.specName) });
         });
     });
-    return { data, changes };
+    return { data, changes, flags };
 }
 
 // ---------------------------------------------------------------- 2. second reading

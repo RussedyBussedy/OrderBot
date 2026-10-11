@@ -4377,6 +4377,76 @@ export function biqRepairTopFix(mappings, it) {
     it.notes = (it.notes ? it.notes + ' | ' : '') + 'Fix "' + it.fix + '" read as Reveal (no top fix on ' + it.range + ' in BlindIQ)';
     it.fix = (mappings.fixNames || {})[String(rev)] || 'Reveal';
 }
+// ---------- Perfect Fit clip size (Russel, Oct 2026) ----------
+// A Perfect Fit blind sits in its own frame, clipped into the window's beading on brackets sized to the bead depth;
+// the order gives that size ("25mm clips", "18mm gasket", "Clip in, 18mm", "12mm White", "Frame depth: 15mm").
+// BlindIQ's fix is the Gasket of that size — 12 mm is "Gasket 12mm (18mm+foam)" — with Remove Universal Frame=Yes
+// (all 84 gasket lines captured since June 2026). The Universal Frame, a secondary frame with a 24 mm clip inside,
+// is never the customer's option (BDO643569 "Perfect fit frame with 25mm clips" went out on a Universal Frame and
+// was remade on Gasket 24mm). A size BlindIQ has no Gasket for is a bead depth: Louvolite's beading depth chart fits
+// it with the Gasket of N mm from N-2 to N+1 mm (foam and goal packing) or Gasket 12mm (18mm+foam) from 12 to 15 mm;
+// one fitting Gasket is taken with a "confirm", two (19, 21, 23 mm) or none (26, 27, 32 mm…) stay with the capturer.
+const BIQ_PF_GASKETS = { 12: 'gasket 12mm (18mm+foam)', 18: 'gasket 18mm', 20: 'gasket 20mm', 22: 'gasket 22mm', 24: 'gasket 24mm', 30: 'gasket 30mm', 38: 'gasket 38mm' };
+const BIQ_CLIP_WORDS = /clip|gask|gass|bracket|bead|depth/i;
+const biqAsksForUf = t => /universal/i.test(t) && !/\b(no|without|remove[sd]?|do\s*n[o']?t\s*\w+)\b[^.]*universal/i.test(t);
+export function biqPfClipSize(text, anyNumber) {
+    const v = biqNorm(text);
+    if (!v || biqAsksForUf(v) || /additional|extra|spare/i.test(v)) return null;
+    if (/\b18\s*(mm)?\s*(\+|plus|with|&|and)\s*foam/i.test(v)) return 12;
+    if (!anyNumber && !BIQ_CLIP_WORDS.test(v)) return null;
+    const m = v.match(/(?:^|[^\d])(\d{2})\s*(?:mm)?(?![\d])/i);
+    const n = m ? +m[1] : NaN;
+    return n >= 10 && n <= 45 ? n : null;
+}
+// The Gaskets Louvolite's chart fits to a bead of `mm` (the Gasket of that size when BlindIQ has one)
+export function biqPfGasketsFor(mm) {
+    if (BIQ_PF_GASKETS[mm]) return [mm];
+    return Object.keys(BIQ_PF_GASKETS).map(Number).filter(n => n === 12 ? mm >= 12 && mm <= 15 : n !== 38 && mm >= n - 2 && mm <= n + 1);
+}
+export function biqPerfectFitFix(mappings, it) {
+    const bt = biqResolve(mappings, 'blindTypes', it.blindType);
+    const tname = bt.known ? biqLc((mappings.blindTypeNames || {})[String(bt.id)] || '') : '';
+    if (!/^perfect fit/.test(tname)) return;
+    const fixName = id => biqLc((mappings.fixNames || {})[String(id)] || '');
+    const rf = biqResolve(mappings, 'fixes', it.fix);
+    const cur = rf.known ? fixName(rf.id) : '';
+    const noteOnce = t => { if (!biqLc(it.notes).includes(biqLc(t))) it.notes = (it.notes ? it.notes + ' | ' : '') + t; };
+    // the size: the fix wording itself, else an option or note about clips, gaskets or the bead depth. A customer who
+    // writes the Universal Frame or Konnect asks for it.
+    const orig = biqNorm((it._orig && it._orig.fix) || it.fix);
+    if (biqAsksForUf(orig) || /konnect|magnetic/i.test(orig) || /^konnect/.test(cur)) return;
+    if (!/^gasket/.test(cur)) {
+        let size = null, src = '';
+        if (!rf.known || cur === 'universal frame') { size = biqPfClipSize(it.fix, !rf.known); src = it.fix; }
+        for (const v of (size == null ? it.variants || [] : [])) {
+            const t = biqNorm(v[0]) + ' ' + biqNorm(v[1]);
+            if (/^remove\s*universa/i.test(biqNorm(v[0]))) continue;
+            const n = biqPfClipSize(t); if (n != null) { size = n; src = biqNorm(v[0]) + '=' + biqNorm(v[1]); break; }
+        }
+        if (size == null) for (const part of String(it.notes || '').split(/\s*\|\s*/)) {
+            const n = biqPfClipSize(part); if (n != null) { size = n; src = part; break; }
+        }
+        if (size == null) return;
+        const fits = biqPfGasketsFor(size), rfx = biqRangeFixIds(mappings, it.blindType, it.range);
+        const ids = fits.map(n => (mappings.fixes || {})[BIQ_PF_GASKETS[n]]).filter(id => id != null && (!rfx || !rfx.length || rfx.some(x => String(x) === String(id))));
+        if (ids.length !== 1) {
+            noteOnce('Perfect Fit "' + src + '": ' + (ids.length ? 'a ' + size + ' mm bead fits Gasket ' + fits.join(' or ') + 'mm (Louvolite\'s beading depth chart)' : 'no Gasket for a ' + size + ' mm bead on Louvolite\'s beading depth chart') + ' — choose the fix');
+            return;
+        }
+        const was = it.fix;
+        it.fix = (mappings.fixNames || {})[String(ids[0])] || it.fix;
+        noteOnce('Fix "' + (biqNorm(was) || src) + '" read as ' + it.fix + (fits[0] === size ? '' : ' (a ' + size + ' mm bead on Louvolite\'s beading depth chart: confirm)') + (cur === 'universal frame' ? ' — the Universal Frame is not a customer option' : ''));
+    }
+    // Remove Universal Frame=Yes with the Gasket fix, once per fix (a capturer's own change afterwards stays)
+    const now = biqResolve(mappings, 'fixes', it.fix);
+    if (!now.known || !/^gasket \d/.test(fixName(now.id)) || it._pfUfSig === fixName(now.id)) return;   // not Gasket Skylight
+    const spec = biqVariantSpec(mappings, it.blindType, it.range) || [];
+    const keys = spec.filter(o => /^remove\s*universa/i.test(biqNorm(o.k)) && (o.values || []).some(x => /^yes$/i.test(x)));
+    const key = keys.find(o => /;/.test(o.k)) || keys[0];   // PF Roller has both spellings; its stored lines use "Remove Universa; Frame"
+    if (!key) return;
+    it._pfUfSig = fixName(now.id);
+    if (!it.variants.some(v => /^remove\s*universa/i.test(biqNorm(v[0])) && /^yes$/i.test(biqNorm(v[1])))) { biqSetVar(it.variants, key.k, 'Yes'); it._optDefaulted = true; }
+}
 // ---------- Out of Warranty (Blind Designs' Sales Resource documents, Oct 2026) ----------
 // Roller fabrics: roll width in mm (Blind Price List July 2026) and whether the Roller System
 // Selector V2.1 lets the fabric be TURNED (railroaded) when the blind is wider than the roll —
@@ -4471,6 +4541,7 @@ export function biqNarrowLong(mappings, it) {
 }
 export function biqApplyOptionDefaults(mappings, order) {
     (order ? order.items : []).forEach(it => {
+        biqPerfectFitFix(mappings, it);
         biqRepairTopFix(mappings, it);
         const spec = biqVariantSpec(mappings, it.blindType, it.range);
         if (!spec) return;

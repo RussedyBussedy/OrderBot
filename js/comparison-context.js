@@ -145,6 +145,7 @@ const nz = v => v != null && String(v).trim() !== '' && !/^(no|none)$/i.test(Str
 export function describeConverterReading(reading, fileName) {
     const o = reading && reading.order;
     if (!o || !(o.items || []).length) return '';
+    const exact = !!(reading.exact || o.exact);
     const lines = o.items.map((it, i) => {
         const ctl = [it.control1, it.control2].filter(nz).join(' / ');
         const head = [`qty ${it.qty || 1}`, it.blindType || '(type not read)', it.range, it.colour,
@@ -152,14 +153,21 @@ export function describeConverterReading(reading, fileName) {
             .filter(nz).join(' | ');
         const dflt = (reading.defaults || [])[i] || {};
         const lc = v => String(v || '').trim().toLowerCase();
-        const opts = (it.variants || []).filter(v => v && v[0] && nz(v[1]))
-            .map(v => `${v[0]}: ${v[1]}` + (dflt[lc(v[0])] && dflt[lc(v[0])] === lc(v[1]) ? ' (default)' : '')).join('; ');
+        const opts = exact
+            ? (it.exactOptions || []).filter(v => v && v[0] && String(v[1] || '').trim()).map(v => `${v[0]}: ${v[1]}`).join('; ')
+            : (it.variants || []).filter(v => v && v[0] && nz(v[1]))
+                .map(v => `${v[0]}: ${v[1]}` + (dflt[lc(v[0])] && dflt[lc(v[0])] === lc(v[1]) ? ' (default)' : '')).join('; ');
         const notes = String(it.notes || '').trim();
-        return `Line ${i + 1}${it.location ? ' (' + it.location + ')' : ''}: ${head}`
+        return (exact && it.code ? `Item ${it.code}` : `Line ${i + 1}`) + `${it.location ? ' (' + it.location + ')' : ''}: ${head}`
             + (opts ? `\n  options: ${opts}` : '')
-            + (notes ? `\n  converter notes: ${clip(notes, 500)}` : '');
+            + (notes ? `\n  ${exact ? 'note on the order' : 'converter notes'}: ${clip(notes, 500)}` : '');
     });
     const sundries = (o.sundries || []).map(s => `${s.qty || 1} x ${s._src || s.notes || s.sundry || ''}`).filter(s => !/x\s*$/.test(s));
+    if (exact) return `
+# THE CUSTOMER'S BLINDIQ ONLINE ORDER
+The customer file "${fileName || ''}" is the dealer's own order captured in BlindIQ Online${o.iqLinkId ? ' (IQ Link ID ' + o.iqLinkId + ')' : ''}, printed in Blind IQ's own names. OrderBot parsed it without reading it by eye, so the values below ARE the customer's values: use them exactly as the customerValue of each line (match lines by the customer's item letter; Blind IQ's letters can shift when it adds a line, e.g. a separate Valance line). The options are those printed on the online order; every other option was left at the sheet's default.
+${lines.join('\n')}${sundries.length ? '\nSundries: ' + sundries.join('; ') : ''}${o.notes ? '\nOrder message: ' + clip(o.notes, 500) : ''}
+`;
     return `
 # CONVERTER READING OF THE CUSTOMER DOCUMENT
 OrderBot's document converter read the customer file "${fileName || ''}"${reading.format ? ' (' + reading.format + ')' : ''} as below, already in Blind IQ's product names. It is a fixed parser and usually right for this dealer layout. Use it to cross-check your own reading and to see which dealer wording maps to which Blind IQ name. The documents stay the source of truth: where the customer document clearly shows something else, follow the document and say so in the reasoning. An option marked "(default)" is Blind IQ's default for that product and may not be on the customer document at all. Converter notes such as "not on the order" or "the price list's standard" mark values the customer did not state. Fields the customer did not state are NOT_SPECIFIED unless they are among the fields that are never NOT_SPECIFIED.

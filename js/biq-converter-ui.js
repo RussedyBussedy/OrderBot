@@ -23,6 +23,9 @@ import {
     biqToComparisonShape, biqExtractCheckResults, biqCatalogueLookups
 } from './biq-converter.js';
 import { biqDetectForm, biqParseSpecForm, biqElementGridOptions } from './biq-form-specs.js';
+// Parsers added after Oct 2026 are looked up at run time: a browser still holding the previous biq-converter.js for a
+// few minutes after a deploy then just doesn't read that layout, instead of failing to load the page.
+import * as BiqConv from './biq-converter.js';
 import { isGemini3 } from './config.js';
 
 let D = null;            // injected deps
@@ -253,7 +256,7 @@ async function biqDetectPdf(buf, fileName) {
     const textItems = [];
     for (let p = 1; p <= doc.numPages; p++) {
         const tc = await (await doc.getPage(p)).getTextContent();
-        tc.items.forEach(i => textItems.push({ s: i.str, x: i.transform[4], y: i.transform[5] - p * 10000 }));
+        tc.items.forEach(i => textItems.push({ s: i.str, x: i.transform[4], y: i.transform[5] - p * 10000, w: i.width }));
     }
     if (textItems.map(i => i.s).join('').replace(/\s/g, '').length > 40) {
         sourceText = textItems.map(i => i.s).join(' ');
@@ -261,6 +264,9 @@ async function biqDetectPdf(buf, fileName) {
         if (m && m.rows.length) return { order: biqNormalizeMatheo(MAPS, m), format: 'Mathéo order sheet', sourceText };
         const bp = biqParseBdPo(textItems);
         if (bp && bp.rows.length) return { order: biqNormalizeBdPo(MAPS, bp), format: 'Blind Designs online purchase order', sourceText };
+        // a dealer's BlindIQ Online order, printed in Blind IQ's own names (exact: the comparison takes its values as they are)
+        const bo = BiqConv.biqParseBiqOnline ? BiqConv.biqParseBiqOnline(textItems) : null;
+        if (bo && bo.rows.length) return { order: BiqConv.biqNormalizeBiqOnline(MAPS, bo), format: 'BlindIQ Online order', sourceText };
         // Blind Guys workbook printed/flattened to PDF (form fields gone) — rebuild the grid
         // and use the workbook parser, so the 70mm cassette etc. resolve exactly like the xlsx.
         const bg = biqBgPrintToRows(textItems);
@@ -322,14 +328,16 @@ export async function biqReadCustomerFile(f) {
         if (ext === 'xlsx' || ext === 'xls') r = biqDetectXlsx(await f.arrayBuffer());
         else if (ext === 'pdf') r = await biqDetectPdf(await f.arrayBuffer(), f.name);
         if (!r || !r.order || !(r.order.items || []).length) return null;
-        const o = biqRunRulePipeline(r.order);
+        // a BlindIQ Online order is already in Blind IQ's names and options: it stays exactly as the dealer captured it
+        // (the converter's rules are for turning other layouts into Blind IQ values)
+        const o = r.order.exact ? r.order : biqRunRulePipeline(r.order);
         // each line's Blind IQ sheet defaults, so the comparison can tell a default from a value read off the order
         const defaults = o.items.map(it => {
             const d = {};
             (biqTemplateFor2(MAPS, it.blindType, it.range) || []).forEach(([k, v]) => { if (biqNorm(v)) d[biqLc(k)] = biqLc(v); });
             return d;
         });
-        return { order: o, format: r.format, defaults };
+        return { order: o, format: r.format, defaults, exact: !!o.exact };
     } catch (e) {
         console.warn('[OrderBot] converter reading skipped for ' + f.name + ':', e && e.message);
         return null;

@@ -18,6 +18,8 @@
 // 3. needsSecondReading(files, pdfjs)
 //    The second reading is only made for handwritten or unclear orders: a photo, a scanned PDF (also one with
 //    an OCR layer) or handwriting drawn onto a PDF. Typed documents are read once.
+// 4. applyExactReading(data, readings)
+//    A BlindIQ Online order is in Blind IQ's own names: its values replace the AI's reading of the customer side.
 
 import { CRITICAL_FIELDS } from './constants.js';
 
@@ -432,4 +434,77 @@ export async function needsSecondReading(files, pdfjs) {
         if (r.unclear) return { needed: true, file: s(f && f.name), kind: r.kind };
     }
     return { needed: false, kind: 'typed' };
+}
+
+// ---------------------------------------------------------------- 4. exact customer values (BlindIQ Online orders)
+// A BlindIQ Online order (the dealer's own order in BlindIQ Online, exported as "Online Purchase Order" with an IQ
+// Link ID) prints Blind IQ's own names, sizes, controls and options, and the converter parses it without the AI
+// (biqParseBiqOnline). Capturers still re-key these orders. So the customer's values are taken from the export
+// exactly: on every line the comparison pairs with an export line, each field's customer value becomes the
+// export's and its result follows from comparing the two exact values; the AI's own reading stays in
+// `aiCustomerValue` / `aiResult`. The rule checks and validations run afterwards as for any order (Russel, Oct 2026).
+// `readings`: [{ exact: true, file, order: { items: [{ code, qty, location, blindType, range, colour, width, drop,
+// fix, control1, control2, exactOptions: [[k, v]] }] } }] (biqReadCustomerFile).
+const EXACT_FIELDS = { qty: 'qty', location: 'location', width: 'width', drop: 'drop', blindType: 'blindType', range: 'range', colour: 'colour', fix: 'fix', control1: 'control1', control2: 'control2' };
+// Blind IQ renamed the Element blind types on 1 Aug 2026 (same ids); an online order from before prints the old name
+const BT_RENAMED = { 'element roller sys 40': 'roller system 40', 'element wood': 'wood venetian', 'element retro': 'retro venetian', 'element vision': 'vision blind', 'element 35mm aluminium': '35mm aluminium' };
+const exactEq = (f, a, b) => {
+    if (f === 'width' || f === 'drop' || f === 'qty') { const x = parseFloat(s(a)), y = parseFloat(s(b)); return !isNaN(x) && !isNaN(y) ? x === y : s(a) === s(b); }
+    if (f === 'blindType') { const t = v => BT_RENAMED[normName(v)] || normName(v); return t(a) === t(b); }
+    return normName(a) === normName(b);
+};
+function exactResult(f, v, b) {
+    if (exactEq(f, v, b) || (isEmptyValue(v) && isEmptyValue(b))) return 'MATCH';
+    if (isEmptyValue(v)) return 'NOT_SPECIFIED';     // left open on the order; Blind IQ filled it in
+    if (isEmptyValue(b)) return 'OMISSION';          // on the order, missing in Blind IQ
+    return 'MISMATCH';
+}
+export function applyExactReading(data, readings, opts = {}) {
+    const changes = [];
+    const src = (readings || []).filter(r => r && r.exact && r.order && Array.isArray(r.order.items) && r.order.items.length);
+    if (!src.length || !data || !Array.isArray(data.lineItems)) return { data, changes, paired: 0 };
+    const label = opts.label || 'the BlindIQ Online order';
+    const lines = src.flatMap(r => r.order.items.map(it => ({ it, used: false })));
+    const sizeOk = (li, it) => [['width', 'width'], ['drop', 'drop']].some(([f]) => { const b = li[f] && li[f].blindIQValue; return !isNaN(parseFloat(s(b))) && Math.abs(parseFloat(s(b)) - parseFloat(s(it[f]))) <= 5; })
+        || exactEq('blindType', li.blindType && li.blindType.blindIQValue, it.blindType);
+    let paired = 0;
+    data.lineItems.forEach((li, idx) => {
+        if (!li || !li.item) return;
+        // the export line: the customer's item letter as the comparison read it (Blind IQ's letters shift when a line
+        // is added, e.g. a separate Valance line), when the sizes or the blind type agree; else the same width and drop
+        const code = s(li.item.customerValue);
+        let e = code ? lines.find(x => !x.used && s(x.it.code).toUpperCase() === code.toUpperCase() && sizeOk(li, x.it)) : null;
+        if (!e) e = lines.find(x => !x.used && ['width', 'drop'].every(f => { const b = parseFloat(s(li[f] && li[f].blindIQValue)), c = parseFloat(s(x.it[f])); return !isNaN(b) && !isNaN(c) && Math.abs(b - c) <= 5; })
+            && exactEq('blindType', li.blindType && li.blindType.blindIQValue, x.it.blindType));
+        if (!e) return;
+        e.used = true; paired++;
+        const it = e.it, id = s(li.item.blindIQValue) || String(idx + 1);
+        for (const [f, k] of Object.entries(EXACT_FIELDS)) {
+            const x = li[f]; if (!x) continue;
+            const v = s(it[k]), b = s(x.blindIQValue), r = exactResult(f, v, b);
+            if (s(x.customerValue) === v && x.result === r) { x.exact = label; continue; }
+            if (x.aiCustomerValue === undefined) x.aiCustomerValue = s(x.customerValue);
+            if (x.aiResult === undefined) x.aiResult = x.result;
+            x.customerValue = v; x.result = r; x.confidence = 1; x.exact = label;
+            changes.push({ item: id, field: f, from: x.aiResult, to: r, customerValue: v, aiCustomerValue: x.aiCustomerValue });
+        }
+        // the options the dealer set on the order, where Blind IQ's line has the same option: an option left at the
+        // sheet's default is not printed on the order, and one Blind IQ carries elsewhere (the cassette on its own
+        // Valance line, BDO669951) is for the AI and the Blind Designs standards, so both stay as the AI read them
+        const opts2 = new Map((it.exactOptions || []).map(([k, v]) => [normName(k), s(v)]));
+        (li.specifications || []).forEach(sp => {
+            const x = sp && sp.specComparison; if (!x) return;
+            const key = normName(sp.specName); if (!opts2.has(key)) return;
+            const v = opts2.get(key), b = s(x.blindIQValue);
+            if (isEmptyValue(b) || isEmptyValue(v)) return;
+            const r = exactEq('spec', v, b) ? 'MATCH' : 'MISMATCH';
+            if (s(x.customerValue) === v && x.result === r) { x.exact = label; return; }
+            if (x.aiCustomerValue === undefined) x.aiCustomerValue = s(x.customerValue);
+            if (x.aiResult === undefined) x.aiResult = x.result;
+            x.customerValue = v; x.result = r; x.confidence = 1; x.exact = label;
+            changes.push({ item: id, field: 'spec:' + s(sp.specName), from: x.aiResult, to: r, customerValue: v, aiCustomerValue: x.aiCustomerValue });
+        });
+    });
+    data.exactReading = { source: label, lines: lines.length, paired };
+    return { data, changes, paired };
 }

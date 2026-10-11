@@ -1938,6 +1938,133 @@ export function biqNormalizeBdPo(mappings, p) {
     return o;
 }
 
+// ---------- BlindIQ Online "Online Purchase Order" export (Oct 2026) ----------
+// A dealer's own order captured in BlindIQ Online (BlindIQ_ExportedCO_<IQ Link ID>.pdf): Blind IQ's exact blind
+// type / range / colour / fix / control names, the sheet's options as "K=V|" under each blind (the options set on
+// the order; the rest are the sheet's defaults), ZIQ stock codes under Sundries, and the online order's IQ Link ID.
+// Capturers re-key these orders (BDO669951 was not linked to its online order), so the comparison takes the
+// customer's values from this parse exactly (comparison-checks.js applyExactReading). Deterministic, no AI.
+// Columns are centred under their headers, so values go to the nearest header centre.
+const biqTextW = p => (p.w != null && p.w > 0 ? p.w : biqNorm(p.s).length * 4.2);
+const biqCentre = p => p.x + biqTextW(p) / 2;
+function biqTextRows(textItems, tol = 4) {
+    const items = textItems.filter(i => biqNorm(i.s)).slice().sort((a, b) => (b.y - a.y) || (a.x - b.x));
+    const rows = [];
+    items.forEach(i => {
+        const r = rows[rows.length - 1];
+        if (r && Math.abs(r.y - i.y) <= tol) r.parts.push(i); else rows.push({ y: i.y, parts: [i] });
+    });
+    rows.forEach(r => r.parts.sort((a, b) => a.x - b.x));
+    return rows;
+}
+// Anchor a header row's titles (in order) and return their centres; null when a title is missing.
+function biqHeaderCols(row, titles) {
+    const parts = row.parts.map(p => ({ s: biqLc(p.s), c: biqCentre(p) }));
+    const cols = []; let pi = 0;
+    for (const t of titles) {
+        const want = biqLc(t.replace(/2$/, ''));
+        while (pi < parts.length && parts[pi].s !== want && !(want.startsWith(parts[pi].s) && parts[pi].s.length > 2)) pi++;
+        if (pi >= parts.length) return null;
+        let c = parts[pi].c, s = parts[pi].s; pi++;
+        // a title split over two text items ("Blind" + "Type"): centre of both
+        while (s !== want && pi < parts.length && want.startsWith(s + ' ' + parts[pi].s)) { s = s + ' ' + parts[pi].s; c = (c + parts[pi].c) / 2; pi++; }
+        cols.push({ name: t, c });
+    }
+    return cols;
+}
+const biqNearestCol = (cols, p) => { const c = biqCentre(p); let best = cols[0], bd = 1e9; cols.forEach(k => { const d = Math.abs(c - k.c); if (d < bd) { bd = d; best = k; } }); return best.name; };
+export function biqParseBiqOnline(textItems) {
+    const rows = biqTextRows(textItems);
+    const text = rows.map(r => r.parts.map(p => biqNorm(p.s)).join(' ')).join('\n');
+    if (!/Online Purchase Order:/i.test(text) || !/\bIQ Link ID\b/i.test(text)) return null;
+    const all = textItems.filter(i => biqNorm(i.s));
+    const meta = {};
+    let m = text.match(/Online Purchase Order:\s*(.+)/i); if (m) meta.orderNumber = biqNorm(m[1]);
+    const label = re => all.filter(i => re.test(biqNorm(i.s)));
+    const near = (lab, xMin, xMax, dyMax = 3) => { const v = all.filter(i => i !== lab && Math.abs(i.y - lab.y) <= dyMax && i.x >= xMin && i.x < xMax).sort((a, b) => a.x - b.x); return v.length ? biqNorm(v.map(i => i.s).join(' ')) : ''; };
+    const link = label(/^IQ Link ID$/i)[0];
+    if (link) { const v = all.filter(i => /^\d{3,9}$/.test(biqNorm(i.s)) && Math.abs(i.x - link.x) <= 40 && i.y < link.y && i.y >= link.y - 40).sort((a, b) => b.y - a.y)[0]; if (v) meta.iqLinkId = biqNorm(v.s); }
+    // "To" block: the second "Name" label (the first is Blind Designs, "From")
+    const names = label(/^Name$/i).sort((a, b) => a.x - b.x);
+    if (names.length >= 2) meta.customer = near(names[1], names[1].x + 15, names[1].x + 220);
+    for (const [k, re] of [['orderDate', /^Order Date$/i], ['requiredDate', /^Required Date$/i], ['deliveryMethod', /^Delivery Method$/i], ['packingType', /^Packing Type$/i], ['quoteRef', /^Quote Ref$/i], ['operator', /^Operator$/i]]) {
+        const l = label(re)[0]; if (l) { const v = near(l, l.x + 40, l.x + 240); if (v) meta[k] = v; }
+    }
+    const hi = rows.findIndex(r => { const t = r.parts.map(p => biqLc(p.s)); return t[0] === 'item' && t.includes('qty') && t.some(s => s.startsWith('locat')) && t.some(s => s.startsWith('price')); });
+    if (hi < 0) return null;
+    const cols = biqHeaderCols(rows[hi], ['Item', 'QTY', 'Location', 'Blind Type', 'Range', 'Colour', 'Width', 'Drop', 'Cont. Drop', 'Control', 'Control2', 'Fix', 'Price']);
+    if (!cols) return null;
+    const itemMax = (cols[0].c + cols[1].c) / 2;
+    const out = { meta, rows: [], sundries: [] };
+    let cur = null, mode = 'blinds', scols = null, message = [];
+    for (let ri = hi + 1; ri < rows.length; ri++) {
+        const r = rows[ri], joined = biqNorm(r.parts.map(p => p.s).join(' '));
+        if (/^ONLINE PURCHASE ORDER\b/i.test(joined) || /^PAGE\s+\d+\s*\/\s*\d+$/i.test(joined)) continue;   // page furniture
+        if (/^Sundries$/i.test(joined)) { mode = 'sundries'; cur = null; continue; }
+        if (/^Order Message\b/i.test(joined)) { mode = 'message'; cur = null; continue; }
+        if (mode === 'message') { const t = r.parts.filter(p => p.x < 600).map(p => biqNorm(p.s)).join(' '); if (t && !/^(Blind Total|Discount|Delivery|Sub Total|VAT|TOTAL):?$/i.test(t)) message.push(t); continue; }
+        if (mode === 'sundries') {
+            const t = r.parts.map(p => biqLc(p.s));
+            if (t[0] === 'item' && t.includes('qty')) { scols = biqHeaderCols(r, ['Item', 'QTY', 'Code', 'Sundry Type', 'Sundry', 'Price']); continue; }
+            if (!scols || !/^[A-Z]{1,3}$/.test(biqNorm(r.parts[0].s))) continue;
+            const row = {}; r.parts.forEach(p => { const k = biqNearestCol(scols, p); row[k] = row[k] ? row[k] + ' ' + biqNorm(p.s) : biqNorm(p.s); });
+            const q = parseFloat(String(row['QTY'] || '1').replace(',', '.'));
+            out.sundries.push({ item: row['Item'], qty: String(isNaN(q) ? 1 : q), code: row['Code'] || '', typeName: row['Sundry Type'] || '', name: row['Sundry'] || '' });
+            continue;
+        }
+        const first = r.parts[0];
+        if (/^[A-Z]{1,3}$/.test(biqNorm(first.s)) && biqCentre(first) < itemMax + 6) {
+            cur = {}; out.rows.push(cur);
+            r.parts.forEach(p => { const k = biqNearestCol(cols, p); cur[k] = cur[k] ? cur[k] + ' ' + biqNorm(p.s) : biqNorm(p.s); });
+            continue;
+        }
+        if (!cur) continue;
+        // "K=V|K=V|" options (and their wraps) belong to the blind above; any other text under it is its note
+        if (/=[^|]*\|/.test(joined) || (cur._opts && !/\|\s*$/.test(cur._opts))) { cur._opts = (cur._opts ? cur._opts + ' ' : '') + joined; continue; }
+        if (r.parts.every(p => /^\d+\.?\d*$/.test(biqNorm(p.s)))) continue;   // a stray figure (the next blind's control drop printed above its row)
+        cur._notes = cur._notes ? cur._notes + ' ' + joined : joined;
+    }
+    if (message.length) meta.message = biqNorm(message.join(' '));
+    return out.rows.length ? out : null;
+}
+export function biqNormalizeBiqOnline(mappings, p) {
+    const o = biqBlankOrder();
+    o.source = 'biqonline'; o.sourceDesc = 'BlindIQ Online order' + (p.meta.iqLinkId ? ' (IQ Link ID ' + p.meta.iqLinkId + ')' : '');
+    o.exact = true; o.iqLinkId = p.meta.iqLinkId || '';
+    o.customer = p.meta.customer || ''; o.orderNumber = p.meta.orderNumber || '';
+    o.orderDate = biqParseDate(p.meta.orderDate); o.requiredDate = biqParseDate(p.meta.requiredDate);
+    o.deliveryMethod = p.meta.deliveryMethod || ''; o.packingType = p.meta.packingType || '';
+    o.notes = p.meta.message || '';
+    p.rows.forEach(r => {
+        const it = biqBlankItem(r['Item'] || '');
+        it.qty = r['QTY'] || '1'; it.location = r['Location'] || '';
+        it.blindType = r['Blind Type'] || ''; it.range = r['Range'] || ''; it.colour = r['Colour'] || '';
+        it.width = r['Width'] || ''; it.drop = r['Drop'] || ''; it.fix = r['Fix'] || '';
+        it.control1 = r['Control'] || ''; it.control2 = r['Control2'] || '';
+        it.controlDrop = biqNorm(r['Cont. Drop'] || '').replace(/\.$/, '');
+        // the sheet's options with their defaults, then the ones set on the online order; exactOptions keeps
+        // only those printed on the order (what the dealer chose), for the comparison
+        it.variants = (biqTemplateFor2(mappings, it.blindType, it.range) || []).map(v => [v[0], v[1]]);
+        it.exactOptions = [];
+        String(r._opts || '').split('|').forEach(pair => {
+            const i = pair.indexOf('='); if (i < 1) return;
+            const k = biqNorm(pair.slice(0, i)), v = biqNorm(pair.slice(i + 1)); if (!k) return;
+            it.exactOptions.push([k, v]);
+            const tk = it.variants.find(vv => biqLc(vv[0]) === biqLc(k));
+            biqSetVar(it.variants, tk ? tk[0] : k, v);
+        });
+        if (r._notes) it.notes = r._notes;
+        o.items.push(it);
+    });
+    const OV = biqOrderableSundryView(mappings);
+    p.sundries.forEach(s => {
+        const hit = biqResolveSundry(OV, s.code) || biqResolveSundry(OV, s.name) || { sundry: '', type: '' };
+        const disp = (mappings.sundryNames && mappings.sundryNames[String(hit.sundry)]) || s.name;
+        o.sundries.push({ code: '', qty: s.qty, type: String(hit.type == null ? '' : hit.type), sundry: String(hit.sundry == null ? '' : hit.sundry), notes: disp, _src: s.name + (s.code ? ' (' + s.code + ')' : ''), exactName: s.name });
+    });
+    return o;
+}
+
 // ---------- Blind Designs fillable form PDF (fields = {name: value} from pdf.js annotations) ----------
 export function biqParseBDFields(fields) {
     if (!('Company Name' in fields) && !('Order Number' in fields)) return null;

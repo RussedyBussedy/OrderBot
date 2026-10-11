@@ -528,12 +528,13 @@
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, addDoc, getDocs, query, where, orderBy, limit, startAfter, deleteDoc, doc, writeBatch, getDoc, setDoc, updateDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-        import { firebaseConfig, PROXY_API_URL, PROMPT_VERSION, EXTRACTION_MODEL, COMPARISON_MODEL, isGemini3 } from './js/config.js';
+        import { firebaseConfig, PROXY_API_URL, PROMPT_VERSION, EXTRACTION_MODEL, COMPARISON_MODEL, isGemini3, SECOND_READING } from './js/config.js';
         import { BLIND_TYPE_EXCLUSIONS_FOR_COLOUR_CHECK, BLIND_TYPES_REQUIRING_CONTROL_VALIDATION, BLIND_TYPES_REQUIRING_DUAL_CONTROL, CRITICAL_FIELDS, CACHE_TTL_MS } from './js/constants.js';
         // A namespace import: a browser still holding the previous biq-converter-ui.js (GitHub Pages lets it
         // cache files for 10 minutes) then simply has no converter reading instead of failing to load the page.
         import * as BiqUI from './js/biq-converter-ui.js';
-        import { selectRelevantFeedback, formatCorrectionExamples, BD_STANDARDS, NOT_SPECIFIED_RULES, RESULT_VALUES, describeConverterReading } from './js/comparison-context.js';
+        import { selectRelevantFeedback, formatCorrectionExamples, BD_STANDARDS, NOT_SPECIFIED_RULES, READING_RULES, RESULT_VALUES, describeConverterReading, SECOND_READING_PROMPT, secondReadingSchema } from './js/comparison-context.js';
+        import { applyDeterministicChecks, reconcileSecondReading, needsSecondReading } from './js/comparison-checks.js';
 
         // firebaseConfig, PROXY_API_URL, PROMPT_VERSION imported from ./js/config.js
 
@@ -903,12 +904,7 @@
             const CONCURRENCY = 2;
             async function processOne(index) {
                 try {
-                    let result = await processSingleComparison(comparisonPairs[index]);
-                    result = await reExtractLowConfidence(result, comparisonPairs[index].customerFiles, comparisonPairs[index].blindIQFiles);
-                    result = runPostAIValidations(result, fabricProperties, motorProperties, tubeProperties);
-                    result = applyConfidenceThresholds(result);
-                    const reasoningFlags = analyzeReasoningPatterns(result.lineItems);
-                    if (reasoningFlags.length > 0) result._reasoningFlags = reasoningFlags;
+                    const result = await runComparisonPipeline(comparisonPairs[index], { fabricProperties, motorProperties, tubeProperties });
                     await persistComparison(result); // save AFTER validations so history keeps the flags
                     summaryResultsCache[index] = { status: 'success', data: result };
                 } catch (error) {
@@ -933,12 +929,7 @@
                 batchStatus.textContent = `Retrying ${failedPairs.length} failed orders...`;
                 for (let i = 0; i < failedPairs.length; i++) {
                     try {
-                        let result = await processSingleComparison(failedPairs[i].pair);
-                        result = await reExtractLowConfidence(result, failedPairs[i].pair.customerFiles, failedPairs[i].pair.blindIQFiles);
-                        result = runPostAIValidations(result, fabricProperties, motorProperties, tubeProperties);
-                        result = applyConfidenceThresholds(result);
-                        const reasoningFlags = analyzeReasoningPatterns(result.lineItems);
-                        if (reasoningFlags.length > 0) result._reasoningFlags = reasoningFlags;
+                        const result = await runComparisonPipeline(failedPairs[i].pair, { fabricProperties, motorProperties, tubeProperties });
                         await persistComparison(result); // save AFTER validations so history keeps the flags
                         summaryResultsCache[failedPairs[i].originalIndex] = { status: 'success', data: result };
                     } catch (error) {
@@ -997,6 +988,7 @@ ${itemDescriptions}
 - Every item MUST have a valid alphabetical item identifier (A, B, C...).
 - Fill the reasoning field first with a side-by-side comparison of each field.
 - A field or specification the customer document does not mention at all is NOT_SPECIFIED (information), except Blind Type, Range, Colour, QTY, Width, Drop, Control 1 and Control 2: those are OMISSION, unless the value follows from what the customer did state (see the standards below), which is a MATCH.
+${READING_RULES}
 ${BD_STANDARDS}
 # OUTPUT
 Respond only with a JSON object containing a lineItems array.
@@ -1085,10 +1077,16 @@ Respond only with a JSON object containing a lineItems array.
 
                     FIELDS.forEach(f => {
                         if (!p2Item[f] || !orig[f]) return;
-                        if (p2Item[f].confidence > orig[f].confidence) {
-                            orig[f] = { ...p2Item[f], _fromPass2: true };
-                            mergedCount++;
+                        if (!(p2Item[f].confidence > orig[f].confidence)) return;
+                        // v2.4: a flag on one of Paul's critical fields is not cleared by a second look that agrees
+                        // with Blind IQ (agreeing with Blind IQ is how most missed mistakes looked); it stays, with
+                        // the second look beside it for the capturer.
+                        if (CRITICAL_FIELDS.includes(f) && (orig[f].result === 'MISMATCH' || orig[f].result === 'OMISSION') && p2Item[f].result === 'MATCH') {
+                            orig[f].pass2 = { customerValue: p2Item[f].customerValue, result: p2Item[f].result, confidence: p2Item[f].confidence };
+                            return;
                         }
+                        orig[f] = { ...p2Item[f], _fromPass2: true };
+                        mergedCount++;
                     });
 
                     if (p2Item.reasoning) {
@@ -1104,7 +1102,76 @@ Respond only with a JSON object containing a lineItems array.
             return data;
         }
 
-        async function processSingleComparison(pair) {
+        // The converter's own reading of every customer file it recognises (fixed parsers, never the AI).
+        async function converterReadingOf(customerFiles) {
+            let text = '';
+            for (const f of customerFiles) {
+                const reading = BiqUI.biqReadCustomerFile ? await BiqUI.biqReadCustomerFile(f) : null;
+                if (reading) text += describeConverterReading(reading, f.name);
+            }
+            return text;
+        }
+
+        // v2.4: a second reading of the customer document on its own. Pass 1 sees the customer's and Blind IQ's
+        // documents together, and the mistakes it missed were mostly customer values read as Blind IQ's. This call
+        // sees only the customer file(s); reconcileSecondReading (js/comparison-checks.js) flags a field where
+        // Pass 1 reported the customer value as exactly Blind IQ's and this reading clearly says otherwise.
+        async function secondReadingOf(customerFiles) {
+            const files = await Promise.all(customerFiles.map(fileToB64));
+            const parts = [{ text: SECOND_READING_PROMPT }];
+            for (const f of files) {
+                parts.push({ text: `\n--- START CUSTOMER FILE: ${f.name} ---` });
+                parts.push({ inlineData: { mimeType: f.type, data: f.data } });
+            }
+            const payload = {
+                contents: [{ role: "user", parts }],
+                generationConfig: { ...(isGemini3(COMPARISON_MODEL) ? {} : { temperature: 0.1 }), responseMimeType: "application/json", responseSchema: secondReadingSchema() }
+            };
+            let lastError;
+            for (let attempt = 1; attempt <= 2; attempt++) {
+                try {
+                    const resp = await fetch(PROXY_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: COMPARISON_MODEL, payload }) });
+                    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                    const j = await resp.json();
+                    const txt = j.candidates?.[0]?.content?.parts?.[0]?.text;
+                    if (!txt) throw new Error('no content');
+                    return JSON.parse(txt);
+                } catch (e) { lastError = e; await new Promise(r => setTimeout(r, 3000)); }
+            }
+            throw lastError;
+        }
+
+        // One comparison, from the documents to the report that is shown and saved (fresh runs and retries).
+        async function runComparisonPipeline(pair, props) {
+            const converterReading = await converterReadingOf(pair.customerFiles);
+            // the second reading runs alongside Pass 1, only for handwritten or unclear orders the converter does not
+            // read: a photo, a scanned PDF or handwriting on a PDF (needsSecondReading, js/comparison-checks.js).
+            // Typed orders are read once; the second reading costs about a third of a comparison.
+            const second = (SECOND_READING && !converterReading)
+                ? needsSecondReading(pair.customerFiles, typeof pdfjsLib !== 'undefined' ? pdfjsLib : null)
+                    .then(async need => need.needed ? { need, reading: await secondReadingOf(pair.customerFiles) } : null)
+                    .catch(e => { console.warn('[OrderBot] second reading skipped:', e && e.message); return null; })
+                : Promise.resolve(null);
+            let result = await processSingleComparison(pair, converterReading);
+            result = await reExtractLowConfidence(result, pair.customerFiles, pair.blindIQFiles);
+            const sr = await second;
+            if (sr && sr.reading) {
+                const reading = sr.reading;
+                const { changes } = reconcileSecondReading(result, reading);
+                result._secondReading = { lines: (reading.lines || []).length, flags: changes.length, why: sr.need.kind };
+            }
+            // formatting the AI reported as a difference: Blind IQ's 5 mm steps and shortened names, colour codes,
+            // QTY not given, the pin that comes with the chain side (js/comparison-checks.js)
+            const { changes: autoMatched } = applyDeterministicChecks(result, { catalogue: BiqUI.biqComparisonCatalogue ? BiqUI.biqComparisonCatalogue() : null });
+            if (autoMatched.length) result._autoMatched = autoMatched.length;
+            result = runPostAIValidations(result, props.fabricProperties, props.motorProperties, props.tubeProperties);
+            result = applyConfidenceThresholds(result);
+            const reasoningFlags = analyzeReasoningPatterns(result.lineItems);
+            if (reasoningFlags.length > 0) result._reasoningFlags = reasoningFlags;
+            return result;
+        }
+
+        async function processSingleComparison(pair, preparedConverterReading) {
             const { customerFiles, blindIQFiles } = pair;
             const _t = { start: performance.now() };
 
@@ -1144,11 +1211,8 @@ Respond only with a JSON object containing a lineItems array.
 
             // The converter's own reading of every customer file it recognises (fixed parsers, never the
             // AI): the line items in Blind IQ names plus its notes on values the customer didn't give.
-            let converterReading = '';
-            for (const f of customerFiles) {
-                const reading = BiqUI.biqReadCustomerFile ? await BiqUI.biqReadCustomerFile(f) : null;
-                if (reading) converterReading += describeConverterReading(reading, f.name);
-            }
+            // runComparisonPipeline prepares it (it also decides whether a second reading is needed).
+            const converterReading = preparedConverterReading !== undefined ? preparedConverterReading : await converterReadingOf(customerFiles);
 
             const systemPrompt = `
 # IDENTITY
@@ -1215,7 +1279,7 @@ Extract every mandatory field for every line item, even when the customer docume
 
 ### 2. Use visual cues to infer meaning
 - **Column headers** map to semantic fields even when the label differs (e.g., a column labelled "Height" is the drop; a wrapped multi-line row lays out Width on line 1 and Drop on line 3 — use column header positions, not reading order).
-- **Proximity** on sketches: numbers ABOVE a rectangle are widths; numbers BESIDE a rectangle are drops.
+- **Proximity** on sketches: numbers along the top or bottom edge of a rectangle (above it or under it) are widths; numbers along its left or right side are drops.
 - **Grouping**: section headers (room names, category labels, blank rows) apply to all items beneath them until the next header.
 - **Embedded numbers in text fields are NEVER dimensions**. If you see "Dahlia Bo Blush 2000 1830 2600 1950", the "2000" belongs to the colour name; 1830/2600/1950 are the dimensions.
 
@@ -1239,6 +1303,7 @@ Extract every mandatory field for every line item, even when the customer docume
 ### 5. Format-specific rules live in guidelines, not here
 The user maintains a collection of guidelines and per-cell corrections below that teach you about specific dealer formats, recurring mistakes, and domain conventions. Consult them. If a guideline contradicts these principles, the guideline wins.
 
+${READING_RULES}
 ${BD_STANDARDS}
 ${NOT_SPECIFIED_RULES}
 ${converterReading}
@@ -1696,6 +1761,7 @@ ${feedbackExamples}
 
         function renderReportTable(data) {
             const getIndicator = (result) => ({ 'MISMATCH': '🔴', 'OMISSION': '🟡', 'MATCH': '🟢', 'NOTE': '🔵', 'NOT_SPECIFIED': '⚪' }[result] || '');
+            const escapeHtml = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
             
             const renderCell = (field, fieldName, label) => {
                 const isMismatch = field && field.result === 'MISMATCH';
@@ -1734,6 +1800,15 @@ ${feedbackExamples}
                     textClasses += ' text-orange-700';
                     tooltip = `<div class="tooltip">Confidence: ${Math.round(field.confidence * 100)}%</div>`;
                     statusBadge = `<span class="status-badge bg-orange-50 text-orange-500">${Math.round(field.confidence * 100)}%</span>`;
+                }
+                // v2.4: the second reading of the customer document, a second look kept beside a flag, a rule match
+                if (field && field.secondReading) {
+                    statusBadge += '<span class="status-badge bg-red-100 text-red-600">2nd reading</span>';
+                    tooltip = `<div class="tooltip">Read on its own, the customer document gives ${escapeHtml(field.secondReading.value)}; the comparison had read ${escapeHtml(field.secondReading.firstReading || '(blank)')}, the same as Blind IQ. Check the customer document.</div>`;
+                } else if (field && field.pass2 && (isMismatch || isOmission)) {
+                    tooltip = `<div class="tooltip">A second look read ${escapeHtml(field.pass2.customerValue || '(blank)')} (${Math.round((field.pass2.confidence || 0) * 100)}%), the same as Blind IQ. Check the customer document.</div>`;
+                } else if (field && field.autoMatched && (field.result === 'MATCH' || field.result === 'NOTE')) {
+                    tooltip = `<div class="tooltip">By rule: ${escapeHtml(field.autoMatched)}${customerVal ? ' (customer: ' + escapeHtml(customerVal) + ')' : ''}</div>`;
                 }
 
                 return `

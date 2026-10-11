@@ -1174,9 +1174,11 @@ Respond only with a JSON object containing a lineItems array.
                 result._secondReading = { lines: (reading.lines || []).length, flags: changes.length, why: sr.need.kind };
             }
             // formatting the AI reported as a difference: Blind IQ's 5 mm steps and shortened names, colour codes,
-            // QTY not given, the pin that comes with the chain side (js/comparison-checks.js)
-            const { changes: autoMatched } = applyDeterministicChecks(result, { catalogue: BiqUI.biqComparisonCatalogue ? BiqUI.biqComparisonCatalogue() : null });
+            // QTY not given, the pin that comes with the chain side; and rules that know a value is wrong (a clip size
+            // on a Perfect Fit order against the Universal Frame) (js/comparison-checks.js)
+            const { changes: autoMatched, flags: ruleFlags } = applyDeterministicChecks(result, { catalogue: BiqUI.biqComparisonCatalogue ? BiqUI.biqComparisonCatalogue() : null });
             if (autoMatched.length) result._autoMatched = autoMatched.length;
+            if (ruleFlags && ruleFlags.length) result._ruleFlags = ruleFlags.length;
             result = runPostAIValidations(result, props.fabricProperties, props.motorProperties, props.tubeProperties);
             result = applyConfidenceThresholds(result);
             const reasoningFlags = analyzeReasoningPatterns(result.lineItems);
@@ -1823,6 +1825,9 @@ ${feedbackExamples}
                     tooltip = `<div class="tooltip">A second look read ${escapeHtml(field.pass2.customerValue || '(blank)')} (${Math.round((field.pass2.confidence || 0) * 100)}%), the same as Blind IQ. Check the customer document.</div>`;
                 } else if (field && field.autoMatched && (field.result === 'MATCH' || field.result === 'NOTE')) {
                     tooltip = `<div class="tooltip">By rule: ${escapeHtml(field.autoMatched)}${customerVal ? ' (customer: ' + escapeHtml(customerVal) + ')' : ''}</div>`;
+                } else if (field && field.ruleFlag && isMismatch) {
+                    const ai = field.aiCustomerValue !== undefined && String(field.aiCustomerValue) !== String(customerVal) ? ` The AI had read ${escapeHtml(field.aiCustomerValue || '(blank)')}.` : '';
+                    tooltip = `<div class="tooltip">By rule: ${escapeHtml(field.ruleFlag)} (customer: ${escapeHtml(customerVal || '(blank)')}).${ai}</div>`;
                 }
                 // a value taken from the customer's BlindIQ Online order (exact), with what the AI had read when it differed
                 if (field && field.exact && !field.secondReading) {
@@ -1936,6 +1941,9 @@ ${feedbackExamples}
                     let tooltip = '';
                     if (isNotSpecified) {
                         tooltip = `<div class="tooltip">Not on the customer's order</div>`;
+                    } else if (spec.specComparison.autoMatched && (spec.specComparison.result === 'MATCH' || spec.specComparison.result === 'NOTE')) {
+                        const cv = spec.specComparison.customerValue;
+                        tooltip = `<div class="tooltip">By rule: ${escapeHtml(spec.specComparison.autoMatched)}${cv ? ' (customer: ' + escapeHtml(cv) + ')' : ''}</div>`;
                     } else if (isLowConfidence && !isMismatch) {
                         tooltip = `<div class="tooltip">Confidence: ${Math.round(spec.specComparison.confidence * 100)}%</div>`;
                     }

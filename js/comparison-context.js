@@ -56,10 +56,11 @@ What Blind Designs supplies when the customer document does not say otherwise. B
 - Blind IQ range and colour names carry suffixes customers do not write: roll widths ("2050mm"), "@", "#", "^", "Fr", "/ Aventus 5%". Compare the name itself.
 - Sizes: Blind IQ keeps widths and drops in 5 mm steps (1203 → 1205, 1201 → 1200). A 1–2 mm difference that is exactly this rounding is a MATCH; say so in the reasoning. Shutters, Perfect Fit, outdoor and skylight blinds are made to the millimetre: there every difference counts.
 - Control drop: Blind IQ calculates it, usually 75 % of the drop for rollers, 66 % for venetians and Allusion, 80 % with a 1.5:1 control. A length the customer writes wins.
-- Valances: Blind IQ carries each valance as its own line (blind type Valance), so a valance order has more Blind IQ lines than customer lines and the item letters can differ (customer A with a valance can be Blind IQ A and B). Pair the lines by location, size and product; a letter difference caused only by the valance lines is a MATCH. On roller blinds, a valance whose style the customer does not name (just "valance", or only its colour, size or returns) is a Linear Valance, the usual roller valance; Half Round Valance, 70mm Cassette and the other valance ranges need the customer's wording.
+- Valances: Blind IQ carries each valance as its own line (blind type Valance), so a valance order has more Blind IQ lines than customer lines and the item letters can differ (customer A with a valance can be Blind IQ A and B). Pair the lines by location, size and product; a letter difference caused only by the valance lines is a MATCH. On roller blinds, a valance whose style the customer does not name (just "valance", or only its colour, size or returns) is a Linear Valance, the usual roller valance; Half Round Valance, 70mm Cassette and the other valance ranges need the customer's wording. A customer document (often a Blind IQ Online export or a dealer system) can instead carry the cassette or valance as an option on the blind's own line ("Sys 40 70mm Cassette=Black", "items A, B & C in one cassette"): pair Blind IQ's separate Valance line (range 70mm Cassette, Linear Valance, …) with that option and compare its colour and width. A different colour is a MISMATCH on the Blind IQ Valance line, not an OMISSION.
 - Valances, pelmets and curtain tracks have no drop: Blind IQ shows 0, which matches a customer document that gives only a width.
 - Roller System 40 / 55: hardware (Mech Colour) White unless stated; a stated cassette colour sets it (Silver cassette = Grey hardware). Bottom bar and cassette follow the hardware colour (Grey hardware = Silver bar). Roll Type Standard unless a reverse roll is asked for. A fitted cassette has Cassette End Cap = Full End Cap. No chain tidy unless asked. "System 40 1.5:1" is fitted only to blinds over about 4 kg.
-- Chain blinds have the chain on one side and a pin on the other (Lh Chain + Rh Pin, or Rh Chain + Lh Pin). Customers usually give only the control side ("R", "Right", "Rh chain"), which is the chain side; the pin on the other side comes with it, so a Blind IQ pin opposite the stated chain side is a MATCH, not an OMISSION. Two blinds sharing a bracket show Coupled or Intermediate on the shared side.
+- Chain blinds have the chain on one side and a pin on the other (Lh Chain + Rh Pin, or Rh Chain + Lh Pin). Customers usually give only the control side ("R", "Right", "Rh chain"), which is the chain side; the pin on the other side comes with it, so a Blind IQ pin opposite the stated chain side is a MATCH, not an OMISSION. Two blinds sharing a bracket show Coupled or Intermediate on the shared side. Customers also write the side as "RC" / "LC" (right or left control) or "L" / "R" in a control column.
+- Roller chains: the standard chain is a plastic chain matching the control colour (Mech Colour). Steel Ball Chain=Yes replaces it with a stainless steel ball chain. A colour given for the chain itself ("Black chain", "Chain: White", or White, Black, Grey or Anthracite in a control-colour column that offers Steel Ball Chain as one of its choices) means the plastic chain in that colour, so Steel Ball Chain=Yes is a MISMATCH. A mechanism colour on its own says nothing about the chain: when the customer does not mention the chain, Steel Ball Chain is NOT_SPECIFIED (it is often the dealer's standing choice).
 - Out of Warranty is ticked when a roller fabric is turned beyond its roll width where the fabric may only be turned out of warranty, or when a blind is over the selling limit: System 40 3200 x 3400, System 55 4000 x 4500, Vision 2200 x 2600, Allusion 3990 x 3000 or under 750 wide.
 - Venetians: under 600 mm wide Split controls, 600 mm and wider Grouped; 35mm Aluminium always Grouped. Valance returns: Reveal fix none, Face fix LH & RH. Retro on Standard slats has a matching aluminium valance and bottom bar ("Aluminium: <slat colour>").
 - Verticals (90 mm): track White unless stated. The Control (chain & cord) colour follows the track colour; a wand is Mono-command.
@@ -82,6 +83,60 @@ Result "NOT_SPECIFIED" means: the customer document does not mention this field 
 - Never use NOT_SPECIFIED for Blind Type, Range, Colour, QTY, Width, Drop, Control 1 or Control 2. When one of these is missing from the customer document, the result is OMISSION. A value that follows from what the customer did state is not missing: the pin opposite a stated chain side, and the Linear Valance for a roller blind's valance whose style is not named, are a MATCH.
 - MISMATCH: the customer document states a value and Blind IQ shows a different one. OMISSION: the customer asks for something Blind IQ does not have, or one of the fields above is missing.
 `;
+
+// ---------------------------------------------------------------- reading the customer document (v2.4)
+// The mistakes OrderBot missed (admin error cases and changes made after a check, July 2025 – October 2026)
+// were mostly customer values reported as exactly what Blind IQ showed: a handwritten 2720 read as Blind IQ's
+// 2700, "Opal" read as "Bronze", widths written under a sketch read as drops, a column header's legend
+// "(Steel Ball Chain)" taken as the row's value, a cassette colour given on the blind lines while Blind IQ
+// carries the cassette as its own line.
+export const READING_RULES = `
+# READING THE CUSTOMER DOCUMENT
+Most mistakes OrderBot has missed were customer values reported as whatever Blind IQ shows. Read the customer document on its own terms:
+- Read each customer value from the customer document itself before you look at Blind IQ's value for that field. customerValue is what the customer wrote, never Blind IQ's value copied across. When they are the same, say in the reasoning where on the customer document you read it (row and column, or the sketch).
+- Never let Blind IQ's value decide how you read an unclear handwritten mark. Digits that are easy to confuse: 5 and 8, 2 and 7, 4 and 6 (an open 4), 1 and 7, 0 and 6, 3 and 8. Compare the mark with the same writer's other digits on the page (other sizes, the phone and order numbers) and report the digit it matches. If it could still be either, give your best reading with confidence 0.5 or lower: a MATCH on an unclear mark never has a confidence above 0.5.
+- Sketches: the number along the top or bottom edge of a drawn window or box is its width, also when it is written under the box; the number along its left or right side is its drop. A size with "all" or "x3" beside it applies to every box in that group.
+- A value belongs to its own row. Carry it to other rows only where the customer marks it so: ditto marks, an arrow or line down the column, "same", "as above", "all".
+- Column headers: words in brackets or a list of choices in a header ("CONTROL COLOUR (Steel Ball Chain) (White/Black/Grey/Anthracite)", "Standard/Waterfall") show that column's options, not this row's value. Read the row's own cell; an empty cell is not specified.
+- A multiplier after a size or an item ("1350 x 2", "x2", "2 off", "pair") is a quantity, not a drop.
+- A customer document that only accepts a Blind Designs quote ("go ahead as per quote BDO669711", "1x double roller as per attached quote BDO659288") and gives no sizes has nothing to compare line by line: quote that wording in specialInstructions, leave the customer values empty and give the fields the result NOTE.
+`;
+
+// The second, customer-only reading (v2.4): the customer document without Blind IQ's, so nothing to lean on.
+export const SECOND_READING_PROMPT = `
+# TASK
+Read ONLY the customer order document(s) below and list every line exactly as the customer wrote it. There is no supplier document: do not guess what a supplier system would contain, and do not correct the customer.
+
+# RULES
+- One entry per blind, valance, pelmet, cassette, track, side channel or other product line, in the order they appear on the document (top to bottom; on sketches left to right). Skip prices, totals and blank rows.
+- width and drop: the millimetres as written, digits only. On a sketch the number along the top or bottom edge of a box is the width (also when it is written under the box) and the number along its left or right side is the drop. A size with "all" or "x3" beside it applies to every box in that group. A value carried down by ditto marks, an arrow, a line or "same" applies to those rows.
+- qty: the number of pieces. A multiplier after a size or item ("1350 x 2", "x2", "2 off", "pair") is the quantity. Leave it empty when the line gives none.
+- product, range, colour, control, fix, location: the customer's own words for that line, "" when the line does not give them. Words in brackets or a list of choices in a column header are that column's options, not the row's value.
+- Handwriting: compare an unclear digit with the same writer's other digits on the page (other sizes, phone and order numbers) and give the digit it matches. Give a confidence from 0 to 1 for the width, drop, qty and colour of every line: 0.9 or more only when the writing is unambiguous, 0.5 or less when a digit could be read two ways.
+- ref: the line's own label on the document (item letter or number, row number), "" if none.
+
+# OUTPUT
+Respond only with a JSON object with a "lines" array.
+`;
+
+export function secondReadingSchema() {
+    const S = { type: 'STRING' }, N = { type: 'NUMBER' };
+    return {
+        type: 'OBJECT',
+        properties: {
+            lines: {
+                type: 'ARRAY',
+                items: {
+                    type: 'OBJECT',
+                    properties: { ref: S, location: S, qty: S, width: S, drop: S, product: S, range: S, colour: S, control: S, fix: S, notes: S,
+                        qtyConfidence: N, widthConfidence: N, dropConfidence: N, colourConfidence: N },
+                    required: ['ref', 'location', 'qty', 'width', 'drop', 'product', 'colour', 'widthConfidence', 'dropConfidence']
+                }
+            }
+        },
+        required: ['lines']
+    };
+}
 
 // ---------------------------------------------------------------- converter reading
 // reading = { order, format } from biqReadCustomerFile (js/biq-converter-ui.js): the converter's

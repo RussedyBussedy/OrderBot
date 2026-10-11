@@ -20,7 +20,7 @@ import {
     biqParseBDFields, biqNormalizeBDForm,
     biqBuildExtractionPrompt, biqExtractionVocabulary, biqAiResultToOrder,
     biqCollectProblems, biqCollectWarnings, biqGenerateXML, biqPrettyXML, biqImportSafetyScan, biqOrderNumberForBiq,
-    biqToComparisonShape, biqExtractCheckResults
+    biqToComparisonShape, biqExtractCheckResults, biqCatalogueLookups
 } from './biq-converter.js';
 import { biqDetectForm, biqParseSpecForm, biqElementGridOptions } from './biq-form-specs.js';
 import { isGemini3 } from './config.js';
@@ -311,6 +311,9 @@ function biqRunRulePipeline(o) {
 // the Blind IQ names and the notes on values the customer didn't give. Never calls the AI and never
 // touches the Drawings tab. Returns { order, format } or null (unknown layout, scan, image, or the
 // mappings not loaded yet), defaults = per line, the Blind IQ sheet's default option values.
+// The comparison's rule checks use the live catalogue (js/comparison-checks.js): null until the mappings load.
+export function biqComparisonCatalogue() { return MAPS ? biqCatalogueLookups(MAPS) : null; }
+
 export async function biqReadCustomerFile(f) {
     if (!MAPS || !f || !f.name) return null;
     const ext = f.name.split('.').pop().toLowerCase();

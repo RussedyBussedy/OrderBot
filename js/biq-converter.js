@@ -743,6 +743,29 @@ export function biqRangesWithColour(mappings, blindTypeName, colour) {
     });
     return [...new Set(out)];
 }
+// For the comparison's rule checks (js/comparison-checks.js, prompt v2.4): a blind type's live, orderable
+// ranges (not "Discontinued"), and the live ranges that sell a colour, by name. Same data as the converter's
+// range-from-colour inference, so a range the customer left out but the colour decides is not flagged.
+export function biqCatalogueLookups(mappings) {
+    if (!mappings) return null;
+    const rn = mappings.rangeNames || {}, rbt = mappings.rangeBlindType || {}, hid = mappings.rangeHidden || {}, vsi = mappings.variantSheetIndex || {};
+    const hasSheets = Object.keys(vsi).length > 0;
+    const live = name => !/^discontinued\b/i.test(biqNorm(name || ''));
+    return {
+        liveRanges(blindTypeName) {
+            const bt = biqResolve(mappings, 'blindTypes', blindTypeName);
+            if (!bt.known) return null;
+            return Object.keys(rbt).filter(rid => String(rbt[rid]) === String(bt.id) && +hid[rid] !== 1 && (!hasSheets || vsi[bt.id + '|' + rid] != null))
+                .map(rid => rn[rid]).filter(n => n && live(n));
+        },
+        rangesForColour(blindTypeName, colour) {
+            const bt = biqResolve(mappings, 'blindTypes', blindTypeName);
+            if (!bt.known || !biqLc(colour)) return null;
+            return biqRangesWithColour(mappings, blindTypeName, colour).map(id => rn[String(id)]).filter(n => n && live(n));
+        }
+    };
+}
+
 // A missing or unknown range is taken from the colour when exactly ONE live range of the blind
 // type carries that colour (84% of Roller System 40 colour names belong to a single range):
 // "Solar" on a Roller System 40 is Moscow Fr — capturers made that fix 12 times on 30 Sep. When

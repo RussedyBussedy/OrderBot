@@ -2292,8 +2292,28 @@ function biqBdpoSheetKey(spec, k, v) {
     const target = BIQ_BDPO_KEY_SYNONYMS[sq(k)];
     const o = target && spec.find(s => sq(s.k) === sq(target));
     if (!o) return null;
-    const val = (o.values || []).length ? (o.values || []).find(x => biqLc(x) === biqLc(v)) : v;
+    const vals = o.values || [];
+    // Galaxy's Finish Logic printed "Top Board=90mm" where TBD's prints "Yes 90mm": the one sheet value that ends with
+    // the printed one (L17338 F and H, stored as Top Board (for Face Fix)=Yes 90mm).
+    const tail = vals.filter(x => biqLc(x).endsWith(' ' + biqLc(v)));
+    const val = vals.length ? (vals.find(x => biqLc(x) === biqLc(v)) || (tail.length === 1 ? tail[0] : null)) : v;
     return val ? { k: o.k, v: val } : null;
+}
+// Finish Logic's own names for three BlindIQ ranges, each as Sharon stored it: Valance "Linear 108mm" / "Linear 65mm"
+// = Linear Valance (the BDO670751 customer BDO670751 B, D, N, P, R; Galaxy L17338 F, H), Roman Panel "Roman Panel Headrail
+// Price" = Roman Headrail (customer 5 A, customer 6 B–E; Finish Logic's own Order Message says it has no BlindIQ ID
+// for it), Curtain Somfy "Ripple Glydea 60kg" = Glydea 220v 60 Ripple (the BDO669378 customer A and AA). Only when the
+// printed range doesn't resolve for the blind type and BlindIQ's range does.
+const BIQ_BDPO_RANGES = [
+    [14, /^linear\s*(65|108)\s*mm$/i, 'Linear Valance'],
+    [2, /^roman\s*panel\s*headrail(\s*price)?$/i, 'Roman Headrail'],
+    [20, /^ripple\s*glydea\s*60\s*kg$/i, 'Glydea 220v 60 Ripple'],
+];
+function biqBdpoRange(mappings, it) {
+    if (!biqNorm(it.range) || biqResolveRange(mappings, it.blindType, it.range).known) return null;
+    const bt = biqResolve(mappings, 'blindTypes', it.blindType);
+    const hit = bt.known && BIQ_BDPO_RANGES.find(([id, re]) => id === bt.id && re.test(biqNorm(it.range)));
+    return hit && biqResolveRange(mappings, it.blindType, hit[2]).known ? hit[2] : null;
 }
 export function biqNormalizeBdPo(mappings, p, fileName) {
     const o = biqBlankOrder();
@@ -2317,6 +2337,10 @@ export function biqNormalizeBdPo(mappings, p, fileName) {
         it.blindType = r['Blind Type'] || ''; it.range = r['Range'] || ''; it.colour = r['Colour'] || '';
         it.width = r['Width'] || ''; it.drop = r['Drop'] || '';
         it.fix = r['Fix'] || '';
+        // Finish Logic's name for a BlindIQ range (biqBdpoRange), noted "read as" for the capturer after the dealer's own
+        // note (below); BlindIQ doesn't get it.
+        const printedRange = it.range, flRange = biqBdpoRange(mappings, it);
+        if (flRange) it.range = flRange;
         // Curtain/valance drops print as 0 and the narrow "0" can land on the Cont. Drop
         // anchor — a missing drop on a no-drop product IS 0.
         if (!it.drop) { const rt = biqResolve(mappings, 'blindTypes', it.blindType); if (rt.known && [13, 17, 18, 20, 14, 27].includes(rt.id)) it.drop = '0'; }
@@ -2338,7 +2362,8 @@ export function biqNormalizeBdPo(mappings, p, fileName) {
           it._cdAuto = !biqStatedControlLength(cd); }
         it.variants = biqTemplateFor2(mappings, it.blindType, it.range);
         if (r._notes) it.notes = r._notes;
-        biqBdpoChainNote(it);
+        biqBdpoChainNote(it);                  // reads the dealer's note alone
+        if (flRange) addNote('Range "' + printedRange + '" read as ' + flRange);
         const spec = biqVariantSpec(mappings, it.blindType, it.range) || [];
         pairs.forEach(([k, v]) => {
             // BlindIQ runs its own runner / tape-length / stack calculations; importing TBD's

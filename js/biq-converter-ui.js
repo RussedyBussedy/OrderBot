@@ -20,7 +20,7 @@ import {
     biqParseBDFields, biqNormalizeBDForm,
     biqBuildExtractionPrompt, biqExtractionVocabulary, biqAiResultToOrder,
     biqCollectProblems, biqCollectWarnings, biqGenerateXML, biqPrettyXML, biqImportSafetyScan, biqOrderNumberForBiq,
-    biqToComparisonShape, biqExtractCheckResults, biqCatalogueLookups
+    biqToComparisonShape, biqExtractCheckResults, biqCatalogueLookups, biqCatalogueHasId
 } from './biq-converter.js';
 import { biqDetectForm, biqParseSpecForm, biqElementGridOptions } from './biq-form-specs.js';
 // Parsers added after Oct 2026 are looked up at run time: a browser still holding the previous biq-converter.js for a
@@ -578,6 +578,7 @@ function renderItems() {
                 + (order.items.length > 1 ? ` <button class="biq-btn-sm" data-biq-copyopts="${i}" title="Copy these options to other lines">⧉ Copy options to other lines</button>` : '')
                 + (i + 1 < order.items.length ? ` <label class="text-slate-500" style="margin-left:10px;font-size:11px" title="Share a bracket with the next line (sets controls + Yes/No automatically)">⚯ Bracket w/ next: <select class="biq-in" style="width:auto;padding:2px 4px" data-biq-bracket="${i}"><option value=""${!it._bracketWith ? ' selected' : ''}>none</option><option value="intermediate"${it._bracketWith === 'intermediate' ? ' selected' : ''}>Intermediate</option><option value="coupled"${it._bracketWith === 'coupled' ? ' selected' : ''}>Coupled</option></select></label>` : '')
                 + ` <input class="biq-in" style="margin-left:10px;width:280px" placeholder="Item notes (COI_Order_Notes)" value="${escH(it.notes)}" data-biq-item="${i}" data-biq-field="notes">`
+                + (() => { const sent = exportItemNotes(order, it); return biqNorm(sent) === biqNorm(it.notes) ? '' : ` <span class="text-slate-500" style="font-size:11px" title="Notes BlindIQ already holds as options, controls or sundry lines are left out of the import">BlindIQ gets: ${sent ? escH(sent) : 'no note'}</span>`; })()
                 + `</div></td></tr>`;
         }
     });
@@ -677,6 +678,10 @@ function renderChecks() {
 }
 
 // ---------------------------------------------------------------- preview + xml
+// The notes the XML carries (TBD purchase orders leave out what BlindIQ already holds — biqExportItemNotes);
+// looked up at run time so a browser still holding the previous biq-converter.js shows the notes as before.
+const exportOrderNotes = o => (BiqConv.biqExportOrderNotes ? BiqConv.biqExportOrderNotes(o) : o.notes);
+const exportItemNotes = (o, it) => (BiqConv.biqExportItemNotes ? BiqConv.biqExportItemNotes(MAPS, o, it) : it.notes);
 function renderPreview() {
     const custR = biqResolveCustomer(MAPS, order.customer);
     const cust = { known: custR.known };
@@ -692,7 +697,7 @@ function renderPreview() {
           <div>End client: ${escH(order.client || '—')}</div></div>
         <div class="p-2 border-r border-slate-100"><div class="uppercase text-slate-400 font-semibold mb-1" style="font-size:10px">Order</div>
           <div>Ref: <b>${escH(biqOrderNumberForBiq(order.orderNumber) || '—')}</b> · IQ ID ${escH(order.orderId)}</div>
-          <div>Order date: ${fmt(order.orderDate)}</div><div>Required: <b>${fmt(order.requiredDate)}</b></div><div>Notes: ${escH(order.notes || '—')}</div></div>
+          <div>Order date: ${fmt(order.orderDate)}</div><div>Required: <b>${fmt(order.requiredDate)}</b></div><div>Notes: ${escH(exportOrderNotes(order) || '—')}</div></div>
         <div class="p-2"><div class="uppercase text-slate-400 font-semibold mb-1" style="font-size:10px">Delivery</div>
           <div>Method: ${escH(order.deliveryMethod || '—')}${warn('deliveryMethods', order.deliveryMethod)}</div>
           <div>Packing: ${escH(order.packingType || '—')}${warn('packingTypes', order.packingType)}</div>
@@ -709,7 +714,8 @@ function renderPreview() {
           <td class="px-1">${escH(it.width)}</td><td class="px-1">${escH(it.drop)}</td><td class="px-1">${escH(it.controlDrop)}</td>
           <td class="px-1">${escH(it.control1)}${warn('control1', it.control1)}</td><td class="px-1">${escH(it.control2)}${warn('control2', it.control2)}</td><td class="px-1">${escH(it.fix)}${warn('fixes', it.fix)}</td></tr>`;
         const vs = biqEmittedVariants(MAPS, it).map(v => escH(v[0]) + '=' + escH(v[1])).join(' | ');
-        if (vs || it.notes) h += `<tr class="bg-slate-50"><td></td><td colspan="11" class="px-1 pb-1 text-slate-500" style="font-size:10.5px">${vs}${it.notes ? ' <i>— ' + escH(it.notes) + '</i>' : ''}</td></tr>`;
+        const note = exportItemNotes(order, it);                  // the notes BlindIQ gets
+        if (vs || note) h += `<tr class="bg-slate-50"><td></td><td colspan="11" class="px-1 pb-1 text-slate-500" style="font-size:10.5px">${vs}${note ? ' <i>— ' + escH(note) + '</i>' : ''}</td></tr>`;
     });
     h += '</table>';
     if (order.sundries.length) {
@@ -987,10 +993,20 @@ async function saveAssign() {
     } else {
         const v = val('biq-as-id');
         if (!/^-?\d+$/.test(v)) { D.showToast('The BlindIQ ID must be a number.', 'error'); return; }
+        const bad = biqIdProblem(cat, v);
+        if (bad) { D.showToast(bad, 'error'); return; }
         MAPS[cat][biqLc(name)] = +v;
     }
     await saveCategory(cat);
     hide('biq-assignmodal'); assignCtx = null; refresh();
+}
+// A typed ID must be a real BlindIQ record (biqCatalogueHasId). The box took any number, and placeholders
+// such as "wood 50" -> 8888 reached BlindIQ as a blank range on 61 wood venetian lines (Aug-Oct 2026).
+// Nothing is checked until the catalogue refresh has been imported.
+const BIQ_ID_LABELS = { ranges: 'range', rangesScoped: 'range', blindTypes: 'blind type', fixes: 'fix', control1: 'control', control2: 'control', colours: 'colour' };
+function biqIdProblem(cat, id) {
+    if (biqCatalogueHasId(MAPS, cat, id) !== false) return '';
+    return 'BlindIQ has no ' + (BIQ_ID_LABELS[cat] || cat) + ' with ID ' + id + ' — pick it from the list. (A new BlindIQ item needs a fresh catalogue import first.)';
 }
 function openFabricSplit(i) {
     const it = order.items[i]; if (!it) return;
@@ -1060,7 +1076,8 @@ function renderMapBody() {
         const shown = entries.filter(([k, v]) => !filter || k.includes(filter) || biqLc(typeof v === 'object' ? JSON.stringify(v) : String(v)).includes(filter)).slice(0, 150);
         h += `<input id="biq-mapsearch" data-cat="${cat}" class="biq-in w-full mb-2" placeholder="Search ${entries.length} entries…" value="${escH(filter)}">`;
         h += '<table class="biq-maptable"><tr><th>Name on order forms' + (cat === 'colours' ? ' (range|colour)' : '') + '</th><th>BlindIQ ID</th><th></th></tr>';
-        for (const [k, v] of shown) h += `<tr><td>${escH(k)}</td><td>${escH(typeof v === 'object' ? JSON.stringify(v) : v)}</td><td><button class="biq-btn-sm biq-btn-danger" data-biq-delmap='${escH(JSON.stringify([cat, k]))}'>✕</button></td></tr>`;
+        // an ID BlindIQ doesn't have is marked so an admin can delete it (search finds it by the ID, e.g. 8888)
+        for (const [k, v] of shown) h += `<tr><td>${escH(k)}</td><td>${escH(typeof v === 'object' ? JSON.stringify(v) : v)}${typeof v !== 'object' && biqCatalogueHasId(MAPS, cat, v) === false ? ' <span class="biq-tag biq-tag-miss" title="This ID is not in BlindIQ\'s catalogue: the converter ignores this mapping. Delete it.">not in BlindIQ</span>' : ''}</td><td><button class="biq-btn-sm biq-btn-danger" data-biq-delmap='${escH(JSON.stringify([cat, k]))}'>✕</button></td></tr>`;
         if (entries.length > shown.length && !filter) h += `<tr><td colspan="3" class="text-slate-400">…${entries.length - shown.length} more — use search</td></tr>`;
         h += `<tr><td><input id="biq-nm-name" class="biq-in w-full" placeholder="new name"></td><td><input id="biq-nm-id" class="biq-in" style="width:80px" placeholder="ID"></td><td><button class="biq-btn-sm biq-btn-on" id="biq-addmap">Add</button></td></tr></table>`;
         h += `<div class="text-xs text-slate-500 mt-3 mb-1"><b>Bulk paste</b> — one per line: "Name, ID" / "Name = ID" / tab-separated (straight from Excel):</div>
@@ -1176,9 +1193,9 @@ function bindEvents() {
         else if (t.dataset.biqFscut) { fsCtx.cut = +t.dataset.biqFscut; renderFsWords(); }
         else if (t.dataset.biqMaptab) { mapTab = t.dataset.biqMaptab; renderMapTabs(); renderMapBody(); }
         else if (t.dataset.biqDelmap) { const [c, k] = JSON.parse(t.dataset.biqDelmap); delete MAPS[c][k]; saveCategory(c); renderMapBody(); if (order) refresh(); }
-        else if (t.id === 'biq-addmap') { const n = biqLc($('biq-nm-name').value), v = val('biq-nm-id'); if (!n || !/^-?\d+$/.test(v)) { D.showToast('Enter a name and numeric ID.', 'error'); return; } MAPS[mapTab][n] = +v; saveCategory(mapTab); renderMapBody(); if (order) refresh(); }
+        else if (t.id === 'biq-addmap') { const n = biqLc($('biq-nm-name').value), v = val('biq-nm-id'); if (!n || !/^-?\d+$/.test(v)) { D.showToast('Enter a name and numeric ID.', 'error'); return; } const bad = biqIdProblem(mapTab, v); if (bad) { D.showToast(bad, 'error'); return; } MAPS[mapTab][n] = +v; saveCategory(mapTab); renderMapBody(); if (order) refresh(); }
         else if (t.id === 'biq-addcust') { const n = biqLc($('biq-nm-name').value), c = val('biq-nm-c'), a = val('biq-nm-a'), o = val('biq-nm-o'); if (!n || !/^\d+$/.test(c) || !/^\d+$/.test(a) || !/^\d+$/.test(o)) { D.showToast('Enter a name and three numeric IDs.', 'error'); return; } MAPS.customers[n] = { customer: +c, address: +a, operator: +o }; saveCategory('customers'); renderMapBody(); if (order) refresh(); }
-        else if (t.id === 'biq-bulkbtn') { let n = 0; $('biq-bulk').value.split(/\n/).forEach(l => { const m = l.match(/^\s*(.+?)\s*[,=\t]\s*(-?\d+)\s*$/); if (m) { MAPS[mapTab][biqLc(m[1])] = +m[2]; n++; } }); saveCategory(mapTab); renderMapBody(); if (order) refresh(); D.showToast(n + ' mapping(s) imported.', 'success'); }
+        else if (t.id === 'biq-bulkbtn') { let n = 0; const skipped = []; $('biq-bulk').value.split(/\n/).forEach(l => { const m = l.match(/^\s*(.+?)\s*[,=\t]\s*(-?\d+)\s*$/); if (m) { if (biqIdProblem(mapTab, m[2])) { skipped.push(m[1] + ' = ' + m[2]); return; } MAPS[mapTab][biqLc(m[1])] = +m[2]; n++; } }); saveCategory(mapTab); renderMapBody(); if (order) refresh(); D.showToast(n + ' mapping(s) imported.' + (skipped.length ? ' Skipped ' + skipped.length + ' with an ID BlindIQ does not have: ' + skipped.slice(0, 5).join('; ') + (skipped.length > 5 ? ' …' : '') : ''), skipped.length ? 'error' : 'success'); }
     });
     // modal buttons
     $('biq-as-save').addEventListener('click', saveAssign);

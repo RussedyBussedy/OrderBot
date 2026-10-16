@@ -2326,6 +2326,7 @@ export function biqNormalizeBdPo(mappings, p, fileName) {
     o.notes = [(p.meta.measured ? 'FINAL MEASURED' : ''), (p.meta.operator ? 'Captured by ' + p.meta.operator : '')].filter(Boolean).join(' | ');
     const canon = s => biqLc(s).replace(/[^a-z0-9]/g, '');
     const hw = [];                             // options hardware, for the sundry-line union below
+    const poCrank = new Map();                 // the lines the PO gives a crank or handle option, and its value (Crank Handle None)
     p.rows.forEach(r => {
         const it = biqBlankItem(r['Item'] || '');
         it._poLine = true;                     // read from the PO (the Blind Total check, biqCollectProblems)
@@ -2366,6 +2367,7 @@ export function biqNormalizeBdPo(mappings, p, fileName) {
         if (flRange) addNote('Range "' + printedRange + '" read as ' + flRange);
         const spec = biqVariantSpec(mappings, it.blindType, it.range) || [];
         pairs.forEach(([k, v]) => {
+            if (/crank|handle/i.test(k)) poCrank.set(it, v);   // any crank or handle option: never Crank Handle None (below)
             // BlindIQ runs its own runner / tape-length / stack calculations; importing TBD's
             // conflicts with them and the notes were pure delete-work for the capturer
             // (Russel→Dean 13 Aug, Sharon 20 Aug). Never imported, never a note.
@@ -2451,6 +2453,23 @@ export function biqNormalizeBdPo(mappings, p, fileName) {
         }
         o.items.push(it);
     });
+    // Finish Logic prints the crank handle on the one blind it comes with ("Crank Handle=1200mm White" on customer 1's a). BlindIQ asks for Crank Handle on every Free Hang line, and Sharon stored None on all 5 lines that
+    // had none (customer 1 b, customer 2 b and c, customer 3 b, customer 4 a). Only a line the
+    // PO gives no crank or handle option at all: a handle its sheet doesn't offer, or under another name ("Crank=1200mm
+    // White"), stays a problem for the capturer. A crank-driven line on a PO with no handle anywhere, on a line or under
+    // SUNDRIES (customer 4), also gets an amber heads-up (biqCollectWarnings).
+    {
+        const handleOf = it => biqNorm((it.variants.find(v => /^crank\s*handle$/i.test(biqNorm(v[0]))) || [])[1]);
+        const anyHandle = [...poCrank.values()].some(v => !/^none$/i.test(biqNorm(v))) || p.sundries.some(s => /crank\s*handle/i.test(s.name));
+        o.items.forEach(it => {
+            if (poCrank.has(it) || handleOf(it)) return;
+            const ch = (biqVariantSpec(mappings, it.blindType, it.range) || []).find(s => /^crank\s*handle$/i.test(s.k));
+            const none = ch && ch.req && (ch.values || []).find(x => /^none$/i.test(x));
+            if (!none) return;
+            biqSetVar(it.variants, ch.k, none);
+            if (!anyHandle && /crank/i.test([it.control1, it.control2].concat(it.variants.map(v => v[1])).join(' '))) it._crankNone = true;
+        });
+    }
     const OV = biqOrderableSundryView(mappings);           // active, non-component sundries only
     p.sundries.forEach(s => {
         const hit = biqResolveSundry(OV, s.code) || biqResolveSundry(OV, s.name) || { sundry: '', type: '' };
@@ -4280,6 +4299,9 @@ export function biqCollectWarnings(mappings, order) {
         if (it._drRollCheck && biqIsDoubleRoller(mappings, it)) out.push({ t: w + it._drRollCheck + '.', sev: 'warn' });
         if (it._drMotorCheck && it._drMotorAuto && biqLc(it[it._drMotorAuto.field]) === biqLc(it._drMotorAuto.value))
             out.push({ t: w + it._drMotorCheck + '.', sev: 'warn' });
+        // A Finish Logic PO's crank blind left with Crank Handle None while no blind on the PO has a handle (biqNormalizeBdPo)
+        if (it._crankNone && /^none$/i.test(biqNorm((it.variants.find(v => /^crank\s*handle$/i.test(biqNorm(v[0]))) || [])[1])))
+            out.push({ t: w + 'Crank Handle set to None: no blind on this purchase order comes with a crank handle — confirm.', sev: 'warn' });
     });
     return out;
 }

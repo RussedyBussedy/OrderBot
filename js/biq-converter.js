@@ -2132,6 +2132,7 @@ export function biqParseBdPo(textItems) {
     m = fullText.match(/Operator\s+(\S+)/); if (m) meta.operator = biqNorm(m[1]);
     m = fullText.match(/Blinds\s*[—-]\s*(.+)/); if (m) meta.product = biqNorm(m[1]);
     if (/FINAL MEASURED/i.test(fullText)) meta.measured = true;   // the measured-status watermark
+    m = fullText.match(/Blind Total:\s*([\d,]+\.\d{2})/i); if (m) meta.blindTotal = +m[1].replace(/,/g, '');   // lines + sundries
     const hl = lines.find(l => { const t = l.parts.map(p => p.s.trim()); return t[0] === 'Item' && t.some(s => /^Locatio/.test(s)) && t.some(s => /^Price/.test(s)); });
     if (!hl) return null;
     // Anchor the canonical column list onto the header's word positions (two columns are both
@@ -2177,7 +2178,7 @@ export function biqParseBdPo(textItems) {
         if (inSundries) {
             if (/^Item\s+QTY\s+Sundry/i.test(joined)) continue;
             const sm = joined.match(/^([a-z]{1,2})\s+(\d+)\s+(.+?)\s+([A-Z]{2,5}\d{3,6})\s+(.+?)\s+([\d,]+\.\d{2})$/);
-            if (sm) sundries.push({ item: sm[1], qty: sm[2], typeName: biqNorm(sm[3]), code: sm[4], name: biqNorm(sm[5]) });
+            if (sm) sundries.push({ item: sm[1], qty: sm[2], typeName: biqNorm(sm[3]), code: sm[4], name: biqNorm(sm[5]), price: +sm[6].replace(/,/g, '') });
             continue;
         }
         // An item row (a letter under Item, a quantity under QTY) always starts a new blind. Finish Logic has
@@ -2278,6 +2279,7 @@ export function biqNormalizeBdPo(mappings, p) {
     const hw = [];                             // options hardware, for the sundry-line union below
     p.rows.forEach(r => {
         const it = biqBlankItem(r['Item'] || '');
+        it._poLine = true;                     // read from the PO (the Blind Total check, biqCollectProblems)
         // The notes the converter writes from TBD's options (not the dealer's own note): only these can be
         // left out of the XML as information BlindIQ already holds (biqBdpoNoteIsInfo).
         const gen = [];
@@ -2419,6 +2421,17 @@ export function biqNormalizeBdPo(mappings, p) {
         o.sundries.push({ code: '', qty: String(h.qty), type: hit && hit.type != null ? String(hit.type) : '', sundry: id, notes: disp, _src: h.name + (h.code ? ' (' + h.code + ')' : '') });
         if (id) seenIds.add(id);
     });
+    // The PO's own arithmetic: its blind lines and SUNDRIES add up to its "Blind Total" (110 of the 111 Finish Logic POs
+    // of 24 Aug – 16 Oct 2026 to the cent, one a cent out). A difference means a line wasn't read, or something else was
+    // read as one (Task437134, 16 Oct: R2,114 short while its last two Roman Panels weren't read) — biqCollectProblems
+    // says so while the lines and sundries are still the ones read here (_poLine, _poSundry).
+    const money = s => { const a = String(s || '').match(/\d{1,3}(?:,\d{3})+\.\d{2}|\d+\.\d{2}/g); return a ? a.reduce((t, x) => t + +x.replace(/,/g, ''), 0) : null; };
+    const prices = p.rows.map(r => money(r['Price']));
+    if (typeof (p.meta || {}).blindTotal === 'number' && prices.length && prices.every(x => x != null) && (p.sundries || []).every(s => typeof s.price === 'number')) {
+        o._bdpoTotal = { stated: p.meta.blindTotal, rows: p.rows.length, sundries: o.sundries.length,
+            read: Math.round((prices.reduce((t, x) => t + x, 0) + p.sundries.reduce((t, s) => t + s.price, 0)) * 100) / 100 };
+        o.sundries.forEach(s => { s._poSundry = true; });
+    }
     return o;
 }
 
@@ -4229,6 +4242,17 @@ export function biqCollectProblems(mappings, order) {
     if (order.packingType && !pk.known) probs.push({ t: 'Packing type "' + order.packingType + '" not mapped.', cat: 'packingTypes', name: order.packingType });
     if (!order.packingType) probs.push({ t: 'Packing type is empty — BlindIQ\'s importer needs a number here (e.g. Boxed / Standard).' });
     if (!order.items.length && !order.sundries.length) probs.push({ t: 'Order has no items and no sundries.' });
+    // A Finish Logic PO whose lines don't add up to its own Blind Total (biqNormalizeBdPo): something wasn't read, or was
+    // read as a line. Shown until the capturer adds or deletes a line or a sundry.
+    {
+        const tot = order.source === 'bdpo' && order._bdpoTotal;
+        if (tot && Math.abs(tot.stated - tot.read) > 1 && order.items.length === tot.rows && order.items.every(it => it._poLine)
+            && order.sundries.length === tot.sundries && order.sundries.every(s => s._poSundry)) {
+            const rand = n => 'R' + Number(n).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+            probs.push({ t: 'The purchase order\'s Blind Total is ' + rand(tot.stated) + ' but the lines and sundries read from it add up to ' + rand(tot.read)
+                + ' — a blind or sundry may not have been read: compare the order with the PDF.' });
+        }
+    }
     order.items.forEach((it, i) => {
         const w = 'Item ' + (it.code || i + 1) + ': ';
         if (!biqResolve(mappings, 'blindTypes', it.blindType).known) probs.push({ t: w + 'blind type "' + (it.blindType || '?') + '" not mapped.', cat: 'blindTypes', name: it.blindType });

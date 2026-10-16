@@ -2395,6 +2395,10 @@ export function biqNormalizeBdPo(mappings, p, fileName) {
             }
             if (/^joined to$/i.test(k)) {
                 addNote('Joined To ' + v);
+                // the partner, below: "Blind 4 (Coupled)", or an item letter with its kind ("g (Coupled)", as asked of
+                // Finish Logic); a bare "N" or "Y" names no one
+                const jm = v.match(/\bblind\s*(\d+)/i), jl = !jm && v.match(/^([a-z]{1,2})\s*\(\s*(coupled|intermediate)\b/i);
+                if (jm || jl) it._bdpoJoin = { n: jm ? +jm[1] : 0, code: jl ? jl[1] : '', kind: /coupl/i.test(v) ? 'coupled' : /interm/i.test(v) ? 'intermediate' : '' };
                 if (/coupled/i.test(v)) { const bo = spec.find(s => canon(s.k) === 'coupledbracket'); if (bo) biqSetVar(it.variants, bo.k, 'Yes'); }
                 return;
             }
@@ -2453,6 +2457,26 @@ export function biqNormalizeBdPo(mappings, p, fileName) {
         }
         o.items.push(it);
     });
+    // "Joined To=Blind N" counts Finish Logic's blinds, not the PO's item letters. With a valance line after each blind,
+    // the BDO670751 customer's e ("Joined To=Blind 4") and g ("Blind 3") are the 3rd and 4th blinds, and BlindIQ holds them as
+    // one coupled pair (BDO670751 E Rh Coupled with the Coupled Bracket, G Lh Coupled); next to each other they had never
+    // been paired. The partner is the Nth line that isn't a valance when it points back (or names a coupled side itself),
+    // else the Nth line on the same terms, or the line with the item letter given; biqApplyBracketPairs then pairs the two
+    // wherever they sit.
+    {
+        const isValance = it => { const r = biqResolve(mappings, 'blindTypes', it.blindType); return r.known && [14, 27].includes(r.id); };
+        const blinds = o.items.filter(it => !isValance(it));
+        // the lines a reference can name (none when it names no line on the PO, which then counts as no reference)
+        const named = x => { const j = x._bdpoJoin; return !j ? [] : j.code ? o.items.filter(y => y !== x && biqLc(y.code) === biqLc(j.code)) : [blinds[j.n - 1], o.items[j.n - 1]].filter(y => y && y !== x); };
+        const fits = (it, cand) => !!cand && cand !== it
+            && (named(cand).length ? named(cand).includes(it) : /coupl/i.test((cand.control1 || '') + ' ' + (cand.control2 || '')));
+        o.items.forEach(it => {
+            const j = it._bdpoJoin;
+            if (!j || j.kind !== 'coupled') return;
+            const partner = named(it).find(c => fits(it, c));
+            if (partner) it._joinWith = partner.code;
+        });
+    }
     // Finish Logic prints the crank handle on the one blind it comes with ("Crank Handle=1200mm White" on customer 1's a). BlindIQ asks for Crank Handle on every Free Hang line, and Sharon stored None on all 5 lines that
     // had none (customer 1 b, customer 2 b and c, customer 3 b, customer 4 a). Only a line the
     // PO gives no crank or handle option at all: a handle its sheet doesn't offer, or under another name ("Crank=1200mm
@@ -6389,6 +6413,24 @@ export function biqApplyBracketPairs(mappings, order) {
             if (m === 'coupled') biqApplyCoupledPair(mappings, order, i, i + 1); else biqApplyIntermediatePair(mappings, order, i, i + 1);
             consumed.add(i); consumed.add(i + 1);
         }
+    }
+    // Partners the order itself names (a Finish Logic PO's "Joined To", biqNormalizeBdPo), wherever they sit, when both
+    // lines state sides that meet (one Rh Coupled, the other Lh Coupled): the bracket is costed on the Rh Coupled blind
+    // and no control is touched (biqApplyCoupledPair), so a valance line between them no longer leaves both "no matching
+    // pair". Anything else (a side not stated, two Rh Coupled, a capturer who has taken the coupling out) is left to the
+    // pairing below, exactly as before.
+    const coupledSide = it => { const l = /coupl/i.test(it.control1 || ''), r = /coupl/i.test(it.control2 || ''); return l === r ? '' : l ? 'L' : 'R'; };
+    for (let i = 0; i < items.length; i++) {
+        const w = biqLc(biqNorm(items[i]._joinWith));
+        if (!w || consumed.has(i)) continue;
+        const j = items.findIndex((x, k) => k !== i && !consumed.has(k) && biqLc(biqNorm(x.code)) === w
+            && (!x._joinWith || biqLc(biqNorm(x._joinWith)) === biqLc(biqNorm(items[i].code))));
+        if (j < 0) continue;
+        const si = coupledSide(items[i]), sj = coupledSide(items[j]);
+        if (!si || !sj || si === sj) continue;
+        const [l, r] = si === 'R' ? [i, j] : [j, i];
+        biqApplyCoupledPair(mappings, order, l, r);
+        consumed.add(l); consumed.add(r);
     }
     biqPairIntermediatePartners(mappings, order).forEach(x => consumed.add(x));
     let i = 0;                                                     // auto: pair consecutive flagged lines

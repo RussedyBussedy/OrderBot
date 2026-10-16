@@ -263,7 +263,7 @@ async function biqDetectPdf(buf, fileName) {
         const m = biqParseMatheoItems(textItems);
         if (m && m.rows.length) return { order: biqNormalizeMatheo(MAPS, m), format: 'Mathéo order sheet', sourceText };
         const bp = biqParseBdPo(textItems);
-        if (bp && bp.rows.length) return { order: biqNormalizeBdPo(MAPS, bp), format: 'Blind Designs online purchase order', sourceText };
+        if (bp && bp.rows.length) return { order: biqNormalizeBdPo(MAPS, bp, fileName), format: 'Blind Designs online purchase order', sourceText };
         // a dealer's BlindIQ Online order, printed in Blind IQ's own names (exact: the comparison takes its values as they are)
         const bo = BiqConv.biqParseBiqOnline ? BiqConv.biqParseBiqOnline(textItems) : null;
         if (bo && bo.rows.length) return { order: BiqConv.biqNormalizeBiqOnline(MAPS, bo), format: 'BlindIQ Online order', sourceText };

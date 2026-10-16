@@ -2111,11 +2111,34 @@ export function biqNormalizeMatheo(mappings, p) {
     return o;
 }
 
-// ---------- TBD "Online Purchase Order" (BD-style PO, 2026-08 format) ----------
-// Total Blind Design's reworked PO prints BlindIQ's own vocabulary: exact blind type /
-// range / colour / control names, sheet option keys as "K=V|K=V" lines under each item,
-// and a SUNDRIES section with real ZIQ stock codes (Russel 2026-08-11). Deterministic
-// parse — no AI needed.
+// ---------- Finish Logic "Online Purchase Order" (TBD's BD-style PO, 2026-08 format) ----------
+// Finish Logic is Dean Hart's quoting app (Total Blind Designs). Its PO prints BlindIQ's own vocabulary:
+// exact blind type / range / colour / control names, sheet option keys as "K=V|K=V" lines under each item,
+// and a SUNDRIES section with real ZIQ stock codes (Russel 2026-08-11). Deterministic parse — no AI needed.
+// The layout decides, never the dealer's name: TBD has sent these since August 2026, Galaxy Blinds from
+// 25 Aug to 20 Sep (all 9 went to the AI reader while this parser asked for "Total Blind Design"), and Finish
+// Logic is being offered to Blind Designs' other dealers. BlindIQ Online's own export prints the same banner
+// but carries an "IQ Link ID" label and has Blind Designs as its From: that one is biqParseBiqOnline's.
+// The dealer the PO comes from: the From block's Name. The From column runs from the "From" label to the "To" label
+// beside it; the Name label's value sits on its line, up to the next label (a Finish Logic PO prints it on the
+// label's line, a BlindIQ Online export a point higher). No Name in the From column: no dealer.
+const BIQ_BDPO_LABELS = /^(name|email|address|quote ref|operator|order date|required date|measure date|tel|fax|cell)$/i;
+function biqBdpoDealer(items) {
+    const is = (i, re) => re.test(biqNorm(i.s));
+    const from = items.filter(i => is(i, /^from$/i)).sort((a, b) => b.y - a.y)[0];
+    if (!from) return '';
+    const to = items.find(i => is(i, /^to$/i) && Math.abs(i.y - from.y) <= 3 && i.x > from.x);
+    const right = to ? to.x - 5 : Infinity;
+    const name = items.filter(i => is(i, /^name$/i) && Math.abs(i.x - from.x) <= 12 && i.y < from.y && from.y - i.y <= 40)
+        .sort((a, b) => b.y - a.y)[0];
+    if (!name) return '';
+    const out = [];
+    for (const i of items.filter(i => i !== name && Math.abs(i.y - name.y) <= 3 && i.x > name.x && i.x < right).sort((a, b) => a.x - b.x)) {
+        if (is(i, BIQ_BDPO_LABELS)) break;
+        out.push(biqNorm(i.s));
+    }
+    return biqNorm(out.join(' '));
+}
 export function biqParseBdPo(textItems) {
     const items = textItems.filter(i => i.s.trim());
     const lineMap = {};
@@ -2123,8 +2146,11 @@ export function biqParseBdPo(textItems) {
     const ys = Object.keys(lineMap).map(Number).sort((a, b) => b - a);
     const lines = ys.map(y => ({ y, parts: lineMap[y].sort((a, b) => a.x - b.x) }));
     const fullText = lines.map(l => l.parts.map(p => p.s).join(' ')).join('\n');
-    if (!/Online Purchase Order:/i.test(fullText) || !/Total Blind Design/i.test(fullText)) return null;
-    const meta = { customer: 'Total Blind Design' };
+    // the export's "IQ Link ID" is a label of its own; the words in a note or a Finish Logic message don't count
+    if (!/Online Purchase Order:/i.test(fullText) || items.some(i => /^IQ Link ID$/i.test(biqNorm(i.s)))) return null;
+    const dealer = biqBdpoDealer(items);
+    if (/^blind designs\b/i.test(dealer)) return null;              // Blind Designs as the sender: not a dealer's PO
+    const meta = { customer: dealer || (/Total Blind Design/i.test(fullText) ? 'Total Blind Design' : '') };
     let m = fullText.match(/Quote Ref\s+(.+?)\s+Operator\b/); if (m) meta.orderNumber = biqNorm(m[1]);
     if (!meta.orderNumber) { m = fullText.match(/Online Purchase Order:\s*(.+)/); if (m) meta.orderNumber = biqNorm(m[1]); }
     m = fullText.match(/Order Date\s+(\d{4}-\d{2}-\d{2})/); if (m) meta.orderDate = m[1];
@@ -2269,10 +2295,13 @@ function biqBdpoSheetKey(spec, k, v) {
     const val = (o.values || []).length ? (o.values || []).find(x => biqLc(x) === biqLc(v)) : v;
     return val ? { k: o.k, v: val } : null;
 }
-export function biqNormalizeBdPo(mappings, p) {
+export function biqNormalizeBdPo(mappings, p, fileName) {
     const o = biqBlankOrder();
-    o.source = 'bdpo'; o.sourceDesc = 'BD online purchase order (Total Blind Design)';
-    o.customer = p.meta.customer; o.orderNumber = p.meta.orderNumber || '';
+    o.source = 'bdpo'; o.sourceDesc = 'Finish Logic purchase order (' + (p.meta.customer || 'dealer not named') + ')';
+    // The dealer's job number when the file name starts with one (BIQ_BDPO_JOB_RE), else the Quote Ref. TBD's files
+    // ("BD_PO_BD_Indoor_<client>_<date>.pdf") carry none, so its orders keep the Quote Ref.
+    const job = (String(fileName || '').match(BIQ_BDPO_JOB_RE) || [])[1];
+    o.customer = p.meta.customer; o.orderNumber = (job ? job.toUpperCase() : '') || p.meta.orderNumber || '';
     o.orderDate = biqParseDate(p.meta.orderDate); o.requiredDate = biqParseDate(p.meta.requiredDate);
     o.notes = [(p.meta.measured ? 'FINAL MEASURED' : ''), (p.meta.operator ? 'Captured by ' + p.meta.operator : '')].filter(Boolean).join(' | ');
     const canon = s => biqLc(s).replace(/[^a-z0-9]/g, '');
@@ -3284,6 +3313,11 @@ export function biqJobNumberFromFileName(fileName) {
     const m = base.match(/^([A-Za-z]{1,4}-?\d{4,8})\b/);
     return m ? m[1].toUpperCase() : '';
 }
+// A Finish Logic PO's job number (biqNormalizeBdPo), by the dealers' own patterns only: Galaxy Blinds names its POs
+// "H17314 [client].pdf", and all 9 of its Finish Logic orders were stored under a number starting with it (H17314[client],
+// L17233[client], H17264). A scanner's "Scan0001", Blind Designs' own "BDO670751" or a date is no dealer's job number.
+// Add a dealer's pattern here when one sends its POs named by job number.
+const BIQ_BDPO_JOB_RE = /^([LH]\d{5})(?!\d)/i;
 export function biqNormalizeTbd(mappings, p, fileName) {
     const o = biqBlankOrder();
     o.source = 'tbd';

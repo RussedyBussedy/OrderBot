@@ -2180,19 +2180,26 @@ export function biqParseBdPo(textItems) {
             if (sm) sundries.push({ item: sm[1], qty: sm[2], typeName: biqNorm(sm[3]), code: sm[4], name: biqNorm(sm[5]) });
             continue;
         }
+        // An item row (a letter under Item, a quantity under QTY) always starts a new blind. Finish Logic has
+        // started printing its own warning straight after a line's options, without the closing "|"
+        // ("…|For Blind=Roman Dining windows | width 2455mm past Blind Designs' 2400mm headrail grid — confirm
+        // price"), and the unterminated run below then read the next blinds as option text: TBD's Task437134
+        // curtain-track PO (16 Oct 2026, Task437134) came through with 2 of its 4 Roman Panels and no warning.
+        const parts = lines[li].parts, first = parts[0];
+        const itemRow = /^[a-z]{1,2}$/.test(first.s.trim()) && first.x < cols[1].x && parts.length > 1
+            && /^\d{1,3}$/.test(parts[1].s.trim()) && parts[1].x >= cols[1].x - 15 && parts[1].x < cols[2].x;
         // "K=V|K=V|" option lines (and their wraps) belong to the item above, never to columns.
         // A wrap can break mid-value ("Remote=One Touch" / "Dual Remote 16 Channel White
         // (ZIQ40100)|") — while the collected options don't yet end on "|", the next line is
-        // still the same option run, whatever it looks like.
-        if (cur && (/=[^|]*\|/.test(joined) || /^\([A-Z]{2,5}\d{3,6}\)\|/.test(joined)
+        // still the same option run, unless it is an item row.
+        if (cur && !itemRow && (/=[^|]*\|/.test(joined) || /^\([A-Z]{2,5}\d{3,6}\)\|/.test(joined)
             || (cur._opts && !/\|\s*$/.test(cur._opts)))) {
             const nm = joined.match(/^(.*?)\s*\bNotes:\s*(.*)$/i);
             cur._opts = (cur._opts ? cur._opts + ' ' : '') + (nm ? nm[1] : joined);
             if (nm) { cur._notes = biqNorm(nm[2]); inNotes = true; }
             continue;
         }
-        const first = lines[li].parts[0];
-        if (/^[a-z]{1,2}$/.test(first.s.trim()) && first.x < cols[1].x) { cur = {}; inNotes = false; rows.push(cur); lines[li].parts.forEach(p => assign(cur, p)); continue; }
+        if (/^[a-z]{1,2}$/.test(first.s.trim()) && first.x < cols[1].x) { cur = {}; inNotes = false; rows.push(cur); parts.forEach(p => assign(cur, p)); continue; }
         if (cur && inNotes) { cur._notes = biqNorm((cur._notes || '') + ' ' + joined); continue; }
         if (cur) lines[li].parts.forEach(p => assign(cur, p));
     }
@@ -2291,6 +2298,9 @@ export function biqNormalizeBdPo(mappings, p) {
             const i = pair.indexOf('=');
             return i < 1 ? null : [biqNorm(pair.slice(0, i)), biqNorm(pair.slice(i + 1))];
         }).filter(kv => kv && kv[0] && kv[1]);
+        // Finish Logic's own remarks among the options (no "=": "width 2455mm past Blind Designs' 2400mm headrail grid —
+        // confirm price") are a heads-up for the capturer: kept on the line, never sent to BlindIQ (biqBdpoNoteIsInfo).
+        const remarks = String(r._opts || '').split('|').map(biqNorm).filter(s => s && !s.includes('='));
         const drb = biqBdpoDoubleRoller(mappings, it, pairs);
         { const cd = biqNorm(r['Cont. Drop'] || '');
           it.controlDrop = biqComputeControlDropV2(mappings, biqStatedControlLength(cd), it.drop, it.blindType, it.range);
@@ -2369,6 +2379,7 @@ export function biqNormalizeBdPo(mappings, p) {
             else if (alt) biqSetVar(it.variants, alt.k, alt.v);
             else addNote(k + ': ' + v);   // computed specs (Stack Size, Fullness…) inform the factory
         });
+        remarks.forEach(t => addNote('Finish Logic: ' + t));
         it._bdpoGen = gen;
         if (/coupled/i.test(c1 + ' ' + c2)) {
             const bo = spec.find(s => canon(s.k) === 'coupledbracket');
@@ -4408,6 +4419,7 @@ export function biqBdpoNoteIsInfo(mappings, it, f) {
     if (BIQ_BDPO_RULE_NOTES.some(re => re.test(f))) return true;
     if (biqBdpoChainOnly(it, f)) return true;
     if (!(it._bdpoGen || []).some(g => biqLc(biqNorm(g)) === biqLc(f))) return false;
+    if (/^finish logic:/i.test(f)) return true;                     // Finish Logic's own heads-up ("… confirm price")
     if (/^joined to\b/i.test(f)) return true;                       // the Coupled Bracket option / Lh-Rh Coupled controls
     const kv = f.match(/^([^:]{1,48}):\s*(.+)$/);
     if (!kv) return false;

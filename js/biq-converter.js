@@ -4390,7 +4390,17 @@ export function biqCollectProblems(mappings, order) {
         // offer imports as the wrong fabric ("129 White" — a Retro Venetian colour — went in on
         // all 48 Blockout blinds of one order on 25 Jul 2026 and was fixed by hand).
         if (rc.known && rc.onRange === false) {
-            if (!rangeCols.length) probs.push({ t: w + 'range "' + it.range + '" has no colours in BlindIQ — "' + it.colour + '" belongs in the options or the item notes.' });
+            if (!rangeCols.length) {
+                // A Finish Logic PO prints the track colour on a motorised curtain track (Curtain Somfy: Movelite, Glydea),
+                // whose range carries no colours and whose sheet has no Colour option. BlindIQ takes it as the item colour,
+                // and Sharon kept White on all 9 such TBD lines (the BDO669378 customer A and AA; a second curtain customer A–C, and A, B,
+                // BA, C keyed again by hand). White only, as stored: another colour would import as whichever BlindIQ
+                // colour has that name (Black is 75, a venetian and roller colour), so it stays the capturer's call, as do
+                // other curtain tracks.
+                const fl = order.source === 'bdpo' && /^white$/i.test(biqNorm(it.colour))
+                    && (() => { const r = biqResolve(mappings, 'blindTypes', it.blindType); return r.known && r.id === 20; })();
+                if (!fl) probs.push({ t: w + 'range "' + it.range + '" has no colours in BlindIQ — "' + it.colour + '" belongs in the options or the item notes.' });
+            }
             else {
                 const cn = mappings.colourNames || {};
                 const names = rangeCols.map(id => cn[String(id)]).filter(Boolean);

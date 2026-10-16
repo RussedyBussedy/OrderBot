@@ -148,7 +148,7 @@ A Perfect Fit blind sits in its own frame, clipped into the window's beading on 
 
 ### Quarterly review (from January 2027)
 
-Russel asked for a quarterly review of OrderBot and the converter. A scheduled task ("OrderBot quarterly review", Tuesdays in January, April, July and October at 12:51 SAST, on Russel's computer) reviews the quarter just ended the way the October 2026 review did: OrderBot's first checks joined with what changed on the BlindIQ order afterwards, admin errors and remakes, the customer documents of the misses, the converter's imports against the stored orders, catalogue and Sales Resource changes. It writes `Document Converter/OrderBot reviews/<year>-Q<n>.md` and the proposed changes as patches with tests in `<year>-Q<n>-changes/`; it never pushes to main or changes the live site, and a quarter whose report exists is skipped (the October 2026 review is `2026-Q3.md`). The regression tests are `orderbot-tests.zip` in that folder, not in this repository (their fixtures are business data): unzip it, `REPO=<this clone> ./setup.sh`, `bash run-all.sh`; baseline 1054 passed with 25 known old failures. Its `analysis-tools/` keeps the October 2026 scripts and the method.
+Russel asked for a quarterly review of OrderBot and the converter. A scheduled task ("OrderBot quarterly review", Tuesdays in January, April, July and October at 12:51 SAST, on Russel's computer) reviews the quarter just ended the way the October 2026 review did: OrderBot's first checks joined with what changed on the BlindIQ order afterwards, admin errors and remakes, the customer documents of the misses, the converter's imports against the stored orders, catalogue and Sales Resource changes. It writes `Document Converter/OrderBot reviews/<year>-Q<n>.md` and the proposed changes as patches with tests in `<year>-Q<n>-changes/`; it never pushes to main or changes the live site, and a quarter whose report exists is skipped (the October 2026 review is `2026-Q3.md`). The regression tests are `orderbot-tests.zip` in that folder, not in this repository (their fixtures are business data): unzip it, `REPO=<this clone> ./setup.sh`, `bash run-all.sh`; baseline 1250 passed with the 25 known old failures (15 Oct 2026, with the wood venetian, TBD notes and double roller changes; the zip's README keeps the history). Its `analysis-tools/` keeps the October 2026 scripts and the method.
 
 ## Critical Rules for Future Changes
 
@@ -281,6 +281,120 @@ Source: the Sales Resource `_AI-Index` (Blind / Shutter Price Lists July 2026, R
 - **Control drop fallback**: a line whose range doesn't resolve uses the formula every live range of its type shares (`biqTypeFormula`; Allusion and venetians 66 %), else 75 %; outdoor types 0.
 
 Left out: the Double Roller 2500 × 2600 limit and the wood venetian "thick line" are documented, but no stored order follows them (0 of 12 and 0 of 41 lines marked); Zip X drops over 3000 mm are marked on 7 of 10 lines, but the brochure (3000) and the price list (3800) disagree. No change needed: Chain Tidy is already No unless asked; Steel Ball Chain has no documented rule (a dealer habit); the black chain on Anthracite 1.5:1 blinds is a factory substitution BlindIQ doesn't record. Open with Russel: shutter tilt above 1800 mm (Grouped when a middle rail splits the rod? grouped max 1800 or 2100?), Mathéo Smart Rail with Grey hardware, venetians exactly 600 mm wide, one crank handle per order, vertical chain colour on Anodised / Anthracite tracks. Measured on the same 2,380 items: item fully correct 68.9% → 73.2% (strict 58.3% → 61.9%), options 76.2% → 80.8%, control drop 96.3% → 97.2%; documents without an item-level problem 487 → 509 of 685; 96 items newly fully right, none broken. Tests: `biq-warranty.test.mjs`, `biq-documented-rules.test.mjs` in the review package.
+
+## Converter: wood and retro venetians (Oct 2026)
+
+Venne's feedback on Doornpoort Blinds 2656/2026 (BDO672621, a handwritten Element order form read by the AI, 13 Oct 2026): "lists the wooden valance as a separate item and does not pick up Classic". The AI read the handwriting correctly; the converter's mapping was wrong. With the same reading, main reproduces that day's import XML line for line: range 8888, control drop 765 (75 %), "Val Size=No" on every blind and a separate Valance line per blind. BlindIQ stored Classic, 673 (66 %), Val Size = width + 15 and no Valance lines.
+
+- **IDs that aren't BlindIQ records are ignored** (`biqCatalogueHasId`, using the catalogue refresh's own id tables: `rangeBlindType`, `blindTypeNames`, `fixNames`, `controlNames`, `colourNames`). The mapping manager's "BlindIQ ID" box accepted any number. On 14 Oct 2026 the live `orderbot_biq_mappings` held placeholders: ranges "wood 50" -> 8888, "bd urban shutter" -> 8888, "cotton white" -> 7777, "" -> 5555; blind type "designer - group i" -> 8888.
+  - "Wood 50" -> 8888 went out on 61 wood venetian lines of 19 converted orders between 15 Aug and 13 Oct, and every one of those lines was stored as Classic.
+  - `biqResolveRange` and `biqResolve` (blind types, fixes, controls) skip such an id and try the next way of reading the wording, and return it as `bogus`.
+  - `biqCollectWarnings` names each bad mapping once per order, so an admin can delete it.
+  - The mapping manager marks these entries "not in BlindIQ" and refuses a typed ID BlindIQ doesn't have (assign box, Add row, bulk paste).
+  - Nothing is checked until the catalogue refresh is imported. A brand-new BlindIQ item therefore needs a fresh catalogue import before it can be mapped by ID.
+- **Wood venetian range from the slat wording** (`biqWoodRangeWording`), for Wood Venetian types only:
+  - "Wood 50", "50mm Wood", "Wood", "Wooden", "Basswood", "Timber" (with words such as venetian / 50mm / std / classic) -> Classic.
+  - "Wood Alloy" -> Wood Alloy Std Classic.
+  - Woodgrain, faux, PVC and aluminium wording is left for the capturer.
+  - This is TBD's rule (`BIQ_TBD_WOOD_RANGES`) applied to every layout. It runs before the global name map, unless the global map holds a real range of the same type for the wording (a deliberate mapping wins).
+  - A wood venetian's control drop then follows Classic's [drop]*0.66.
+- **The valance stays on the blind** (`biqFoldVenetianLine`, used by `biqStageInlineValances` and `biqExpandValances`). Wood and retro venetians carry their valance as their own options: Val Size (the valance width, free text) and Val Returns.
+  - In 2026 orders, 7,631 of 7,635 wood venetian lines and 2,385 of 2,386 retro lines have a Val Size. The 131 wood venetian Valance lines (58 orders) were valances ordered on their own.
+  - The dealer's wording is moved onto the blind's keys:
+    - "Valance Size/Width/Length=Std" (or "Standard (15mm wider…)", a tick) -> Std;
+    - a number -> that number;
+    - "No" -> No;
+    - returns "N" -> None, "LR" -> LH & RH;
+    - Mitre -> Mitre Val LH / RH;
+    - "Std" type and colour are consumed;
+    - anything else goes to the notes.
+  - It never becomes a separate Valance line. That had happened on 36 lines of 8 converted orders between 15 Aug and 13 Oct, plus TBD and Blind Guys staging.
+  - Valance-only rows keep their own line.
+- **Val Size default** (`biqVenetianValSize`, in `biqApplyOptionDefaults`):
+  - When the order gives no Val Size, or "Std", it is the blind width + 15 mm. The BD order form prints "Valance Size (Std=width+15mm)", and 70 % of 2026 wood venetian valances (reveal and face alike) and 61–80 % of retro ones are exactly that.
+  - The note says "Val Size Std = blind width + 15 mm", or "Val Size not on the order — blind width + 15 mm (standard): confirm".
+  - Before this, the generic "free-text required -> No" default put "Val Size=No" (no valance) on 260 of 440 converted wood venetian lines between 15 Aug and 13 Oct. Capturers set every one by hand. That default now skips Val Size on these blinds.
+  - These values are kept as they are:
+    - a stated width (digits only, "1215mm" -> 1215);
+    - a stated "No" (`_valSizeStated`: BD form, AI "Val Size" / "Valance Size", Blind Guys and TBD staging);
+    - a retro venetian with Remove Valance = Yes.
+  - The value is decided once per line. An automatic value follows a later change of the width, and a capturer's own value stays.
+  - A stated width is put in BlindIQ's 5 mm steps, like the blind's own sizes (`biqRoundSizes`: ...1/...2 down, ...3/...4 up, noted). Every Val Size on the 2,053 wood and 743 retro venetian lines ordered since August 2026 is on a 5 mm step, and capturers rounded the Blind Guys sheets' 579 / 1508 / 1458.
+- `BIQ_VALUE_SYNONYMS`: "N" -> None, "LR" / "L&R" -> LH & RH (the BD form's Valance Returns column), "Std" -> Standard.
+- **Replay** of 49 typed customer documents (Blind Guys EWV/WAV sheets, BD POs, Mathéo, Lifestyle, CNBW), covering 226 venetian lines converted 17 Aug – 13 Oct, against what BlindIQ stored:
+  - Val Size matched on 178 lines before and 221 after; no other field changed.
+  - The 5 Val Size lines still off are the sheet's own figures: a valance shared by two blinds (2440 on a 1450 + 955 window, 1040 over a 455 + 460 pair) and one 2800 the capturer changed to 915.
+  - Doornpoort 2656 and 2653, from the AI reading: 0 of 143 fields differ from BlindIQ (44 differed before), and no extra lines.
+- Not changed:
+  - The AI's own reading. On 2653/2026, "Chateaux White" was written across two rows and read as blank + "White".
+  - The comparison's `BD_STANDARDS`, which still describes valances as separate Blind IQ lines (true for rollers). Telling it that venetians carry Val Size on the blind would be a prompt change (`PROMPT_VERSION`).
+- Tests: `biq-wood-venetian.test.mjs` (58 checks) in `orderbot-tests.zip`. `biq-retired` now flags another type's range with "Basswood Traditional", because "Basswood Classic" is wood-slat wording.
+
+## Converter: TBD purchase orders — notes and hand-keyed options (Oct 2026)
+
+Russel, after talking to the capturers and Paul (14 Oct 2026): Total Blind Designs' converted orders arrive with a lot of superfluous notes. The 109 TBD orders converted from 12 Aug to 14 Oct 2026 (all Sharon's) were compared with what BlindIQ holds now: she deleted the imported order note on all 108 that had one, 276 of 278 line notes and all 49 sundry notes, and keyed several TBD options by hand. Everything below applies to TBD's "Online Purchase Order" PDFs only (`biqParseBdPo` / `biqNormalizeBdPo`, source `bdpo`); every other source behaves exactly as before.
+
+- **Notes are filtered when the XML is written**, never on the order: `biqExportOrderNotes`, `biqExportItemNotes` (rules in `biqBdpoNoteIsInfo`) and `biqExportSundryNotes` feed `biqGenerateXML`; the in-app BlindIQ import preview and the printed preview use the order and item notes (sundry names still show there as the description). The order keeps every note, so the editor and the comparison (`describeConverterReading`) still see the motor linkage, TBD's options and the converter's checks; the item notes box shows "BlindIQ gets: …" when the two differ (looked up via `BiqConv` at run time).
+  - The key rules apply only to notes the converter wrote from TBD's options (`it._bdpoGen`, filled by `biqNormalizeBdPo`): the dealer's own note and anything typed into the notes box always go, except a chain length that is now the control drop.
+  - Left out: "Captured by …" and "FINAL MEASURED"; motor / adaptor / remote / charger notes (sundry lines; a "Not BD Supply" motor is the line's Lh/Rh Motor plus its adaptor kit); Joined To; TBD's copies of what the line holds, compared by value (Cassette, Fabric Insert, Colour, Cassette Fix, Stack, Control, Fullness, Mech Colour, For Blind naming the line's own location, word for word, any "Key: Value" equal to an option on the line); the converter's checked notes ("read as", "taken from colour … — confirm", "(confirm stock)", "Size in 5mm steps" — Sharon kept the converter's value on all 21); a resolved sundry's own name.
+  - Kept: the dealer's own line notes, TBD options BlindIQ has no place for (tight sizes, Float Weights, Chain Tidy on a double roller, side / bottom channels, Carriage), the Out of Warranty reason (Sharon re-typed it as "PLEASE TURN FABRIC OUT OF WARRANTY." on BDO669420 D), anything typed into the notes, and the name of a sundry that didn't resolve.
+- **Options Sharon keyed by hand** (`biqNormalizeBdPo` and its helpers): double rollers (`biqBdpoDoubleRoller`: the blockout family's range 734 / 611 / 917, no item colour, Blockout Fabric "<Block-out Range> <colour 1>", View Fabric "<Screen Range> <colour 2>", Mech Colour → Cassette Colour); three TBD option names (`biqBdpoSheetKey`, an allow-list: Top Board → Top Board (for Face Fix), 1 x Custom Angle Bend → 1 X Custom Angle Bend (need template), Magnetic Hold Down → Hold Downs Magnetic; only a value the sheet offers); a valance with a top board is Face fixed (5,933 of 6,185 stored); Motor Side → Control 1 Lh/Rh Motor on a curtain track whose controls name no motor yet (677 of 756 Curtain Somfy lines); a dealer note that says nothing but a chain length → the control drop on a chain-driven line (`biqBdpoChainNote`, 300–6000 mm; "Chain must be 1m off the floor" changes nothing); Cassette Fix fills an empty Fix, and a line still without a fix on a range that takes one is a problem ("fix is empty on the order").
+- **Prices never land in Fix**: a money amount right of the Fix column is the price. Five-figure outdoor prices start more than 12 pt left of the "Price" header and came out as "Reveal 24,642.00" on 14 outdoor lines.
+- Replayed over the 97 PDFs: order notes 95 → 0, line notes on 133 of 446 lines → 22, sundry notes 54 → 1; 33 values now import as Sharon stored them and none that was right before changes. Tests: `new-tests/biq-bdpo-notes.test.mjs` and `new-tests/ui-bdpo-notes.test.mjs` in `orderbot-tests.zip`.
+
+## Converter: double rollers (Oct 2026)
+
+Russel (14 Oct 2026): the capturers say double rollers are generally a problem on the converter. None of the 86 double rollers converted from 26 Jun to 13 Oct 2026 came through right: the range was Roller System 40's or blank on 61, both fabrics were missing on 49, and 58 had a single "Lh Chain" / "Lh Motor" (4.7 fields changed per blind). Project doc `orderbot-converter-double-rollers-2026-10`, items 1–8. Item 9, an exact parser for Blind Guys' UBL XML, is still to do.
+
+- **How BlindIQ holds one** (type 28): one blind with two fabrics, the options Blockout Fabric and View Fabric. Its three ranges carry no colours; they are the price groups of the blockout fabric:
+  - 611: Blockout, Duo Block, Surface Block, Edge Block;
+  - 734: Texblock, Urban Block, Linen Block;
+  - 917: Moscow FR, Didsbury Block.
+
+  Each Blockout Fabric value is on exactly one range's sheet (`variantSheetIndex` 28|611 / 28|734 / 28|917); all three take the same View Fabrics. Controls: Lh/Rh Double Chain, Double Motor, Double Chain/Motor, Double Dual, Pin.
+- **Fabrics and range** (`biqApplyDoubleRollers`, at the end of `biqReSplitFabrics`, every layout):
+  - Both fabrics are found wherever the order wrote them: the options; texts a layout's parser kept (`_drTexts`, e.g. Mathéo's remark); "Texblock + 5 Screen" with "Mink / Dune Grey"; range + colour; the order's original wording.
+  - Matched as whole words against the sheets' lists (`biqDoubleRollerFabricsIn`): "5Screen" = 5 Screen, "Text Block" / "TEX BLOCK" = Texblock, "Bd E " and "Blind" ignored, the longest name wins.
+  - The range follows the blockout fabric and the item colour goes.
+  - The order's wording is read the first time the line is a double roller. Afterwards only the two options count, plus a hand-keyed line's own range + colour while it has no blockout, so a capturer's fabric is never replaced. The range follows the blockout only when it is first read or changes; a range the capturer picks stays.
+  - "Sheer" alone is an amber flag, never guessed.
+- **Options a double roller doesn't have** become values or notes, never a red "will NOT import":
+  - Mech / H/ware / Hardware Colour → Cassette Colour (Grey → Silver); the bottom bar follows where the order gives none.
+  - Roll Type Front/Back "Standard" / "Waterfall" → the only value, Top Waterfall Bottom Standard, silently. Any other roll type → a note plus an amber flag.
+  - Steel Ball Chain / Chain Tidy / Chain Colour → one line note each.
+  - "<colour> cassette" in the line note sets Cassette Colour, once (BDO672392: Beige).
+- **Motorised double rollers** (`biqApplyDoubleRollerMotors`, in `biqInferControls`). Russel, 15 Oct 2026: "Flag orange to confirm if customer wants motor on both, but extrapolate based on how many motors are on the order."
+  - Wording on the order decides first. Both: Double Motor / Dual, "motor on both fabrics", "blockout and screen motorised". One: "chain/motor", "blockout motorised", "no motor on the screen", a chain side with a motor.
+  - Then a count the line states ("2 x"). Then the motors left on the order once every other motorised line has its own: two per blind → both. A motor model named on the line says which motor, not how many.
+  - Both → Double Dual for One Touch Dual motors, else Double Motor. One → Double Chain/Motor plus "BLOCKOUT TO BE MOTORISED" unless the order says which fabric; the note goes if the capturer changes the control.
+  - Motors are never added or removed. The side comes from the wording ("RH Motor" in Control 1 is the right side). An amber flag says why while the control is still the converter's.
+  - Decided once per line; a line with two drive sides waits for the capturer. Silent until the catalogue refresh is imported.
+  - Motors vs their accessories: `biqIsMotorUnit`, checked against all 158 active sundries of the seven motor types (a resolved sundry by its BlindIQ name).
+  - Stored orders since Oct 2025: Double Dual only with One Touch Dual motors; Double Dual / Double Motor carried two motors per blind (16 of 21), Double Chain/Motor one (16 of 24), and the blockout was the motorised fabric on 30 of 33 noted lines.
+- **Layouts**:
+  - Blind Guys DRB: Extras → a note. A note the sheet runs over rows ("Please use one Cassette across" / "all 3 blinds.", BDO672784) is one note on every row of the run, only when the upper note ends on a word no sentence ends with.
+  - Mathéo: the remark's fabric, "Bd" prefixes, the chain column → "Chain: Steel" (nylon is standard), Cord Tidy → a note.
+  - CNBW: GREY cassette → Silver (the cassette's Colour, else the Cassette cell, else Components); "Text Block", "10% Screen Blind"; the newer template (Motorized / Components / Cassette, the fix at the end of Colour 2); "Motorized Cassette" printed as one header.
+  - Galaxy's quote (TBD software): fabric N takes colour N; the motor option.
+  - TBD purchase order: the Motor option on a double roller; "Cassette End Cap: Full End Cap" isn't sent.
+  - BD order form: Hardware colours the cassette and the bar.
+- **AI path**:
+  - The extraction prompt says a double roller is one blind with two fabric options. It also says that on the BD order form, a row with no size and no blind type under a double roller is its second fabric.
+  - `biqMergeDoubleRollerRows` (AI path and BD order form) merges such a row into the blind above: top down, never two different drives. The row's notes and options go with it, and a/b/c letters are renumbered.
+  - A hardware colour given without the cassette or bar: they follow the hardware.
+- **Replay** of 45 customer files with double rollers, against BlindIQ (SVR01, 14–15 Oct): 81 double rollers with a final line.
+  - Lines fully right 27 → 56.
+  - Range 52 → 81, blockout 75 → 81, view 61 → 78, cassette 75 → 81, bar 72 → 77, Control 1 68 → 72, colour cleared 69 → 81.
+  - What's left:
+    - capturers' choices against the sheet: the insert on 665076, 670062 and 671439; 663035's fabrics and single chains;
+    - Mathéo's "Smart Rail" bars (open with Russel);
+    - BDO672292, where Sharon ordered Double Dual with two motors per blind. Russel's rule gives Double Chain/Motor with an amber flag (8 motors for 8 blinds).
+  - The 104 other customer files (488 lines) and the 82 other lines in these files convert exactly as before. Every file settles on the first refresh.
+- Tests: `new-tests/biq-double-roller.test.mjs` in `orderbot-tests.zip` (103 checks, 3 more with `TASKFILES_DIR`).
+- Not done:
+  - the UBL XML parser (item 9);
+  - motor sundry wordings that don't resolve ("Lithium Ion" vs "Lithium", the adapter kit "1.1nm | 2nm | 3nm");
+  - Extras on Blind Guys roller sheets.
 
 ## Improvement Phases (Planned)
 

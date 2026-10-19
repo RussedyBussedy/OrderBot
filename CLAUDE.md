@@ -52,6 +52,7 @@ There are no tests, linters, or build steps. The frontend is served as static fi
 | `js/biq-converter.js` | Document converter core (pure, no DOM): parses Blind Guys xlsx / Mathéo PDF / BD forms / AI JSON → BlindIQ order + XML; name→ID resolution via `orderbot_biq_mappings` (Firestore) |
 | `js/biq-converter-ui.js` | Converter UI (Drawings tab): drag-drop, preview, mappings manager |
 | `js/biq-form-specs.js` | Converter seed mappings / extraction schema / form specs |
+| `js/cost-report-console.js` | Admin-only "Cost report" view: Paul's settings for the Daily Cost Report (see below) |
 | `package.json` | 2 dependencies: `express` and `@google-cloud/secret-manager` |
 | `Dockerfile` | Cloud Run deployment (node:20-slim, port 8080) |
 
@@ -86,6 +87,15 @@ When extracting more modules to `js/`, follow this pattern: named exports only (
 | `orderbot_fabric_properties` | Fabric name, weight, width, canTurn |
 | `orderbot_motor_properties` | Motor name, torque, blind type, adapter, accessories |
 | `orderbot_tube_properties` | Blind type → tube diameter mapping |
+| `orderbot_cost_report` | Daily Cost Report: `settings` (written by the Cost report view), `catalog` and `status` (written by the office PC) |
+
+## Cost report console (Oct 2026)
+
+Admin mode adds a third view, **Cost report** (`js/cost-report-console.js`), where Paul tunes the Daily Cost Report without touching the office PC. The report itself is `cost_report.py` (v1.1.0) on the office PC, not in this repo; it emails the 16:30 PDF. The spec is the Claude project doc `claude/daily-cost-report/orderbot-console-spec.md`. The contract below is shared with the PC, so don't change it from this side alone.
+- **`orderbot_cost_report`**: the PC writes `catalog` (order types, blind and sundry types, defaults) and `status` (its last run); the page writes only `settings` (schema 1). A missing key means the PC's default, so only non-default blind and sundry entries are stored. `updatedAt` is `serverTimestamp()`; `updatedBy` is asked once and kept in localStorage `cr_name` ("Paul" by default). Recipients must be on `catalog.defaults.allowedRecipientDomains`.
+- index.html loads the module with `import()` only in admin mode (`biq_admin`) and catches a failure, so a missing or broken module can't stop OrderBot. The module subscribes to Firestore only when the pill is clicked. The pill and the view are hidden by their own CSS rule, so capturers never see them, even without Tailwind.
+- Any anonymous OrderBot client can write the collection, so the page shows Firestore data as text only (`textContent`, never `innerHTML`).
+- Tests (jsdom, headless Chromium, and a round trip through `cost_report.py`'s own parsing) are in `tests.zip` of the "Cost report console 2026-10" package in `Document Converter/OrderBot reviews`, not in this repo.
 
 ## Deployment
 

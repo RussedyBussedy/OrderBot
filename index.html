@@ -50,8 +50,9 @@
         .bd-btn-ink { background: var(--bd-ink); color: var(--bd-paper); font-weight: 700; border-radius: 10px; }
         .bd-btn-ink:hover { background: #2e2e2b; }
 
-        /* View switcher (header pills: Orders / Drawings) */
+        /* View switcher (header pills: Orders / Drawings / Cost report) */
         #drawings-view.hidden { display: none; } /* guaranteed even before/without Tailwind */
+        #cost-report-view.hidden, #nav-cost-report.hidden { display: none; } /* same for the admin-only Cost report */
         .view-nav { display: flex; align-items: center; gap: 4px; padding: 4px; border-radius: 12px;
                     background: rgba(244,243,241,.07); border: 1px solid rgba(162,157,132,.35); }
         .view-pill { font: 700 .74rem 'PT Sans', sans-serif; letter-spacing: .14em; text-transform: uppercase;
@@ -267,6 +268,7 @@
             <nav id="view-nav" class="view-nav" aria-label="Switch view">
                 <button id="nav-orders" type="button" class="view-pill view-pill-active" aria-pressed="true">Orders</button>
                 <button id="nav-drawings" type="button" class="view-pill" aria-pressed="false">Drawings</button>
+                <button id="nav-cost-report" type="button" class="view-pill hidden" aria-pressed="false">Cost report</button>
             </nav>
             <div class="text-right">
                 <h2 class="bd-app">OrderBot</h2>
@@ -435,6 +437,9 @@
             <p class="text-center text-xs mt-4 mb-6" style="color: var(--bd-grey); letter-spacing: .08em;">
                 If printing misbehaves here, use OPEN FULL SCREEN and print from that tab.</p>
         </section>
+
+        <!-- Daily Cost Report settings (admin only; populated by js/cost-report-console.js) -->
+        <section id="cost-report-view" class="hidden" aria-label="Cost report settings"></section>
     </div>
 
     <!-- Toast notification container -->
@@ -527,7 +532,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, addDoc, getDocs, query, where, orderBy, limit, startAfter, deleteDoc, doc, writeBatch, getDoc, setDoc, updateDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, collection, addDoc, getDocs, query, where, orderBy, limit, startAfter, deleteDoc, doc, writeBatch, getDoc, setDoc, updateDoc, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { firebaseConfig, PROXY_API_URL, PROMPT_VERSION, EXTRACTION_MODEL, COMPARISON_MODEL, isGemini3, SECOND_READING } from './js/config.js';
         import { BLIND_TYPE_EXCLUSIONS_FOR_COLOUR_CHECK, BLIND_TYPES_REQUIRING_CONTROL_VALIDATION, BLIND_TYPES_REQUIRING_DUAL_CONTROL, CRITICAL_FIELDS, CACHE_TTL_MS } from './js/constants.js';
         // A namespace import: a browser still holding the previous biq-converter-ui.js (GitHub Pages lets it
@@ -3509,6 +3514,18 @@ ${feedbackExamples}
             getFabricProperties, getMotorProperties, getTubeProperties,
             runPostAIValidations, showToast, showConfirmModal
         });
+
+        // --- Daily Cost Report settings console (admin only; see js/cost-report-console.js) ---
+        // Loaded on its own and only in admin mode, so this optional page can never stop OrderBot loading.
+        const costReportAdmin = () => { try { return localStorage.getItem('biq_admin') === '1'; } catch (e) { return false; } };
+        if (costReportAdmin()) {
+            import('./js/cost-report-console.js')
+                .then((m) => m.initCostReportConsole({
+                    db, doc, getDoc, setDoc, deleteDoc, onSnapshot, serverTimestamp,
+                    showToast, showConfirmModal, isAdmin: costReportAdmin
+                }))
+                .catch((e) => console.error('Cost report console not loaded', e));
+        }
         setupFabricDropZone();
         setupMotorDropZone();
         setupTubeDropZone();
@@ -3537,27 +3554,32 @@ ${feedbackExamples}
         function init() {
             var mainEl = document.querySelector('main');
             var drawings = document.getElementById('drawings-view');
+            var costReport = document.getElementById('cost-report-view');
             var frame = document.getElementById('drawings-frame');
             var fullscreen = document.getElementById('drawings-fullscreen');
             var btnOrders = document.getElementById('nav-orders');
             var btnDrawings = document.getElementById('nav-drawings');
+            var btnCost = document.getElementById('nav-cost-report');
             if (!mainEl || !drawings || !frame || !btnOrders || !btnDrawings) return;
             fullscreen.href = visualiserSrc();
             function setPill(btn, on) {
+                if (!btn) return;
                 btn.classList.toggle('view-pill-active', on);
                 btn.setAttribute('aria-pressed', on ? 'true' : 'false');
             }
             function show(view) {
-                var d = view === 'drawings';
-                if (d && !frame.getAttribute('src')) frame.src = visualiserSrc(); // lazy-load on first open
-                mainEl.classList.toggle('hidden', d);
-                drawings.classList.toggle('hidden', !d);
-                setPill(btnOrders, !d);
-                setPill(btnDrawings, d);
+                if (view === 'drawings' && !frame.getAttribute('src')) frame.src = visualiserSrc(); // lazy-load on first open
+                mainEl.classList.toggle('hidden', view !== 'orders');
+                drawings.classList.toggle('hidden', view !== 'drawings');
+                if (costReport) costReport.classList.toggle('hidden', view !== 'cost-report');
+                setPill(btnOrders, view === 'orders');
+                setPill(btnDrawings, view === 'drawings');
+                setPill(btnCost, view === 'cost-report');
                 window.scrollTo(0, 0);
             }
             btnOrders.addEventListener('click', function () { show('orders'); });
             btnDrawings.addEventListener('click', function () { show('drawings'); });
+            if (btnCost) btnCost.addEventListener('click', function () { show('cost-report'); });
         }
         if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
         else init();

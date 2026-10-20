@@ -44,7 +44,16 @@ const FALLBACK_DEFAULTS = {
     sendWhenNothingFlagged: true,
     allowedRecipientDomains: ['blinddesigns.co.za'],
     reportTime: '16:30',
+    reportDays: ['mon', 'tue', 'wed', 'thu', 'fri'],
+    // What the send time and days may be. Only a PC that runs on a 15-minute schedule
+    // (cost_report.py 1.3.0+) publishes this; until then the page offers no schedule.
+    schedule: null,
 };
+
+// Send days in week order, as the PC names them; labels for the tick-boxes.
+const DAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+const DAY_LABELS = { mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat', sun: 'Sun' };
+const MISSED_GRACE_MS = 3600 * 1000;            // a send slot counts as missed an hour after its time
 
 // Report-content switches in display order, with Paul's labels (spec §5).
 const SECTION_FIELDS = [
@@ -185,6 +194,75 @@ function weekdayMsBetween(fromMs, toMs) {
     return total;
 }
 
+// ---- Send time and days ----------------------------------------------------
+
+/** 'HH:MM' (24 h) -> minutes after midnight, or null. */
+function minutesOf(t) {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(typeof t === 'string' ? t.trim() : '');
+    if (!m) return null;
+    const hh = +m[1], mm = +m[2];
+    return hh <= 23 && mm <= 59 ? hh * 60 + mm : null;
+}
+const hhmm = (mins) => `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
+
+/** A list of day names, lower-case and in week order; null if empty or one isn't allowed (read as the PC reads it). */
+function cleanDays(v, allowed) {
+    const items = Array.isArray(v) ? v : typeof v === 'string' ? v.split(/[,;]/) : null;
+    if (!items) return null;
+    const keys = items.map((d) => String(d).trim().toLowerCase()).filter(Boolean).map((d) => d.slice(0, 3));
+    if (!keys.length || keys.some((k) => !allowed.includes(k))) return null;
+    return DAY_KEYS.filter((k) => keys.includes(k));
+}
+
+/** ['mon','tue','wed','thu','fri'] -> 'Mon–Fri'; ['mon','wed','fri'] -> 'Mon, Wed, Fri'. */
+function daysText(days) {
+    const idx = days.map((d) => DAY_KEYS.indexOf(d)).sort((a, b) => a - b);
+    const run = idx.length > 2 && idx.every((v, i) => !i || v === idx[i - 1] + 1);
+    return run ? `${DAY_LABELS[DAY_KEYS[idx[0]]]}–${DAY_LABELS[DAY_KEYS[idx[idx.length - 1]]]}`
+        : idx.map((i) => DAY_LABELS[DAY_KEYS[i]]).join(', ');
+}
+
+/** The PC's schedule offer (catalog.defaults.schedule), checked; null when it offers none. */
+function cleanSchedule(s) {
+    s = obj(s);
+    const from = minutesOf(s.earliest), to = minutesOf(s.latest), step = s.stepMinutes;
+    const days = cleanDays(s.days, DAY_KEYS);
+    if (from == null || to == null || from > to || !Number.isInteger(step) || step < 5 || step > 60 || !days) return null;
+    return { earliest: from, latest: to, step, days };
+}
+
+/** The send time and days in force: the saved ones when the PC would accept them, else its defaults. */
+function activeSchedule() {
+    const st = obj(S.settings);
+    const sch = S.defaults.schedule;
+    const t = sch ? minutesOf(st.reportTime) : null;
+    const time = t != null && t >= sch.earliest && t <= sch.latest ? hhmm(t) : S.defaults.reportTime;
+    const days = (sch && cleanDays(st.reportDays, sch.days)) || S.defaults.reportDays;
+    return { time, days };
+}
+
+/** '16:30' while the PC offers no schedule; '16:00 on Mon–Fri' once it does. */
+function scheduleText() {
+    if (!S.defaults.schedule) return S.defaults.reportTime || '16:30';
+    const a = activeSchedule();
+    return `${a.time} on ${daysText(a.days)}`;
+}
+
+/** The latest send slot (a send day at the send time) at least an hour old, or null. */
+function lastDueSlot(nowMs) {
+    const a = activeSchedule();
+    const mins = minutesOf(a.time);
+    if (mins == null || !a.days.length) return null;
+    for (let back = 0; back <= 14; back++) {
+        const d = new Date(nowMs);
+        d.setDate(d.getDate() - back);
+        d.setHours(Math.floor(mins / 60), mins % 60, 0, 0);
+        const key = DAY_KEYS[(d.getDay() + 6) % 7];              // getDay(): 0 = Sunday
+        if (a.days.includes(key) && d.getTime() + MISSED_GRACE_MS <= nowMs) return d.getTime();
+    }
+    return null;
+}
+
 /** A Firestore error in words someone can act on. */
 function explain(e) {
     const code = String((e && e.code) || '');
@@ -274,6 +352,7 @@ function start() {
     S.started = true;
     try {
         S.root.addEventListener('input', scheduleDirtyCheck);
+        S.root.addEventListener('change', scheduleDirtyCheck);  // the send-time list
         S.root.addEventListener('click', scheduleDirtyCheck);
         window.addEventListener('beforeunload', onBeforeUnload);
         setInterval(() => { if (S.status) renderStatus(S.status); }, STATUS_RECHECK_MS);
@@ -417,9 +496,11 @@ function build() {
     S.ui = {};
     clear(body);
     [sectionLimits(m), sectionOrderTypes(m), sectionProductTypes(m), sectionReportContent(m),
-        sectionRecipients(m), conflictBanner(), sectionActions()].forEach((el) => body.appendChild(el));
+        S.defaults.schedule ? sectionSchedule(m) : null,
+        sectionRecipients(m), conflictBanner(), sectionActions()].forEach((el) => { if (el) body.appendChild(el); });
     renderConflict();
     updateDirtyUI();
+    if (S.status !== undefined) renderStatus(S.status);          // the schedule it shows comes from these settings
 }
 
 /** The PC's defaults (catalog.defaults) over the built-in fallback, each field checked. */
@@ -438,7 +519,9 @@ function mergeDefaults(d) {
         sendWhenNothingFlagged: typeof d.sendWhenNothingFlagged === 'boolean' ? d.sendWhenNothingFlagged : f.sendWhenNothingFlagged,
         allowedRecipientDomains: strs(d.allowedRecipientDomains, f.allowedRecipientDomains)
             .map((x) => x.trim().toLowerCase().replace(/^@/, '')).filter(Boolean),
-        reportTime: typeof d.reportTime === 'string' && /^\d{1,2}:\d{2}$/.test(d.reportTime) ? d.reportTime : f.reportTime,
+        reportTime: minutesOf(d.reportTime) != null ? hhmm(minutesOf(d.reportTime)) : f.reportTime,
+        reportDays: cleanDays(d.reportDays, DAY_KEYS) || f.reportDays.slice(),
+        schedule: cleanSchedule(d.schedule),
     };
 }
 
@@ -618,6 +701,38 @@ function sectionReportContent(m) {
     ]);
 }
 
+// ---- Schedule: send time and days (shown once the PC offers it) -----------
+
+function sectionSchedule(m) {
+    const sch = S.defaults.schedule;
+    const def = S.defaults;
+    const times = [];
+    for (let t = sch.earliest; t <= sch.latest; t += sch.step) times.push(hhmm(t));
+    if (!times.includes(m.reportTime)) { times.push(m.reportTime); times.sort(); }   // a saved time off the list stays
+    S.ui.time = h('select', { id: 'cr-time', class: 'cr-input cr-time' }, times.map((t) => h('option', { value: t, text: t })));
+    S.ui.time.value = m.reportTime;
+    S.ui.days = {};
+    const boxes = sch.days.map((k) => {
+        const cb = h('input', { type: 'checkbox', value: k });
+        cb.checked = m.reportDays.includes(k);
+        S.ui.days[k] = cb;
+        return h('label', { class: 'cr-radio' }, [cb, h('span', { text: DAY_LABELS[k] })]);
+    });
+    return panel('Schedule', 'When the report is sent', [
+        limitRow('cr-time', 'Send at', `The office PC checks every ${sch.step} minutes and sends the report at its first check `
+            + 'after this time, once a day.', S.ui.time, '', `default ${def.reportTime}`),
+        h('div', { class: 'cr-limit' }, [
+            h('div', { class: 'cr-limit-text' }, [
+                h('span', { class: 'cr-label', text: 'On these days' }),
+                h('p', { class: 'cr-help', text: 'Each report covers every order since the one before, so orders from the other '
+                    + 'days go in the next report.' }),
+            ]),
+            h('div', { class: 'cr-limit-input cr-days', role: 'group', 'aria-label': 'Send days' },
+                boxes.concat(h('span', { class: 'cr-muted', text: `default ${daysText(def.reportDays)}` }))),
+        ]),
+    ]);
+}
+
 // ---- Recipients (spec §6) -------------------------------------------------
 
 function sectionRecipients(m) {
@@ -718,7 +833,6 @@ function setBusy(on) {
     [S.ui.save, S.ui.discard, S.ui.reset].forEach((b) => { if (b) b.disabled = on; });
     if (S.ui.save) S.ui.save.textContent = on ? 'Saving…' : 'Save';
 }
-const reportTime = () => S.defaults.reportTime || '16:30';
 
 async function onSave() {
     if (S.writing || !S.seeded) return;
@@ -772,8 +886,12 @@ async function write(doc) {
         else if (isOurs(back.data)) S.baseline = versionOf(back.data);
         else { S.baseline = { exists: true, ms: null, by: '' }; S.conflict = versionOf(back.data); }
         if (S.latestCatalog && S.latestCatalog !== S.catalog) build();   // the PC published new lists meanwhile
-        else { renderConflict(); updateDirtyUI(); }
-        D.showToast(`Saved. Applies from the next report (${reportTime()}).`, 'success');
+        else {
+            renderConflict();
+            updateDirtyUI();
+            if (S.status !== undefined) renderStatus(S.status);  // shows the send time just saved
+        }
+        D.showToast(`Saved. Applies from the next report (${scheduleText()}).`, 'success');
     } catch (e) {
         D.showToast('Could not save: ' + explain(e), 'error');
     } finally {
@@ -803,7 +921,7 @@ function onReset() {
             S.baseline = versionOf(null);
             S.conflict = null;
             build();
-            D.showToast(`Reset to the defaults. Applies from the next report (${reportTime()}).`, 'success');
+            D.showToast(`Reset to the defaults. Applies from the next report (${scheduleText()}).`, 'success');
         } catch (e) {
             D.showToast('Could not reset the settings: ' + explain(e), 'error');
         } finally {
@@ -891,6 +1009,11 @@ function seedModel() {
     });
     SECTION_FIELDS.forEach(([k]) => { m.sections[k] = sec[k] != null ? !!sec[k] : !!def.sections[k]; });
     DETAIL_FIELDS.forEach(([k]) => { m.details[k] = det[k] != null ? !!det[k] : !!def.details[k]; });
+    if (def.schedule) {
+        const a = activeSchedule();
+        m.reportTime = a.time;
+        m.reportDays = a.days.slice();
+    }
     return m;
 }
 
@@ -947,13 +1070,21 @@ function collectModel() {
     }
     SECTION_FIELDS.forEach(([k]) => { m.sections[k] = isOn(ui.sections[k]); });
     DETAIL_FIELDS.forEach(([k]) => { m.details[k] = isOn(ui.details[k]); });
+    const sch = S.defaults.schedule;
+    if (sch && ui.time) {
+        const days = DAY_KEYS.filter((k) => ui.days[k] && ui.days[k].checked);
+        if (!days.length) return { error: 'Tick at least one day to send the report on.', focus: ui.days[sch.days[0]] };
+        if (minutesOf(ui.time.value) == null) return { error: 'Pick a send time.', focus: ui.time };
+        m.reportTime = ui.time.value;
+        m.reportDays = days;
+    }
     return { model: m };
 }
 
 /** The `settings` document to save, in exactly the contract's shape. */
 function toSettingsDoc(m) {
     const st = obj(S.settings);
-    return {
+    const doc = {
         schema: SCHEMA,
         costThresholdPct: m.costThresholdPct,
         discountMarginPts: m.discountMarginPts,
@@ -967,6 +1098,14 @@ function toSettingsDoc(m) {
         recipients: S.toList.length ? { to: S.toList.slice(), cc: S.ccList.slice() } : { cc: S.ccList.slice() },
         sendWhenNothingFlagged: m.sendWhenNothingFlagged,
     };
+    if (m.reportTime != null) {
+        doc.reportTime = m.reportTime;
+        doc.reportDays = m.reportDays.slice();
+    } else {                                                     // the PC offers no schedule: keep what was saved
+        if (st.reportTime != null) doc.reportTime = st.reportTime;
+        if (st.reportDays != null) doc.reportDays = st.reportDays;
+    }
+    return doc;
 }
 
 /** Saved entries for types the current lists don't show are kept as they were. */
@@ -1062,10 +1201,20 @@ function renderStatus(status) {
     if (status.settingsUsed) card.appendChild(h('p', { class: 'cr-help', text: `Settings used: ${status.settingsUsed}` }));
     const ignored = list(status.settingsIgnored).map(String).filter(Boolean);
     if (ignored.length) card.appendChild(h('p', { class: 'cr-warn', text: `Ignored by the PC: ${ignored.join('; ')}` }));
+    if (S.defaults.schedule) card.appendChild(h('p', { class: 'cr-help', text: `Sends at ${scheduleText()}.` }));
 
-    // Spec: warn when the last run is more than a working day old (weekdays only, like the scheduled task).
+    // Warn when a report the PC should have sent hasn't gone out: with a schedule, the latest send
+    // slot (an hour's grace) without a run that day; without one, more than a working day since the last run.
     const last = MS(status.lastRunAt);
-    if (last != null && weekdayMsBetween(last, Date.now()) > STALE_AFTER_MS) {
+    const now = Date.now();
+    if (last != null && S.defaults.schedule) {
+        const slot = lastDueSlot(now);
+        if (slot != null && last < new Date(slot).setHours(0, 0, 0, 0)) {
+            card.classList.add('cr-bad');
+            card.appendChild(h('p', { class: 'cr-warn', text: `The ${fmtWhen(slot)} report hasn’t gone out; the last one is from `
+                + `${fmtWhen(last)}. The office PC may be off.` }));
+        }
+    } else if (last != null && weekdayMsBetween(last, now) > STALE_AFTER_MS) {
         card.classList.add('cr-bad');
         card.appendChild(h('p', { class: 'cr-warn', text: `The last report is from ${fmtWhen(last)}, more than a working day ago. The office PC may be off.` }));
     }
@@ -1135,6 +1284,8 @@ function injectStyles() {
       #cost-report-view .cr-num { width: 68px; border: 1px solid var(--bd-line-strong); border-radius: 8px; padding: .35rem .45rem; text-align: right; font-variant-numeric: tabular-nums; }
       #cost-report-view .cr-num:disabled { opacity: .45; background: var(--bd-sage-tint); }
       #cost-report-view .cr-limitpct { width: 60px; }
+      #cost-report-view .cr-time { min-width: 96px; }
+      #cost-report-view .cr-days { flex-wrap: wrap; white-space: normal; }
       #cost-report-view .cr-unit { color: var(--bd-grey); font-weight: 700; }
       #cost-report-view .cr-input { border: 1px solid var(--bd-line-strong); border-radius: 8px; padding: .4rem .6rem; min-width: 0; }
       #cost-report-view .cr-typeblock { margin-top: 1rem; }

@@ -14,7 +14,9 @@
 // claude/daily-cost-report/orderbot-console-spec.md in the Daily Cost Report
 // project). This page WRITES `settings` only; it reads `catalog` and `status`
 // and never changes them. cost_report.py v1.1.0 is built against these shapes,
-// so do not change them.
+// so do not change them. Later versions only add optional keys (1.3.0: the send time
+// and days; 1.4.0: the section order, the price check and the cost-by-product
+// frequency), each offered here only when the PC publishes it in catalog.defaults.
 //
 // Firestore is open to OrderBot's anonymous users, so everything read from it
 // is untrusted text: it only ever reaches the page as text nodes.
@@ -48,6 +50,11 @@ const FALLBACK_DEFAULTS = {
     // What the send time and days may be. Only a PC that runs on a 15-minute schedule
     // (cost_report.py 1.3.0+) publishes this; until then the page offers no schedule.
     schedule: null,
+    // cost_report.py 1.4.0+ publishes these three; until then the page offers none of them
+    // and keeps any saved values as they are.
+    sectionOrder: null,         // the report's sections in their default order
+    priceCheck: null,           // { tolerancePct, showIncreases, maxTolerancePct }
+    trendsEvery: null,          // 'week' | 'report'
 };
 
 // Send days in week order, as the PC names them; labels for the tick-boxes.
@@ -55,7 +62,24 @@ const DAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 const DAY_LABELS = { mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat', sun: 'Sun' };
 const MISSED_GRACE_MS = 3600 * 1000;            // a send slot counts as missed an hour after its time
 
-// Report-content switches in display order, with Paul's labels (spec §5).
+// The report layout (cost_report.py 1.4.0+): every section of catalog.defaults.sectionOrder, in
+// Paul's order. A key this page doesn't know keeps its place and shows as itself (contract).
+const LAYOUT_LABELS = {
+    internal: 'Zero-charge orders (error, warranty, showroom)',
+    priceChanges: 'Price changes',
+    flagged: 'Flagged orders',
+    breakdown: 'Order breakdown pages',
+    trends: 'Cost by product (trends)',
+    allOrders: 'List of every order checked',
+};
+const ALWAYS_SHOWN = ['flagged'];                // the PC always includes it, so it has no switch
+const TRENDS_CHOICES = [
+    ['week', 'In the first report of each week (normally Monday’s)'],
+    ['report', 'In every report'],
+];
+const TRENDS_KEYS = TRENDS_CHOICES.map(([k]) => k);
+
+// Report-content switches for a PC older than 1.4.0, in display order, with Paul's labels (spec §5).
 const SECTION_FIELDS = [
     ['breakdown', 'Order breakdown pages'],
     ['internal', 'Error & showroom list'],
@@ -230,6 +254,47 @@ function cleanSchedule(s) {
     if (from == null || to == null || from > to || !Number.isInteger(step) || step < 5 || step > 60 || !days) return null;
     return { earliest: from, latest: to, step, days };
 }
+
+// ---- Report layout, price check, cost by product (cost_report.py 1.4.0+) ----
+
+/** catalog.defaults.sectionOrder: its keys, each once; null when the PC offers no layout. */
+function cleanSectionKeys(v) {
+    if (!Array.isArray(v)) return null;
+    const out = [];
+    v.forEach((k) => {
+        const key = String(k == null ? '' : k).trim();
+        if (key && !out.includes(key)) out.push(key);
+    });
+    return out.length ? out : null;
+}
+
+/** A saved order read as the PC reads it: known keys as given (each once, any case), then the rest in default order. */
+function orderFrom(saved, keys) {
+    const byLower = new Map(keys.map((k) => [k.toLowerCase(), k]));
+    const items = Array.isArray(saved) ? saved : typeof saved === 'string' ? saved.split(/[,;]/) : [];
+    const out = [];
+    items.forEach((v) => {
+        const k = byLower.get(String(v == null ? '' : v).trim().toLowerCase());
+        if (k && !out.includes(k)) out.push(k);
+    });
+    return out.concat(keys.filter((k) => !out.includes(k)));
+}
+
+/** catalog.defaults.priceCheck, checked; null when the PC offers no price check. */
+function cleanPriceCheck(p) {
+    if (!p || typeof p !== 'object' || Array.isArray(p)) return null;
+    const max = isNum(p.maxTolerancePct) && p.maxTolerancePct > 0 && p.maxTolerancePct <= 100 ? p.maxTolerancePct : 50;
+    return {
+        tolerancePct: isNum(p.tolerancePct) && p.tolerancePct >= 0 && p.tolerancePct <= max ? p.tolerancePct : 0,
+        showIncreases: typeof p.showIncreases === 'boolean' ? p.showIncreases : true,
+        maxTolerancePct: max,
+    };
+}
+
+const trendsKey = (v) => { const t = String(v == null ? '' : v).trim().toLowerCase(); return TRENDS_KEYS.includes(t) ? t : null; };
+const layoutLabel = (k) => LAYOUT_LABELS[k] || k;
+/** A section Paul can switch off: not one the PC always includes, and one whose default the PC publishes. */
+const switchable = (k) => !ALWAYS_SHOWN.includes(k) && Object.prototype.hasOwnProperty.call(S.defaults.sections, k);
 
 /** The send time and days in force: the saved ones when the PC would accept them, else its defaults. */
 function activeSchedule() {
@@ -496,6 +561,7 @@ function build() {
     S.ui = {};
     clear(body);
     [sectionLimits(m), sectionOrderTypes(m), sectionProductTypes(m), sectionReportContent(m),
+        S.defaults.priceCheck ? sectionPriceCheck(m) : null,
         S.defaults.schedule ? sectionSchedule(m) : null,
         sectionRecipients(m), conflictBanner(), sectionActions()].forEach((el) => { if (el) body.appendChild(el); });
     renderConflict();
@@ -522,6 +588,9 @@ function mergeDefaults(d) {
         reportTime: minutesOf(d.reportTime) != null ? hhmm(minutesOf(d.reportTime)) : f.reportTime,
         reportDays: cleanDays(d.reportDays, DAY_KEYS) || f.reportDays.slice(),
         schedule: cleanSchedule(d.schedule),
+        sectionOrder: cleanSectionKeys(d.sectionOrder),
+        priceCheck: cleanPriceCheck(d.priceCheck),
+        trendsEvery: trendsKey(d.trendsEvery),
     };
 }
 
@@ -583,8 +652,10 @@ function sectionOrderTypes(m) {
     });
     if (!rows.length) wrap.appendChild(muted('No order types published yet.'));
     return panel('Order types', 'Which orders to check', [
-        h('p', { class: 'cr-help cr-lead', text: 'Check runs both tests. List separately puts the order in the error & showroom '
-            + 'list with its material cost. Ignore leaves it out (it is counted in a footnote).' }),
+        h('p', { class: 'cr-help cr-lead', text: 'Check runs both tests'
+            + (S.defaults.priceCheck ? ' and the price check' : '') + '. List separately puts the order in the '
+            + (S.defaults.sectionOrder ? 'zero-charge' : 'error & showroom')
+            + ' list with its material cost. Ignore leaves it out (it is counted in a footnote).' }),
         wrap,
     ]);
 }
@@ -691,13 +762,108 @@ function sectionReportContent(m) {
         store[key] = sw;
         return h('div', { class: 'cr-row' }, [h('span', { class: 'cr-row-name', text: label }), sw]);
     };
-    return panel('Report content', 'What the report shows', [
+    const sections = S.defaults.sectionOrder ? layoutBlock(m) : [
         h('h4', { class: 'cr-subtitle', text: 'Sections' }),
         h('div', { class: 'cr-togglegrid' }, SECTION_FIELDS.map(([k, label]) => row(k, label, m.sections[k], S.ui.sections))),
+    ];
+    return panel('Report content', 'What the report shows', sections.concat(S.defaults.trendsEvery ? trendsBlock(m) : [], [
         h('h4', { class: 'cr-subtitle cr-gap', text: 'Details in the order blocks and summary' }),
         h('div', { class: 'cr-togglegrid' }, DETAIL_FIELDS.map(([k, label]) => row(k, label, m.details[k], S.ui.details))),
         h('p', { class: 'cr-help', text: 'Fabric-only notes and own-limit notes always show, because they explain the numbers. '
             + 'With “Captured by” off, the summary shows the rep instead (if “Rep” is on).' }),
+    ]));
+}
+
+/** The sections in the order Paul picks, each with its on/off switch (flagged orders are always in). */
+function layoutBlock(m) {
+    S.ui.layoutOrder = m.sectionOrder.slice();
+    S.ui.layoutRows = {};
+    S.ui.layoutList = h('ol', { class: 'cr-layout', 'aria-label': 'Report sections, in order' });
+    m.sectionOrder.forEach((k) => {
+        const label = layoutLabel(k);
+        const up = h('button', { type: 'button', class: 'cr-move', 'aria-label': `Move ${label} up`, title: 'Move up', text: '↑' });
+        const down = h('button', { type: 'button', class: 'cr-move', 'aria-label': `Move ${label} down`, title: 'Move down', text: '↓' });
+        up.addEventListener('click', () => moveSection(k, -1));
+        down.addEventListener('click', () => moveSection(k, 1));
+        let ctrl = null;
+        if (switchable(k)) {
+            ctrl = makeSwitch(m.sections[k], `Show ${label}`);
+            S.ui.sections[k] = ctrl;
+        } else if (ALWAYS_SHOWN.includes(k)) {
+            ctrl = h('span', { class: 'cr-muted cr-small cr-always', text: 'always in' });
+        }
+        const pos = h('span', { class: 'cr-pos' });
+        const row = h('li', { class: 'cr-row cr-layoutrow' }, [
+            h('div', { class: 'cr-layoutname' }, [pos, h('span', { class: 'cr-layoutlabel', text: label })]),
+            h('div', { class: 'cr-layoutctrls' }, [up, down, ctrl || h('span', { class: 'cr-always' })]),
+        ]);
+        S.ui.layoutRows[k] = { row, up, down, pos };
+    });
+    renderLayout();
+    return [
+        h('h4', { class: 'cr-subtitle', text: 'Sections, in order' }),
+        h('p', { class: 'cr-help cr-lead2', text: 'The title and the summary tiles always come first. Use the arrows to move a '
+            + 'section, and the switch to leave it out.' }),
+        S.ui.layoutList,
+    ];
+}
+
+function renderLayout() {
+    const order = S.ui.layoutOrder;
+    order.forEach((k, i) => {
+        const r = S.ui.layoutRows[k];
+        S.ui.layoutList.appendChild(r.row);                     // appending an existing row moves it
+        r.pos.textContent = `${i + 1}.`;
+        r.up.disabled = i === 0;
+        r.down.disabled = i === order.length - 1;
+    });
+}
+
+function moveSection(k, delta) {
+    const order = S.ui.layoutOrder;
+    const i = order.indexOf(k);
+    const j = i + delta;
+    if (i < 0 || j < 0 || j >= order.length) return;
+    [order[i], order[j]] = [order[j], order[i]];
+    renderLayout();
+    const r = S.ui.layoutRows[k];                                // keep the focus on the row that moved
+    const next = delta < 0 ? (r.up.disabled ? r.down : r.up) : (r.down.disabled ? r.up : r.down);
+    next.focus();
+    scheduleDirtyCheck();
+}
+
+/** How often the cost-by-product page goes in (cost_report.py 1.4.0+). */
+function trendsBlock(m) {
+    S.ui.trendsRadios = TRENDS_CHOICES.map(([k]) => {
+        const r = h('input', { type: 'radio', name: 'cr-trends', value: k });
+        r.checked = m.trendsEvery === k;
+        return r;
+    });
+    const def = TRENDS_CHOICES.find(([k]) => k === S.defaults.trendsEvery);
+    return [
+        h('h4', { class: 'cr-subtitle cr-gap', text: 'Cost by product: how often' }),
+        h('div', { class: 'cr-radios', role: 'radiogroup', 'aria-label': 'Cost by product: how often' },
+            S.ui.trendsRadios.map((r, i) => h('label', { class: 'cr-radio' }, [r, h('span', { text: TRENDS_CHOICES[i][1] })]))),
+        h('p', { class: 'cr-help', text: 'Material cost as a share of net value per blind and sundry type, for the last 30 days '
+            + `against the 30 before, and 90 days.${def ? ` Default: ${def[1].charAt(0).toLowerCase() + def[1].slice(1)}.` : ''}` }),
+    ];
+}
+
+// ---- Price check (cost_report.py 1.4.0+) -----------------------------------
+
+function sectionPriceCheck(m) {
+    const pc = S.defaults.priceCheck;
+    S.ui.tol = numberInput('cr-tol', m.priceTolerancePct);
+    S.ui.increases = makeSwitch(m.priceShowIncreases, 'Also list prices above the list');
+    return panel('Price check', 'Prices changed from BlindIQ’s list', [
+        h('p', { class: 'cr-help cr-lead', text: 'The report compares every line with BlindIQ’s own list price: the price matrix '
+            + 'for the blind’s size and options, or the sundry’s price. Lines charged differently are listed with who captured '
+            + 'the order and any note that explains it.' }),
+        limitRow('cr-tol', 'Ignore differences under',
+            'A line is listed when it is more than R1 per item away from the list price and more than this share of it. '
+            + `0 lists every difference over R1 (most: ${fmtNum(pc.maxTolerancePct)}%).`,
+            S.ui.tol, '%', `default ${fmtNum(pc.tolerancePct)}%`),
+        h('div', { class: 'cr-row cr-gap' }, [h('span', { class: 'cr-row-name', text: 'Also list prices above the list' }), S.ui.increases]),
     ]);
 }
 
@@ -760,9 +926,12 @@ function sectionRecipients(m) {
         S.ui.ccChips,
         h('div', { class: 'cr-addrow' }, [S.ui.ccInput, h('button', { type: 'button', class: 'cr-chipbtn', text: 'Add', onclick: () => addAddresses('cc') })]),
         h('div', { class: 'cr-row cr-gap' }, [h('span', { class: 'cr-row-name', text: 'Send even when nothing is flagged' }), S.ui.sendEmpty]),
-        // cost_report.py still sends when there are error or showroom orders, even with this off.
-        h('p', { class: 'cr-help', text: 'When this is off, the email is skipped only on days with nothing flagged and no '
-            + 'error or showroom orders.' }),
+        // cost_report.py still sends when there is something to look at, even with this off:
+        // 1.3 on error or showroom orders; 1.4 on zero-charge orders or price changes, when those sections are on.
+        h('p', { class: 'cr-help', text: S.defaults.sectionOrder
+            ? 'When this is off, the email is skipped only on days with nothing flagged, no zero-charge orders and no '
+                + 'price changes (counting only the sections that are on).'
+            : 'When this is off, the email is skipped only on days with nothing flagged and no error or showroom orders.' }),
     ]);
 }
 
@@ -1007,8 +1176,19 @@ function seedModel() {
         m.orderTypes[id] = MODE_KEYS.includes(savedOT[id]) ? savedOT[id]
             : MODE_KEYS.includes(def.orderTypes[id]) ? def.orderTypes[id] : 'ignore';
     });
-    SECTION_FIELDS.forEach(([k]) => { m.sections[k] = sec[k] != null ? !!sec[k] : !!def.sections[k]; });
+    if (def.sectionOrder) {
+        m.sectionOrder = orderFrom(st.sectionOrder, def.sectionOrder);
+        def.sectionOrder.filter(switchable).forEach((k) => { m.sections[k] = sec[k] != null ? !!sec[k] : !!def.sections[k]; });
+    } else {
+        SECTION_FIELDS.forEach(([k]) => { m.sections[k] = sec[k] != null ? !!sec[k] : !!def.sections[k]; });
+    }
     DETAIL_FIELDS.forEach(([k]) => { m.details[k] = det[k] != null ? !!det[k] : !!def.details[k]; });
+    if (def.priceCheck) {                                       // a saved value the PC would refuse: its default
+        const tol = num(st.priceTolerancePct, null);
+        m.priceTolerancePct = tol != null && tol >= 0 && tol <= def.priceCheck.maxTolerancePct ? tol : def.priceCheck.tolerancePct;
+        m.priceShowIncreases = typeof st.priceShowIncreases === 'boolean' ? st.priceShowIncreases : def.priceCheck.showIncreases;
+    }
+    if (def.trendsEvery) m.trendsEvery = trendsKey(st.trendsEvery) || def.trendsEvery;
     if (def.schedule) {
         const a = activeSchedule();
         m.reportTime = a.time;
@@ -1068,8 +1248,27 @@ function collectModel() {
             m[key][r.id] = { include, limitPct };
         }
     }
-    SECTION_FIELDS.forEach(([k]) => { m.sections[k] = isOn(ui.sections[k]); });
+    if (S.defaults.sectionOrder && ui.layoutOrder) {
+        m.sectionOrder = ui.layoutOrder.slice();
+        for (const k in ui.sections) m.sections[k] = isOn(ui.sections[k]);
+    } else {
+        SECTION_FIELDS.forEach(([k]) => { m.sections[k] = isOn(ui.sections[k]); });
+    }
     DETAIL_FIELDS.forEach(([k]) => { m.details[k] = isOn(ui.details[k]); });
+    const pc = S.defaults.priceCheck;
+    if (pc && ui.tol) {
+        const t = readNumber(ui.tol);
+        const tol = t.blank ? pc.tolerancePct : t.value;
+        if (t.bad || !(tol >= 0 && tol <= pc.maxTolerancePct)) {
+            return { error: `The price tolerance must be a number from 0 to ${fmtNum(pc.maxTolerancePct)}, like 0 or 2.5.`, focus: ui.tol };
+        }
+        m.priceTolerancePct = tol;
+        m.priceShowIncreases = isOn(ui.increases);
+    }
+    if (S.defaults.trendsEvery && ui.trendsRadios) {
+        const picked = ui.trendsRadios.find((r) => r.checked);
+        m.trendsEvery = picked ? picked.value : S.defaults.trendsEvery;
+    }
     const sch = S.defaults.schedule;
     if (sch && ui.time) {
         const days = DAY_KEYS.filter((k) => ui.days[k] && ui.days[k].checked);
@@ -1091,7 +1290,8 @@ function toSettingsDoc(m) {
         orderTypes: Object.assign(carryOver(st.orderTypes, S.catalog.orderTypes), m.orderTypes),
         blindTypes: Object.assign(carryOver(st.blindTypes, S.catalog.blindTypes), changedTypes(m.blindTypes)),
         sundryTypes: Object.assign(carryOver(st.sundryTypes, S.catalog.sundryTypes), changedTypes(m.sundryTypes)),
-        sections: m.sections,
+        // Sections this page doesn't show (a PC older than the saved settings) are kept as they were.
+        sections: Object.assign(carryKeys(st.sections, Object.keys(m.sections)), m.sections),
         details: m.details,
         // An empty To is left out so the PC quietly uses its own list (an explicit [] is
         // reported as an ignored setting on every report).
@@ -1105,7 +1305,26 @@ function toSettingsDoc(m) {
         if (st.reportTime != null) doc.reportTime = st.reportTime;
         if (st.reportDays != null) doc.reportDays = st.reportDays;
     }
+    // 1.4.0 keys: saved from the form when the PC offers them, otherwise kept exactly as they were.
+    if (m.sectionOrder != null) doc.sectionOrder = m.sectionOrder.slice();
+    else if (st.sectionOrder != null) doc.sectionOrder = st.sectionOrder;
+    if (m.priceTolerancePct != null) {
+        doc.priceTolerancePct = m.priceTolerancePct;
+        doc.priceShowIncreases = m.priceShowIncreases;
+    } else {
+        if (st.priceTolerancePct != null) doc.priceTolerancePct = st.priceTolerancePct;
+        if (st.priceShowIncreases != null) doc.priceShowIncreases = st.priceShowIncreases;
+    }
+    if (m.trendsEvery != null) doc.trendsEvery = m.trendsEvery;
+    else if (st.trendsEvery != null) doc.trendsEvery = st.trendsEvery;
     return doc;
+}
+
+/** Saved on/off keys the form doesn't show, kept as they were. */
+function carryKeys(saved, shown) {
+    const out = {};
+    for (const k in obj(saved)) if (!shown.includes(k) && typeof saved[k] === 'boolean') out[k] = saved[k];
+    return out;
 }
 
 /** Saved entries for types the current lists don't show are kept as they were. */
@@ -1187,6 +1406,7 @@ function renderStatus(status) {
     } else {
         const parts = [];
         if (isNum(status.flagged)) parts.push(isNum(status.checked) ? `${status.flagged} flagged of ${status.checked}` : `${status.flagged} flagged`);
+        if (isNum(status.priceChanged)) parts.push(`${status.priceChanged} price change${status.priceChanged === 1 ? '' : 's'}`);
         if (Array.isArray(status.emailedTo)) parts.push(status.emailedTo.length ? `sent to ${friendlyNames(status.emailedTo)}` : 'not emailed');
         card.appendChild(h('p', { class: 'cr-line' }, [h('b', { text: fmtWhen(status.lastRunAt) }), parts.length ? `, ${parts.join(', ')}.` : '.']));
         const sub = [];
@@ -1194,9 +1414,20 @@ function renderStatus(status) {
         if (isNum(status.flaggedCost) || isNum(status.flaggedDiscount)) {
             sub.push(`${isNum(status.flaggedCost) ? status.flaggedCost : 0} on cost, ${isNum(status.flaggedDiscount) ? status.flaggedDiscount : 0} on discount`);
         }
-        if (isNum(status.internal)) sub.push(`${status.internal} error/showroom`);
+        if (isNum(status.zeroCharge)) sub.push(`${status.zeroCharge} zero-charge`);
+        else if (isNum(status.internal)) sub.push(`${status.internal} error/showroom`);
         if (isNum(status.excludedByProductType) && status.excludedByProductType > 0) sub.push(`${status.excludedByProductType} skipped by product type`);
+        if (isNum(status.priceNotChecked) && status.priceNotChecked > 0) {
+            sub.push(`${status.priceNotChecked} line${status.priceNotChecked === 1 ? '' : 's'} not price-checked`);
+        }
+        if (status.trendsIncluded === true) sub.push('with cost by product');
         if (sub.length) card.appendChild(h('p', { class: 'cr-help', text: sub.join(' · ') }));
+        if (status.priceCheckError) {
+            card.appendChild(h('p', { class: 'cr-warn', text: `The price check couldn’t run: ${String(status.priceCheckError)}` }));
+        }
+        if (status.activityLogError) {
+            card.appendChild(h('p', { class: 'cr-warn', text: `Who raised discounts isn’t shown: ${String(status.activityLogError)}` }));
+        }
     }
     if (status.settingsUsed) card.appendChild(h('p', { class: 'cr-help', text: `Settings used: ${status.settingsUsed}` }));
     const ignored = list(status.settingsIgnored).map(String).filter(Boolean);
@@ -1269,6 +1500,7 @@ function injectStyles() {
       #cost-report-view .cr-line { font-size: 1rem; margin: 0; color: var(--bd-ink); }
       #cost-report-view .cr-label { display: block; font-weight: 700; color: var(--bd-ink); }
       #cost-report-view .cr-subtitle { font: 700 .9rem 'PT Sans', sans-serif; color: var(--bd-ink); margin: 0 0 .4rem; }
+      #cost-report-view .cr-subtitle.cr-gap { margin-top: 1.1rem; }
       #cost-report-view .cr-bad, #cost-report-view .cr-error { border-color: var(--bd-blush); background: #f9ece7; }
       #cost-report-view .cr-row { display: flex; align-items: center; justify-content: space-between; gap: .4rem 1rem; flex-wrap: wrap; padding: .55rem .15rem; border-bottom: 1px solid var(--bd-line); }
       #cost-report-view .cr-row:last-child { border-bottom: 0; }
@@ -1295,6 +1527,18 @@ function injectStyles() {
       #cost-report-view .cr-typelist { max-height: 340px; overflow-y: auto; border: 1px solid var(--bd-line); border-radius: 10px; padding: 0 .6rem; }
       #cost-report-view .cr-typectrls { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
       #cost-report-view .cr-inline { display: inline-flex; align-items: center; gap: .4rem; font-size: .8rem; }
+      #cost-report-view .cr-lead2 { margin: 0 0 .5rem; }
+      #cost-report-view .cr-layout { list-style: none; margin: 0; padding: 0 .6rem; border: 1px solid var(--bd-line); border-radius: 10px; }
+      #cost-report-view .cr-layoutrow { flex-wrap: nowrap; }
+      #cost-report-view .cr-layoutname { display: flex; align-items: baseline; gap: .5rem; min-width: 0; }
+      #cost-report-view .cr-layoutlabel { overflow-wrap: anywhere; }
+      #cost-report-view .cr-pos { color: var(--bd-grey); font-variant-numeric: tabular-nums; min-width: 1.4em; }
+      #cost-report-view .cr-layoutctrls { display: flex; align-items: center; gap: .4rem; flex: none; }
+      #cost-report-view .cr-move { width: 32px; height: 30px; font: 700 .95rem 'PT Sans', sans-serif; background: var(--bd-sage-tint); color: var(--bd-ink); border: 1px solid var(--bd-line-strong); border-radius: 8px; cursor: pointer; padding: 0; }
+      #cost-report-view .cr-move:hover:not(:disabled) { background: var(--bd-olive-tint); }
+      #cost-report-view .cr-move:disabled { opacity: .35; cursor: default; }
+      #cost-report-view .cr-move:focus-visible { outline: 2px solid var(--bd-olive); outline-offset: 2px; }
+      #cost-report-view .cr-always { display: inline-block; min-width: 44px; text-align: center; white-space: nowrap; }
       #cost-report-view .cr-togglegrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 0 1.25rem; }
       #cost-report-view .cr-chips { display: flex; flex-wrap: wrap; gap: .4rem; margin: .3rem 0; align-items: center; }
       #cost-report-view .cr-chip { display: inline-flex; align-items: center; gap: .45rem; background: var(--bd-olive-tint); color: var(--bd-ink); border-radius: 999px; padding: .25rem .5rem .25rem .75rem; font-size: .85rem; }

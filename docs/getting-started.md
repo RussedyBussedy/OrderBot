@@ -118,7 +118,7 @@ The tests live outside the repository for now (see [testing.md](testing.md) for 
    bash run-all.sh
    ```
 
-3. The last line reads `TOTAL pass=… fail=…`. On today's `main` expect about 1,250 passes and the 25 known failures.
+3. The last line reads `TOTAL pass=… fail=…`. On today's `main` expect about 1,310 passes and the 25 known failures.
 
 `setup.sh` links the clone's `js/`, `index.html` and `data/` into the test folder with `ln -s`. In Git Bash that may make **copies** instead of links, unless Windows Developer Mode is on and `MSYS=winsymlinks:nativestrict` is set. If it copies, run `setup.sh` again after every change, or run the tests under WSL.
 

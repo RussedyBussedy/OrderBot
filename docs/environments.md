@@ -26,7 +26,7 @@ So the first time a change meets real documents in a real browser is when the ca
 - **`main` is production, and it's used every working day.** About 1,100 orders a month are checked, and the converter brings in hundreds of orders a month.
 - **Changes are frequent and mostly written with AI help.** There were 35 commits in October 2026 alone. Since August, 53 commits went straight to `main` without a pull request.
 - **It has broken production before.** The April 2026 restructure (`ef4eea8`) was reverted the next day.
-- **The safety net exists but isn't automatic.** About 1,250 regression checks pass on `main`, but they only run when someone runs them by hand.
+- **The safety net exists but isn't automatic.** About 1,310 regression checks pass on `main`, but they only run when someone runs them by hand.
 - **Business rules need business eyes.** A capturer or Paul is the best judge of whether a flag or a converted line is right. They need a link to click, not a PC set up for development.
 
 What it does **not** need: a permanent second copy of everything that someone has to keep in step, a release manager, or a second Google project.

@@ -30,7 +30,7 @@ Effort: **S** is under half a day, **M** is one to three days, **L** is longer.
 
 | Issue | Effect | Effort |
 |---|---|---|
-| Finish Logic purchase orders: a warning that Finish Logic prints after a line's options can make the converter skip the following blinds, without a flag | Lost lines on those orders. Fixed in the unmerged `finish-logic-2026-10` package, along with reading other dealers' Finish Logic POs. Check such orders by hand until it's merged. | S (merge) |
+| The shared coupled-pair function (`biqApplyCoupledPair`) can lose a blind's chain or motor when it rewrites a pair whose sides aren't both stated, and `biqDriveSide` doesn't count Dual as a drive | No real line hits it yet (found in the Finish Logic review); fixing it touches every layout | M |
 | Sizes from AI and form paths take the first digits ("1 200" or "1,200" become 1; "2.5m" becomes 2) | Wrong sizes on some AI-read orders | S |
 | Six of the 34 live blind types have no blocking minimum width | Impossible sizes can pass | S |
 | The XML isn't cleaned of control characters; sundry codes run out after "z" | BlindIQ can reject an import file | S |
@@ -44,7 +44,7 @@ Effort: **S** is under half a day, **M** is one to three days, **L** is longer.
 | The format profile runs after the defaults, so one pass doesn't settle; Mathéo drops unknown columns; CNBW valances are parsed but unused; AI results are applied by line position to whatever order is on screen | Occasional wrong or missing values | M |
 | Some product data is hard-coded and disagrees with the comparison (roll-width allowance of 35 mm against 0; the 5 mm rule on six types) | The two tools can disagree on the same order | M |
 | Not done: the UBL XML parser for Blind Guys double rollers; motor sundry wordings that don't resolve ("Lithium Ion" against "Lithium"); Extras on Blind Guys roller sheets | Manual work for capturers | M |
-| Open rulings for Russel: shutter tilt above 1800 mm; Mathéo Smart Rail with Grey hardware; venetians exactly 600 mm wide; one crank handle per order; vertical chain colour on Anodised and Anthracite tracks | Left to the capturer until decided | — |
+| Open rulings for Russel: is the 65 mm Linear valance a Blind Designs product (BlindIQ has one Linear Valance); shutter tilt above 1800 mm; Mathéo Smart Rail with Grey hardware; venetians exactly 600 mm wide; one crank handle per order; vertical chain colour on Anodised and Anthracite tracks | Left to the capturer until decided | — |
 
 ### Platform and housekeeping
 

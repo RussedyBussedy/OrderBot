@@ -129,7 +129,7 @@ Check a branch with `git branch -r --merged origin/main`, or with the **Branches
 | Committing straight to `main`, including through GitHub's website. Since August 2026, 53 commits went straight to `main` and 10 changes came through pull requests. | A branch and a pull request for every change |
 | "Add files via upload" and "Update index.js" messages: 89 of 249 commits | A summary of what changed, and why in the body |
 | Copies of the code in OneDrive (`BlindIQ Order Converter (updated 17 Jun).html`, `OrderBot integration/js/`) | Branches for work in progress, tags for versions worth keeping |
-| Finished work waiting in a review package (the Finish Logic change of 16 Oct 2026) | Push the branch and open the pull request the same day |
+| Finished work waiting in a review package (the Finish Logic change waited 13 days, 16–29 Oct 2026) | Push the branch and open the pull request the same day |
 | Large mixed changes | One concern per pull request |
 
 ## Working with Claude Code

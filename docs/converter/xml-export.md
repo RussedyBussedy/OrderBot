@@ -147,9 +147,9 @@ BlindIQ's importer silently drops sundry lines without a code, according to the 
 - when every item code is numeric, sundries get the next numbers, padded to the same width (items "0001"–"0004" give sundry "0005");
 - otherwise they get the first letters a–z not already used.
 
-## Notes sent to BlindIQ (TBD purchase orders)
+## Notes sent to BlindIQ (Finish Logic purchase orders)
 
-For orders read from TBD's "Online Purchase Order" (`order.source === 'bdpo'`), the XML carries only the notes a capturer still needs. Every other source is exported with its notes as they are.
+For orders read from a Finish Logic "Online Purchase Order" (TBD's or any other dealer's, `order.source === 'bdpo'`), the XML carries only the notes a capturer still needs. Every other source is exported with its notes as they are.
 
 | Function | Element | Leaves out |
 |---|---|---|

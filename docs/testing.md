@@ -10,7 +10,7 @@ How OrderBot is tested today: an automated regression package that sits next to 
 | What it tests | The comparison rules and AI context (`js/comparison-checks.js`, `js/comparison-context.js`, `js/outdoor-motors.js`) and the converter (`js/biq-converter.js`, the form specs, and the converter UI through jsdom) |
 | How | Node scripts (`*.test.mjs`) that load the repository's own modules and print one `✓` or `❌` line per check |
 | Dependencies | `jsdom`, `pdfjs-dist` 3.11.174 and `xlsx` 0.18.5 (the same PDF and spreadsheet libraries as the page) |
-| Baseline on `main` | About **1,250 passed, 25 failed** (16 October 2026). The unmerged Finish Logic package brings it to 1,310 passed with the same 25 failures. |
+| Baseline on `main` | **1,310 passed, 25 failed** (29 October 2026, with the Finish Logic change). |
 
 What's inside:
 

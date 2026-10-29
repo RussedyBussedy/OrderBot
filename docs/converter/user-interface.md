@@ -162,7 +162,7 @@ Both calls go through the proxy (`D.PROXY_API_URL`) with the standard `{ model, 
 |---|---|---|
 | When | An image, a PDF that no layout matches (scans, handwriting, unknown dealers), or a spreadsheet the Blind Guys parser doesn't recognise | Automatically after `setOrder` when names don't resolve (not for orders typed by hand), and on "✨ AI match names" |
 | Model | `EXTRACTION_MODEL` | `COMPARISON_MODEL`, falling back to `EXTRACTION_MODEL` |
-| Prompt | `biqBuildExtractionPrompt`, given the live ranges and blind types from `biqExtractionVocabulary(MAPS)` | `biqBuildDiscernPrompt(slots)`, with the slots from `biqBuildDiscernment(MAPS, order)` |
+| Prompt | `biqBuildExtractionPrompt`, given the live ranges, blind types and option names from `biqExtractionVocabulary(MAPS)` | `biqBuildDiscernPrompt(slots)`, with the slots from `biqBuildDiscernment(MAPS, order)` |
 | Input | The whole file as base64 `inlineData`, with the browser's MIME type for it | Text only |
 | Schema | `BIQ_EXTRACTION_SCHEMA` | `BIQ_DISCERN_SCHEMA` |
 | Temperature on 2.x models | 0.1 | 0 |

@@ -283,7 +283,7 @@ The sheet's valance columns are parsed but not used. `biqCnbwCoherent` accepts t
 
 Anything not recognised, every image, and every scan (a PDF with 40 or fewer characters of text) is read by Gemini. `aiExtract` sends the file with the prompt from `biqBuildExtractionPrompt` and the schema `BIQ_EXTRACTION_SCHEMA`.
 
-**The prompt** lists the live blind types and each one's live ranges from `biqExtractionVocabulary`, in BlindIQ's spelling, and teaches the AI the dealer conventions the deterministic readers know:
+**The prompt** lists the live blind types, each one's live ranges, and each one's BlindIQ option names with their values (`biqExtractionVocabulary`, the options from `biqExtractionOptions`), in BlindIQ's spelling. The AI is told to write every option with one of those names, only when the document asks for it, and never another product's option (Roller System 55's "Closed Cassette (Motor Only)" or a double roller's "Cassette Colour" on a Roller System 40). The keys the converter's own rules read keep their names on every product: Mech Colour, a valance's Valance Type / Colour / Width / Returns on a blind line, and a double roller's Blockout Fabric and View Fabric. A choice that matches none of the options goes into the options in the document's own words, so the capturer sees it, and a remark goes into the line's notes. In the October 2026 A/B test on 93 AI-read documents (two readings each, scored against the final BlindIQ orders), the names and the converter change took Roller System 40 cassettes from 26 of 175 right to 138, blind types on the documents without cassettes from 73–74% to 90–92% right, and red problems down by 18–37%, for about 6,600 more prompt tokens per document. The prompt also teaches the AI the dealer conventions the deterministic readers know:
 
 - range and colour kept apart;
 - "Left" / "Right" on rollers means chain left / right;
@@ -291,6 +291,7 @@ Anything not recognised, every image, and every scan (a PDF with 40 or fewer cha
 - "F/F" is Face and "I/R" is Reveal;
 - hardware colour is never defaulted;
 - dealer column names (Comp Col, Bott Bar Col, Cass Col…);
+- the 70 mm cassette and its fabric insert: "Sys 40 70mm Cassette=<colour>" (Grey is Silver), "Yes" when the document gives no colour, never a guessed colour; "Fabric Insert for 70mm Cassette=Yes"; where they are written (a column that holds both, a priced sub-line, handwriting across the row, the order notes or the e-mail); a general mention covers every roller blind; a shared cassette goes on each of its blinds with the sentence in their notes; "No cassette" means none;
 - a valance on a blind line given as Valance options;
 - a double roller as one line with Blockout Fabric and View Fabric;
 - the BD order form's second-fabric row;
@@ -301,7 +302,8 @@ Anything not recognised, every image, and every scan (a PDF with 40 or fewer cha
 - It falls back to the fabric splitter when the AI left the colour empty.
 - It keeps the first run of digits of each size.
 - Option strings "Key=Value" become options, and a bare option becomes "Key = Yes".
-- It records the options the AI stated (`_givenOpts`) and a stated Val Size (`_valSizeStated`).
+- It records the options the AI stated (`_givenOpts`) and a stated Val Size (`_valSizeStated`). A Mech Colour the AI gives counts as the order's (`_hwFromOrder`), White too: the AI is told never to fill one in.
+- After the pipeline's cassette rules, `biqCassetteFromNotes` reads a cassette the AI left in the notes (see [rules](rules.md#valances-and-cassettes)).
 - It merges double-roller second-fabric rows (`biqMergeDoubleRollerRows` with `copySizes`).
 - It resolves AI sundries in the motor sundry types first, then once in the whole orderable catalogue.
 - It stages and expands valances.

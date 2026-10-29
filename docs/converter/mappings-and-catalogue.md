@@ -138,7 +138,7 @@ Other lookups built on the same data:
 - `biqRangesWithColour`: the live, orderable ranges of a type that carry a colour.
 - `biqInferRangeFromColour`: the range from the colour.
 - `biqCatalogueLookups`: the live ranges and ranges-for-colour lists the comparison's rule checks use, through `biqComparisonCatalogue`.
-- `biqExtractionVocabulary`: the live types and ranges listed in the AI extraction prompt.
+- `biqExtractionVocabulary`: the live types and ranges listed in the AI extraction prompt, and each type's option names and values (`biqExtractionOptions`: the union of its live ranges' option sheets, without formula fields).
 
 ## Bad IDs
 

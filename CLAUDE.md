@@ -6,6 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 OrderBot is an AI-powered document comparison tool for Blind Designs (blind/shutter manufacturer). It compares customer order documents against Blind IQ documents using Google Gemini 3.8 Flash and validates extracted specifications against stored reference data.
 
+## Documentation
+
+Human-readable docs live in `docs/` (start at `docs/README.md`), and `CONTRIBUTING.md` describes the branch → pull request → merge workflow. When a change alters behaviour, a rule, a data shape or a deployment step, update the matching `docs/` page in the same pull request. This file stays the agent-facing summary and rule log.
+
 ## Architecture
 
 ```
@@ -13,10 +17,10 @@ Frontend (index.html + js/)             →    Backend proxy (index.js)
 Hosted on GitHub Pages / SharePoint         Hosted on Google Cloud Run (africa-south1)
                                                 ↓
                                         Google Gemini API (3.8 Flash)
-Firebase Firestore (6 collections) ←————— Firebase SDK (client-side, anonymous auth)
+Firebase Firestore (9 collections) ←————— Firebase SDK (client-side, anonymous auth)
 ```
 
-All business logic lives in `index.html`. The backend is intentionally minimal — a stateless proxy that injects the Gemini API key from Secret Manager and forwards requests. It caches nothing except the API key in memory.
+The comparison flow and most of the UI live in `index.html`; the rule checks, prompt context, outdoor motor table and the converter live in `js/` modules. The backend is intentionally minimal — a stateless proxy that injects the Gemini API key from Secret Manager and forwards requests. It caches nothing except the API key in memory.
 
 ## Development Commands
 
@@ -39,7 +43,7 @@ gcloud run deploy gemini-secure-proxy \
   --project orderbot-2b212
 ```
 
-There are no tests, linters, or build steps. The frontend is served as static files — open `index.html` directly or push to `main` for GitHub Pages.
+There are no tests in this repository (the regression package lives outside it, see `docs/testing.md`), and no linters or build steps. The frontend is served as static files — open `index.html` directly or push to `main` for GitHub Pages.
 
 ## Files
 
@@ -47,11 +51,14 @@ There are no tests, linters, or build steps. The frontend is served as static fi
 |------|---------|
 | `index.html` | Single-page app — all HTML, CSS, and JS |
 | `index.js` | Express proxy — forwards requests to Gemini API via Secret Manager |
-| `js/config.js` | Firebase config, `PROXY_API_URL`, `PROMPT_VERSION` |
-| `js/constants.js` | Validation constants: blind type exclusion lists, `CACHE_TTL_MS` |
-| `js/biq-converter.js` | Document converter core (pure, no DOM): parses Blind Guys xlsx / Mathéo PDF / BD forms / AI JSON → BlindIQ order + XML; name→ID resolution via `orderbot_biq_mappings` (Firestore) |
-| `js/biq-converter-ui.js` | Converter UI (Drawings tab): drag-drop, preview, mappings manager |
-| `js/biq-form-specs.js` | Converter seed mappings / extraction schema / form specs |
+| `js/config.js` | Firebase config, `PROXY_API_URL`, `PROMPT_VERSION`, `SECOND_READING`, `EXTRACTION_MODEL`, `COMPARISON_MODEL`, `isGemini3` |
+| `js/constants.js` | Validation constants: blind type exclusion lists, `CRITICAL_FIELDS`, `CACHE_TTL_MS` |
+| `js/comparison-context.js` | What the comparison AI is told (pure, tested in node): corrections, `BD_STANDARDS`, `READING_RULES`, `NOT_SPECIFIED_RULES`, `RESULT_VALUES`, the converter reading, the second-reading prompt |
+| `js/comparison-checks.js` | Rule checks after the AI (pure, tested in node): `applyDeterministicChecks`, `applyExactReading`, `needsSecondReading`, `reconcileSecondReading` |
+| `js/outdoor-motors.js` | The Zip X motor table and `validateOutdoorMotors` |
+| `js/biq-converter.js` | Document converter core (pure, no DOM): parses Blind Guys xlsx / Mathéo PDF / BD forms / AI JSON → BlindIQ order + XML; name→ID resolution via `orderbot_biq_mappings` (Firestore); also holds `BIQ_SEED_MAPPINGS` and `BIQ_EXTRACTION_SCHEMA` |
+| `js/biq-converter-ui.js` | Converter UI (the "BlindIQ XML converter" section of the Orders view, called "the Drawings tab" in older notes below; the header's Drawings pill is the bd-tools visualiser): drag-drop, preview, mappings manager |
+| `js/biq-form-specs.js` | BD order-form specs: `BIQ_FORM_SPECS`, `biqDetectForm`, `biqParseSpecForm`, `biqElementGridOptions` |
 | `js/cost-report-console.js` | Admin-only "Cost report" view: Paul's settings for the Daily Cost Report (see below) |
 | `package.json` | 2 dependencies: `express` and `@google-cloud/secret-manager` |
 | `Dockerfile` | Cloud Run deployment (node:20-slim, port 8080) |
@@ -87,6 +94,8 @@ When extracting more modules to `js/`, follow this pattern: named exports only (
 | `orderbot_fabric_properties` | Fabric name, weight, width, canTurn |
 | `orderbot_motor_properties` | Motor name, torque, blind type, adapter, accessories |
 | `orderbot_tube_properties` | Blind type → tube diameter mapping |
+| `orderbot_biq_mappings` | Converter mappings, one document per category (sharded above 700,000 characters); see `docs/converter/mappings-and-catalogue.md` |
+| `orderbot_customer_formats` | Converter format profiles per customer (document `all`), written in admin mode on XML download |
 | `orderbot_cost_report` | Daily Cost Report: `settings` (written by the Cost report view), `catalog` and `status` (written by the office PC) |
 
 ## Cost report console (Oct 2026)
@@ -126,7 +135,7 @@ Admin mode adds a third view, **Cost report** (`js/cost-report-console.js`), whe
 - **`BD_STANDARDS`**: what Blind Designs supplies when the customer is silent (White hardware, bar/cassette follow hardware, 5 mm size steps, control-drop formulas, Out of Warranty limits, venetian split/grouped, vertical chain colour = track, 107 mm Allusion, Urban rails, cellular White, System X cranks, master carriers by stack) and dealer name synonyms. It also names what follows from what the customer did state, so the critical-field rule doesn't flag it: the pin opposite a stated chain side, Linear Valance for a roller blind's valance whose style isn't named (403 of 520 valance lines in 2026 orders; not for venetian valances), and item letters shifted by Blind IQ's separate valance lines. Keep it in step with the converter rules above.
 - **`NOT_SPECIFIED`** result (`RESULT_VALUES`): a field or specification the customer document doesn't mention at all is information, rendered grey "not on order", not counted as a flag or low confidence. Never for Paul's `CRITICAL_FIELDS` — the prompt says so and `applyConfidenceThresholds` turns any critical NOT_SPECIFIED back into OMISSION. Over half of the 13,679 flags in the first 841 comparisons were such values.
 - **Converter reading**: `biqReadCustomerFile` (js/biq-converter-ui.js) runs each customer PDF through the Drawings tab's own layout detection (`biqDetectPdf` / `biqDetectXlsx`, shared with `loadPdf` / `loadXlsx`) and rule pipeline (`biqRunRulePipeline` — keep in step with `refresh()`), never the AI; `describeConverterReading` gives the AI the lines in Blind IQ names, options equal to the sheet default marked "(default)", and the converter's notes. Unrecognised layouts and images add nothing.
-- `PROMPT_VERSION` is stored with each comparison (`pv`); see v2.4 below.
+- `PROMPT_VERSION` is stored with each comparison (`promptVersion`); see v2.4 below.
 
 ## Comparison AI: missed mistakes and noise (prompt v2.4, Oct 2026)
 

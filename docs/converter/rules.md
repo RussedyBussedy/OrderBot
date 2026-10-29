@@ -31,7 +31,7 @@ Terms such as range, fix, control drop and valance are in the [Glossary](../glos
 | An unknown range uses the formula every live range of the blind type shares, else 75%. | `biqTypeFormula` | Allusion and the venetians all use 66%; the old 75% fallback put 9 such lines 9 points out. |
 | A System 40 1.5:1 blind's automatic control drop is 80%. | `biqRecomputeControlDrops`, `biqApplyOptionDefaults` | All 47 stored lines at exactly 0.80 of the drop are 1.5:1 blinds. |
 | An automatic control drop follows later changes; a typed one stays (`_cdAuto`). | `biqRecomputeControlDrops`, the editor | — |
-| A TBD purchase-order note that is only a chain length ("Chains must be 1100mm long") becomes the control drop on a chain-driven line, from 300 to 6000 mm. | `biqBdpoChainNote` | The TBD capturer keyed the length as the control drop each time. |
+| A Finish Logic purchase-order note that is only a chain length ("Chains must be 1100mm long") becomes the control drop on a chain-driven line, from 300 to 6000 mm. | `biqBdpoChainNote` | The TBD capturer keyed the length as the control drop each time. |
 
 The exported `biqComputeControlDrop` (75%, floored) is legacy: nothing calls it.
 
@@ -69,7 +69,7 @@ BlindIQ has two control fields, and how they are used depends on the product:
 | A Top fix on a range whose list has Reveal but not Top becomes Reveal, noted. | `biqRepairTopFix` | No live range offers Top. Capturers turned all 15 converted Roller System 40 "Top" lines into Reveal. |
 | Curtain ranges take no item fix: Top / Face / Face Double move into the Top Fix / Face Fix / Double Face Fix options, anything else into "Other Fix?", and the item fix is cleared. | `biqApplyOptionDefaults` | 2,821 of 2,837 manually captured 2026 curtain lines leave the item fix empty. |
 | A fix the range doesn't offer, or any fix on a range that takes none, is a problem. | `biqCollectProblems` with `biqRangeFixIds` | Since June 0.48% of imported blinds were stored with such a fix, against 0.07% of manual ones. |
-| Perfect Fit gaskets: see [Perfect Fit](#perfect-fit). TBD purchase orders: Cassette Fix fills an empty fix, and a valance with a top board is Face fixed (`biqNormalizeBdPo`). | | 5,933 of 6,185 stored valance lines with a top board are Face fixed. |
+| Perfect Fit gaskets: see [Perfect Fit](#perfect-fit). Finish Logic purchase orders: Cassette Fix fills an empty fix, and a valance with a top board is Face fixed (`biqNormalizeBdPo`). | | 5,933 of 6,185 stored valance lines with a top board are Face fixed. |
 
 ## Options and defaults
 
@@ -163,8 +163,9 @@ A Perfect Fit blind sits in its own frame, clipped into the window's beading on 
 | A line colour that is one of the sheet's Colour values moves into that option and the item colour is cleared. | `biqApplyOptionDefaults` | Russel, 11 Aug 2026: a BlindIQ capture picks the track colour on the sheet. |
 | Master Carrier: TBD's "Butt Arm Kit" becomes "Quiet Butt Arm Kit" where only the quiet part exists, and a "Quiet …" part becomes the plain one where the track has no quiet version (noted). | `biqFoldOptionSynonyms` | Russel, 11 Aug 2026; capturers stored the plain part on all 8 such lines. |
 | A Butt Arm Kit on a one-way stack becomes a Single Butt Arm, and the reverse on a centre split or float stack, noted. | `biqApplyOptionDefaults` | All 334 stored curtain lines follow the stack. |
-| TBD purchase orders: "Motor Side" is Control 1 Lh / Rh Motor on a curtain track; the double track's "Runner Type and Spacing (Front / Back Track)" fill the one key (front value, back noted); a Crank Handle the sheet offers is the option. | `biqNormalizeBdPo` | 677 of 756 Curtain Somfy lines carry Lh / Rh Motor. |
+| Finish Logic purchase orders: "Motor Side" is Control 1 Lh / Rh Motor on a curtain track; the double track's "Runner Type and Spacing (Front / Back Track)" fill the one key (front value, back noted); a Crank Handle the sheet offers is the option. | `biqNormalizeBdPo` | 677 of 756 Curtain Somfy lines carry Lh / Rh Motor. |
 | Curtain tracks and valances have no drop: an empty drop exports as 0 and isn't a problem. | `biqGenerateXML`, `biqCollectProblems` | Russel, 7 Aug 2026; TBD prints curtain drops as 0. |
+| Finish Logic purchase orders: a motorised curtain track (Curtain Somfy: Movelite, Glydea) keeps White on its colourless range; any other colour is still flagged, because it would import as BlindIQ's colour of that name. | `biqCollectProblems` | The capturer kept White on all 9 such lines (Finish Logic review, 16 Oct 2026). |
 
 ## Cellular
 
@@ -181,6 +182,7 @@ A Perfect Fit blind sits in its own frame, clipped into the window's beading on 
 |---|---|---|
 | A crank-driven blind whose sheet offers exactly one crank Control gets it (System X: Zip X, Channel X, Wire X → Silver Crank 8:1). Free Hang has five crank colours, so its crank stays as ordered. | `biqApplyOptionDefaults` | Outdoor product page, rulings 30 Sep and 1 Oct 2026; 27 of 27 stored System X crank lines. |
 | A motorised outdoor blind gets Crank Handle = None, and a crank the sheet still printed is noted as dropped. | `biqApplyOptionDefaults` | All 130 manually captured motorised outdoor blinds in 2026. |
+| Finish Logic purchase orders: a line whose sheet requires a crank handle gets Crank Handle = None when the PO gives that line no crank or handle option (Finish Logic prints the handle on the one blind it comes with). A handle the sheet doesn't offer stays a problem; an amber heads-up appears when no blind on the PO has one. | `biqNormalizeBdPo` | The capturer stored None on all 5 such Free Hang lines (Finish Logic review, 16 Oct 2026). |
 | Mathéo outdoor sheets: "Brackets: Black" is the Bracket Colour, columns named like sheet options go there, and the sheet's Control option mirrors the Controls column. | `biqNormalizeMatheo` | Russel, 7 Aug 2026. |
 | Outdoor sizes are made to the millimetre and never rounded. | `biqRoundSizes` | — |
 

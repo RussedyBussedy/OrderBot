@@ -11,7 +11,7 @@ For the stages around this (detection, the shared rule pipeline, the XML) see th
 | Blind Guys order workbook | `.xlsx` / `.xls` | A header row with "Item #" and "Location" in the first 15 rows of the first sheet | `biqParseBlindGuysRows` → `biqNormalizeBlindGuys` | `blindguys` | One sheet per product: roller, double roller, wood venetian, aluminium venetian, vertical, shutter (outdoor, Romashade and cellular sheets go through the roller reader) |
 | Blind Guys workbook printed to PDF | `.pdf` | Text with "ORDERNo/Ref:", "Item #" and "Finished Width/Height"; must pass `biqTbdCoherent` | `biqBgPrintToRows` → the workbook reader above | `blindguys` | Rebuilds the spreadsheet grid from the text, so the print converts like the workbook |
 | Mathéo order sheet | `.pdf` | "Mathéo" or "matheoblinds" in the text, plus a header line with "#", "Location" and "Price" | `biqParseMatheoItems` → `biqNormalizeMatheo` | `matheo` | One layout per product; the "BD …" title and each row's price group decide the blind type |
-| TBD purchase order ("Online Purchase Order") | `.pdf` | "Online Purchase Order:" and "Total Blind Design" | `biqParseBdPo` → `biqNormalizeBdPo` | `bdpo` | Printed in BlindIQ's own names with "K=V\|" options and ZIQ sundry codes; notes filtered at export |
+| Finish Logic purchase order ("Online Purchase Order": TBD, Galaxy Blinds, any dealer) | `.pdf` | The "Online Purchase Order:" banner and the Item … Price header, without BlindIQ Online's "IQ Link ID" label | `biqParseBdPo` → `biqNormalizeBdPo` | `bdpo` | Printed in BlindIQ's own names with "K=V\|" options and ZIQ sundry codes; checked against the PO's Blind Total; notes filtered at export |
 | BlindIQ Online export | `.pdf` (`BlindIQ_ExportedCO_<IQ Link ID>.pdf`) | "Online Purchase Order:" and "IQ Link ID" | `biqParseBiqOnline` → `biqNormalizeBiqOnline` | `biqonline` | Marked `exact`; the comparison takes it as printed |
 | Lifestyle Blinds | `.pdf` | "lifestyleblinds", or "PURCHASE ORDER" with "AUTONEER" | `biqParseLifestyle` → `biqNormalizeLifestyle` | `lifestyle` | Product, range and colour are encoded in one Description |
 | Curtain & Blind Workshop (CNBW) | `.pdf` | "curtain and blind workshop", "cnbw.co.za" or "goldcut"; must pass `biqCnbwCoherent` | `biqParseCnbw` → `biqNormalizeCnbw` | `cnbw` | Roller, outdoor, shutter, venetian and double roller sheets; several template generations |
@@ -32,7 +32,7 @@ flowchart TD
     C -->|"nothing read"| D
     D -->|"no: a scan"| Z["AI extraction"]
     D -->|"yes"| M["Mathéo"]
-    M -->|"not this"| P["TBD purchase order"]
+    M -->|"not this"| P["Finish Logic purchase order"]
     P -->|"not this"| O["BlindIQ Online"]
     O -->|"not this"| G["Blind Guys print (coherence check)"]
     G -->|"not this"| L["Lifestyle"]
@@ -41,7 +41,7 @@ flowchart TD
     T -->|"not this"| Z
 ```
 
-Order matters. The TBD software signature ("ORDER" plus "Options:") is the loosest, so it comes last. The TBD purchase order and BlindIQ Online exports share the "Online Purchase Order:" title, and only their other marker ("Total Blind Design" or "IQ Link ID") tells them apart. Unverified: a BlindIQ Online export placed by TBD itself would print "Total Blind Design" too, so it would probably be read by the TBD purchase-order parser first. Parsers added after October 2026 are called through the `BiqConv` namespace with a guard (as `biqParseBiqOnline` is), so a browser still holding the previous `js/biq-converter.js` just skips that layout instead of failing to load.
+Order matters. The TBD software signature ("ORDER" plus "Options:") is the loosest, so it comes last. The Finish Logic purchase order and BlindIQ Online exports share the "Online Purchase Order:" title. The export's own "IQ Link ID" label (a text item of its own; the words in a dealer's note don't count) leaves it to `biqParseBiqOnline`, and a document whose From column is Blind Designs is never read as a dealer's PO, so an export placed by TBD itself is still read as an export. Parsers added after October 2026 are called through the `BiqConv` namespace with a guard (as `biqParseBiqOnline` is), so a browser still holding the previous `js/biq-converter.js` just skips that layout instead of failing to load.
 
 ## Blind Guys order workbook
 
@@ -124,18 +124,19 @@ Mathéo's sheet changes with the product ordered (roller, designer roller, doubl
 - **Accessory rows** become the sheet's Wire Side Guides option where it has one, otherwise sundry lines (motor parts resolve in the motor sundry types). Prices are ignored; BlindIQ prices for itself.
 - **Valance sheet** (`biqMatheoValance`): each row is a BlindIQ Valance line, and "Type of Blind" is filled as Roller Blind and noted, because the sheet doesn't print it.
 
-## TBD purchase order ("Online Purchase Order")
+## Finish Logic purchase order ("Online Purchase Order")
 
-Total Blind Designs (TBD) send a PO printed in BlindIQ's own vocabulary: exact blind type, range, colour and control names, the sheet's options as "K=V|K=V|" lines under each item, and a SUNDRIES section with ZIQ stock codes. According to the October 2026 Finish Logic review (Claude project doc `claude/orderbot-finish-logic-compatibility-2026-10.md`), these POs come from Finish Logic, a dealer quoting app built at TBD.
+Finish Logic, a quoting app for blind dealers built by the owner of Total Blind Designs (TBD), prints a PO in BlindIQ's own vocabulary: exact blind type, range, colour and control names, the sheet's options as "K=V|K=V|" lines under each item, a SUNDRIES section with ZIQ stock codes, and a "Blind Total". TBD has sent these since August 2026, Galaxy Blinds since late August, and any dealer that adopts Finish Logic sends the same layout. Evidence and decisions: `CLAUDE.md` ("Converter: Finish Logic purchase orders") and the Claude project doc `claude/orderbot-finish-logic-compatibility-2026-10.md`.
 
 **Parser** (`biqParseBdPo`):
 
-- Recognised only when the PDF says "Total Blind Design", and the customer is always set to it.
-- The order number is the "Quote Ref", else the title's reference. Order and required dates are read, plus the operator and the "FINAL MEASURED" watermark (both become order notes).
+- Recognised by the layout (the banner and the Item … Price header), not by a dealer's name. The customer is the Name in the PO's From column (`biqBdpoDealer`); a PO without one is still read, as TBD's when the page names TBD.
+- The order number is the dealer's job number at the start of the file name when that dealer's pattern is known (`BIQ_BDPO_JOB_RE`: Galaxy's L or H plus 5 digits, "H17314 [client].pdf" → H17314), else the "Quote Ref", else the title's reference. `biqNormalizeBdPo` takes the file name for this. Order and required dates are read, plus the operator and the "FINAL MEASURED" watermark (both become order notes).
 - Columns are anchored on a fixed title list. The header has two "Control" columns: the first is Control 1, the second Control 2.
 - A money amount right of the Fix column is the price. A five-figure outdoor price used to land in Fix ("Reveal 24,642.00").
 - The repeated column header, the "ONLINE PURCHASE ORDER" banner and the watermark are skipped at every page break, so they can't bleed into the open row.
 - "K=V|" lines (and their wraps) belong to the item above; "Notes:" in that run starts the item's notes.
+- **An item row always starts a new blind:** a letter under Item and a quantity under QTY end any open option run, even one without its closing "|". Finish Logic's own remarks after a line's options stay on the line as "Finish Logic: …" for the capturer; BlindIQ doesn't get them.
 
 **Normaliser** (`biqNormalizeBdPo`):
 
@@ -145,18 +146,22 @@ Total Blind Designs (TBD) send a PO printed in BlindIQ's own vocabulary: exact b
 - **Options:**
   - No of Runners, Tape Length and Stack Size are dropped, because BlindIQ calculates them.
   - Motorisation keys (`BIQ_TBD_SUNDRY_KEYS`: Motor, Adaptor, Charger, Remote, Wall Switch, Smart Hub, Smart Plug…) become notes, and also sundry lines unless marked "Not BD Supply".
-  - "Joined To" becomes a note, plus Coupled Bracket Yes when coupled.
+  - "Joined To=Blind N" counts blinds (a valance is a line of its own) and pairs the partners the PO names (`_bdpoJoin`, `_joinWith`, then `biqApplyBracketPairs`), but only when both lines state coupled sides that meet (one Rh Coupled, the other Lh Coupled): the bracket is costed and no control is touched. Anything else is left to the consecutive pairing, as before. "Joined To=g (Coupled)" works too.
   - "Cassette Fix" fills an empty Fix.
   - "Motor Side" on a curtain track is Control 1 Lh / Rh Motor.
   - "Runner Type and Spacing (Front / Back Track)" fill the one BlindIQ key from the front track, with a different back value noted.
   - A Crank Handle the sheet offers is the option, not a sundry.
-  - Three TBD option names are re-keyed (`biqBdpoSheetKey`): Top Board, 1 x Custom Angle Bend and Magnetic Hold Down.
+  - Three Finish Logic option names are re-keyed (`biqBdpoSheetKey`): Top Board, 1 x Custom Angle Bend and Magnetic Hold Down. It also takes the one sheet value that ends with the printed one (Galaxy's "Top Board=90mm" → Yes 90mm).
   - Anything else not on the sheet becomes a note.
 - A valance with a top board is Face fixed. Coupled controls set Coupled Bracket Yes.
+- **Finish Logic's range names** (`BIQ_BDPO_RANGES`, `biqBdpoRange`), used only when the printed range doesn't resolve for the blind type: Linear 65mm / 108mm → Linear Valance, Roman Panel Headrail (Price) → Roman Headrail, Ripple Glydea 60kg → Glydea 220v 60 Ripple. The line notes what was read as what, for the capturer only. A mapping alias added later takes over.
+- **Crank Handle None** on a line whose sheet requires a crank handle when the PO gives that line no crank or handle option at all. A handle the sheet doesn't offer stays a problem, and an amber heads-up appears when no blind on the PO has a handle.
+- **Motorised curtain tracks** (Curtain Somfy) keep White on their colourless range, as the capturers always did; any other colour is still flagged.
+- **The Blind Total check:** the lines and SUNDRIES must add up to the PO's Blind Total within R1. If they don't, a problem asks the capturer to compare the order with the PDF, because a blind or sundry may not have been read. Adding, deleting or swapping a line or a sundry clears it (`_poLine`, `_poSundry`, `_bdpoTotal`).
 - **Sundries:** the SUNDRIES section resolves by ZIQ code or name in the orderable sundries. Hardware named only in the options is added as further lines, de-duplicated by stock code and then by resolved ID, and summed across blinds.
 - The notes the converter writes from TBD's options are recorded in `_bdpoGen`, so `biqExportItemNotes` can leave them out of the XML. A line with no fix on a range that takes one is a problem for this source only.
 
-**Known issue:** while an option run doesn't end with "|", every following line is treated as its wrap. When Finish Logic prints a warning after a line's options without a closing "|", the blinds after it are swallowed into that line's options without any flag. The Finish Logic review found one such PO. A fix exists on the unmerged `finish-logic-2026-10` work (see [Known issues and roadmap](../known-issues-and-roadmap.md)).
+**Still open:** the shared coupled-pair function every layout uses (`biqApplyCoupledPair`) can lose a drive when it has to rewrite a pair whose sides aren't both stated. The Finish Logic pairing never rewrites controls, so it doesn't reach that path ([Known issues and roadmap](../known-issues-and-roadmap.md)).
 
 ## TBD ordering software ("BLINDS ORDER")
 
@@ -186,11 +191,11 @@ TBD license their ordering software to other dealers, so the letterhead varies (
 
 ## Galaxy Blinds
 
-Galaxy Blinds' documents are TBD-software output. Their older "BLINDS ORDER" layout is read by `biqParseTbd`. Their newer "Online Purchase Order" doesn't say "Total Blind Design", so `biqParseBdPo` doesn't accept it and it goes to the AI. Customer matching strips legal suffixes for the suggestion ("Galaxy Blinds" against "Galaxy Blinds (Pty) Ltd") but never auto-matches; see [Mappings and catalogue](mappings-and-catalogue.md#customers).
+Galaxy Blinds' documents are Finish Logic output. Their older "BLINDS ORDER" layout is read by `biqParseTbd`, and their newer "Online Purchase Order" by `biqParseBdPo`, like TBD's, with the job number from the file name as the order number. Customer matching strips legal suffixes for the suggestion ("Galaxy Blinds" against "Galaxy Blinds (Pty) Ltd") but never auto-matches; see [Mappings and catalogue](mappings-and-catalogue.md#customers).
 
 ## Finish Logic
 
-There is no separate Finish Logic parser in this repository. Its two layouts are the TBD purchase order and TBD ordering software formats above. Only POs that print "Total Blind Design" are read deterministically; any other dealer's Finish Logic PO goes to the AI. A reader for every dealer's Finish Logic PO (the `finish-logic-2026-10` work of 16 October 2026) was built and tested but is not in this repository.
+Finish Logic produces both layouts above: the "Online Purchase Order" (read for every dealer by `biqParseBdPo`, since the `finish-logic-2026-10` change) and the older "BLINDS ORDER" (`biqParseTbd`). A dealer that starts sending Finish Logic POs needs nothing new in the code, unless it names its files by job number, in which case add its pattern to `BIQ_BDPO_JOB_RE`.
 
 ## BlindIQ Online export (exact)
 

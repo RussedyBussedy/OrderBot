@@ -94,14 +94,14 @@ PDFs are tried in this order, and the first match wins:
 | 1 | At least 3 filled form fields, and `biqDetectForm` names a form other than `element` | `biqParseSpecForm` | "order form (…)" |
 | 2 | Filled form fields, when step 1 found nothing | `biqParseBDFields`, `biqNormalizeBDForm` (with `biqElementGridOptions`) | "Blind Designs order form" |
 | 3 | The PDF has more than 40 characters of text (this test covers steps 3 to 9) | `biqParseMatheoItems`, `biqNormalizeMatheo` | "Mathéo order sheet" |
-| 4 | | `biqParseBdPo`, `biqNormalizeBdPo`: Total Blind Designs' online purchase order | "Blind Designs online purchase order" |
+| 4 | | `biqParseBdPo`, `biqNormalizeBdPo`: Finish Logic purchase orders (TBD, Galaxy Blinds, any dealer) | "Blind Designs online purchase order" |
 | 5 | | `BiqConv.biqParseBiqOnline`, `BiqConv.biqNormalizeBiqOnline` | "BlindIQ Online order" |
 | 6 | | `biqBgPrintToRows`, then the Blind Guys parser; kept only if `biqTbdCoherent` agrees | "Blind Guys sheet (PDF)" |
 | 7 | | `biqParseLifestyle`, `biqNormalizeLifestyle` | "Lifestyle order" |
 | 8 | | `biqParseCnbw`, `biqNormalizeCnbw`; kept only if `biqCnbwCoherent` agrees | "Curtain & Blind Workshop order" |
 | 9 | | `biqParseTbd`, `biqNormalizeTbd`; kept only if `biqTbdCoherent` agrees | "TBD order" |
 
-If nothing matches, `loadPdf` sends the file to the AI without a toast. Step 4's label says "Blind Designs" although the core's comment describes the parser as Total Blind Designs' (TBD) purchase order. What each layout looks like is in [dealer-formats.md](dealer-formats.md).
+If nothing matches, `loadPdf` sends the file to the AI without a toast. Step 4's toast still says "Blind Designs online purchase order"; the order's own source label reads "Finish Logic purchase order (<dealer>)". What each layout looks like is in [dealer-formats.md](dealer-formats.md).
 
 The text of a recognised file goes into `lastSourceText`, and `setOrder` stores it on the order as `_sourceText`. For an AI read it's the AI's JSON. `biqLearnFormat` uses it so it only learns wording that was really on the document.
 

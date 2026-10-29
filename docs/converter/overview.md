@@ -246,7 +246,7 @@ Both make up to three attempts (extraction retries only on 429 and 5xx errors), 
 
 - The AI path and the curtain, outdoor and shutter order form reader (`biqParseSpecForm`) take the first run of digits as a size, so "1 200" or "1,200" becomes 1.
 - The XML escaping doesn't strip control characters, and sundry codes stop at "z". See [XML export](xml-export.md#known-gaps).
-- The TBD purchase-order parser can swallow the following blinds when an option line doesn't end with "|". See [Dealer formats](dealer-formats.md#tbd-purchase-order-online-purchase-order).
+- The shared coupled-pair function (`biqApplyCoupledPair`) can lose a drive when it rewrites a pair whose sides aren't both stated. See [Dealer formats](dealer-formats.md#finish-logic-purchase-order-online-purchase-order).
 
 The full list is in [Known issues and roadmap](../known-issues-and-roadmap.md).
 

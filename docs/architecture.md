@@ -133,9 +133,8 @@ A developer taking over needs all of these. Until each one has a home in a priva
 
 | What | Where it is now | Why it matters | Suggested home |
 |---|---|---|---|
-| Regression tests (`orderbot-tests.zip`) | OneDrive: `Document Converter/OrderBot reviews/` | The only automated safety net: about 1,250 checks pass on `main`. Kept out of this repo because its fixtures are business data. | `tests/` in this repo once it's private ([testing.md](testing.md)) |
+| Regression tests (`orderbot-tests.zip`) | OneDrive: `Document Converter/OrderBot reviews/` | The only automated safety net: about 1,310 checks pass on `main`. Kept out of this repo because its fixtures are business data. | `tests/` in this repo once it's private ([testing.md](testing.md)) |
 | Review packages for each change (patches, tests, replays) | OneDrive: `Document Converter/OrderBot reviews/<topic>/` and `Document Converter/OrderBot converter accuracy 2026-10-09/` | Evidence behind the rules | Pull requests and their descriptions; data in a private store |
-| Finished but unmerged work: the Finish Logic purchase-order support (`finish-logic-2026-10`, 16 Oct 2026) | Patches in its review package only; the branch isn't on GitHub | Easy to lose or forget | Push the branch and open a pull request |
 | Analysis tooling for the quarterly review and monthly report (`analysis-tools/`, `monthly/`: SQL, `compute.mjs`, `render.mjs`, `firestore_export.js`) | OneDrive: `Document Converter/OrderBot reviews/` | Produces the numbers management sees | A private `orderbot-analytics` repo |
 | Daily Cost Report (`cost_report.py`) | The office PC | Shares a data contract with `js/cost-report-console.js` | Its own private repo |
 | Bend & Blind Visualiser source | Not in any repository. Only an encrypted build is in `RussedyBussedy/bd-tools`. | The Drawings view depends on it | A private repo with the build step |

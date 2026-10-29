@@ -2111,11 +2111,34 @@ export function biqNormalizeMatheo(mappings, p) {
     return o;
 }
 
-// ---------- TBD "Online Purchase Order" (BD-style PO, 2026-08 format) ----------
-// Total Blind Design's reworked PO prints BlindIQ's own vocabulary: exact blind type /
-// range / colour / control names, sheet option keys as "K=V|K=V" lines under each item,
-// and a SUNDRIES section with real ZIQ stock codes (Russel 2026-08-11). Deterministic
-// parse — no AI needed.
+// ---------- Finish Logic "Online Purchase Order" (TBD's BD-style PO, 2026-08 format) ----------
+// Finish Logic is Dean Hart's quoting app (Total Blind Designs). Its PO prints BlindIQ's own vocabulary:
+// exact blind type / range / colour / control names, sheet option keys as "K=V|K=V" lines under each item,
+// and a SUNDRIES section with real ZIQ stock codes (Russel 2026-08-11). Deterministic parse — no AI needed.
+// The layout decides, never the dealer's name: TBD has sent these since August 2026, Galaxy Blinds from
+// 25 Aug to 20 Sep (all 9 went to the AI reader while this parser asked for "Total Blind Design"), and Finish
+// Logic is being offered to Blind Designs' other dealers. BlindIQ Online's own export prints the same banner
+// but carries an "IQ Link ID" label and has Blind Designs as its From: that one is biqParseBiqOnline's.
+// The dealer the PO comes from: the From block's Name. The From column runs from the "From" label to the "To" label
+// beside it; the Name label's value sits on its line, up to the next label (a Finish Logic PO prints it on the
+// label's line, a BlindIQ Online export a point higher). No Name in the From column: no dealer.
+const BIQ_BDPO_LABELS = /^(name|email|address|quote ref|operator|order date|required date|measure date|tel|fax|cell)$/i;
+function biqBdpoDealer(items) {
+    const is = (i, re) => re.test(biqNorm(i.s));
+    const from = items.filter(i => is(i, /^from$/i)).sort((a, b) => b.y - a.y)[0];
+    if (!from) return '';
+    const to = items.find(i => is(i, /^to$/i) && Math.abs(i.y - from.y) <= 3 && i.x > from.x);
+    const right = to ? to.x - 5 : Infinity;
+    const name = items.filter(i => is(i, /^name$/i) && Math.abs(i.x - from.x) <= 12 && i.y < from.y && from.y - i.y <= 40)
+        .sort((a, b) => b.y - a.y)[0];
+    if (!name) return '';
+    const out = [];
+    for (const i of items.filter(i => i !== name && Math.abs(i.y - name.y) <= 3 && i.x > name.x && i.x < right).sort((a, b) => a.x - b.x)) {
+        if (is(i, BIQ_BDPO_LABELS)) break;
+        out.push(biqNorm(i.s));
+    }
+    return biqNorm(out.join(' '));
+}
 export function biqParseBdPo(textItems) {
     const items = textItems.filter(i => i.s.trim());
     const lineMap = {};
@@ -2123,8 +2146,11 @@ export function biqParseBdPo(textItems) {
     const ys = Object.keys(lineMap).map(Number).sort((a, b) => b - a);
     const lines = ys.map(y => ({ y, parts: lineMap[y].sort((a, b) => a.x - b.x) }));
     const fullText = lines.map(l => l.parts.map(p => p.s).join(' ')).join('\n');
-    if (!/Online Purchase Order:/i.test(fullText) || !/Total Blind Design/i.test(fullText)) return null;
-    const meta = { customer: 'Total Blind Design' };
+    // the export's "IQ Link ID" is a label of its own; the words in a note or a Finish Logic message don't count
+    if (!/Online Purchase Order:/i.test(fullText) || items.some(i => /^IQ Link ID$/i.test(biqNorm(i.s)))) return null;
+    const dealer = biqBdpoDealer(items);
+    if (/^blind designs\b/i.test(dealer)) return null;              // Blind Designs as the sender: not a dealer's PO
+    const meta = { customer: dealer || (/Total Blind Design/i.test(fullText) ? 'Total Blind Design' : '') };
     let m = fullText.match(/Quote Ref\s+(.+?)\s+Operator\b/); if (m) meta.orderNumber = biqNorm(m[1]);
     if (!meta.orderNumber) { m = fullText.match(/Online Purchase Order:\s*(.+)/); if (m) meta.orderNumber = biqNorm(m[1]); }
     m = fullText.match(/Order Date\s+(\d{4}-\d{2}-\d{2})/); if (m) meta.orderDate = m[1];
@@ -2132,6 +2158,7 @@ export function biqParseBdPo(textItems) {
     m = fullText.match(/Operator\s+(\S+)/); if (m) meta.operator = biqNorm(m[1]);
     m = fullText.match(/Blinds\s*[—-]\s*(.+)/); if (m) meta.product = biqNorm(m[1]);
     if (/FINAL MEASURED/i.test(fullText)) meta.measured = true;   // the measured-status watermark
+    m = fullText.match(/Blind Total:\s*([\d,]+\.\d{2})/i); if (m) meta.blindTotal = +m[1].replace(/,/g, '');   // lines + sundries
     const hl = lines.find(l => { const t = l.parts.map(p => p.s.trim()); return t[0] === 'Item' && t.some(s => /^Locatio/.test(s)) && t.some(s => /^Price/.test(s)); });
     if (!hl) return null;
     // Anchor the canonical column list onto the header's word positions (two columns are both
@@ -2177,22 +2204,29 @@ export function biqParseBdPo(textItems) {
         if (inSundries) {
             if (/^Item\s+QTY\s+Sundry/i.test(joined)) continue;
             const sm = joined.match(/^([a-z]{1,2})\s+(\d+)\s+(.+?)\s+([A-Z]{2,5}\d{3,6})\s+(.+?)\s+([\d,]+\.\d{2})$/);
-            if (sm) sundries.push({ item: sm[1], qty: sm[2], typeName: biqNorm(sm[3]), code: sm[4], name: biqNorm(sm[5]) });
+            if (sm) sundries.push({ item: sm[1], qty: sm[2], typeName: biqNorm(sm[3]), code: sm[4], name: biqNorm(sm[5]), price: +sm[6].replace(/,/g, '') });
             continue;
         }
+        // An item row (a letter under Item, a quantity under QTY) always starts a new blind. Finish Logic has
+        // started printing its own warning straight after a line's options, without the closing "|"
+        // ("…|For Blind=Roman Dining windows | width 2455mm past Blind Designs' 2400mm headrail grid — confirm
+        // price"), and the unterminated run below then read the next blinds as option text: TBD's Task437134
+        // curtain-track PO (16 Oct 2026, Task437134) came through with 2 of its 4 Roman Panels and no warning.
+        const parts = lines[li].parts, first = parts[0];
+        const itemRow = /^[a-z]{1,2}$/.test(first.s.trim()) && first.x < cols[1].x && parts.length > 1
+            && /^\d{1,3}$/.test(parts[1].s.trim()) && parts[1].x >= cols[1].x - 15 && parts[1].x < cols[2].x;
         // "K=V|K=V|" option lines (and their wraps) belong to the item above, never to columns.
         // A wrap can break mid-value ("Remote=One Touch" / "Dual Remote 16 Channel White
         // (ZIQ40100)|") — while the collected options don't yet end on "|", the next line is
-        // still the same option run, whatever it looks like.
-        if (cur && (/=[^|]*\|/.test(joined) || /^\([A-Z]{2,5}\d{3,6}\)\|/.test(joined)
+        // still the same option run, unless it is an item row.
+        if (cur && !itemRow && (/=[^|]*\|/.test(joined) || /^\([A-Z]{2,5}\d{3,6}\)\|/.test(joined)
             || (cur._opts && !/\|\s*$/.test(cur._opts)))) {
             const nm = joined.match(/^(.*?)\s*\bNotes:\s*(.*)$/i);
             cur._opts = (cur._opts ? cur._opts + ' ' : '') + (nm ? nm[1] : joined);
             if (nm) { cur._notes = biqNorm(nm[2]); inNotes = true; }
             continue;
         }
-        const first = lines[li].parts[0];
-        if (/^[a-z]{1,2}$/.test(first.s.trim()) && first.x < cols[1].x) { cur = {}; inNotes = false; rows.push(cur); lines[li].parts.forEach(p => assign(cur, p)); continue; }
+        if (/^[a-z]{1,2}$/.test(first.s.trim()) && first.x < cols[1].x) { cur = {}; inNotes = false; rows.push(cur); parts.forEach(p => assign(cur, p)); continue; }
         if (cur && inNotes) { cur._notes = biqNorm((cur._notes || '') + ' ' + joined); continue; }
         if (cur) lines[li].parts.forEach(p => assign(cur, p));
     }
@@ -2258,19 +2292,44 @@ function biqBdpoSheetKey(spec, k, v) {
     const target = BIQ_BDPO_KEY_SYNONYMS[sq(k)];
     const o = target && spec.find(s => sq(s.k) === sq(target));
     if (!o) return null;
-    const val = (o.values || []).length ? (o.values || []).find(x => biqLc(x) === biqLc(v)) : v;
+    const vals = o.values || [];
+    // Galaxy's Finish Logic printed "Top Board=90mm" where TBD's prints "Yes 90mm": the one sheet value that ends with
+    // the printed one (L17338 F and H, stored as Top Board (for Face Fix)=Yes 90mm).
+    const tail = vals.filter(x => biqLc(x).endsWith(' ' + biqLc(v)));
+    const val = vals.length ? (vals.find(x => biqLc(x) === biqLc(v)) || (tail.length === 1 ? tail[0] : null)) : v;
     return val ? { k: o.k, v: val } : null;
 }
-export function biqNormalizeBdPo(mappings, p) {
+// Finish Logic's own names for three BlindIQ ranges, each as Sharon stored it: Valance "Linear 108mm" / "Linear 65mm"
+// = Linear Valance (the BDO670751 customer BDO670751 B, D, N, P, R; Galaxy L17338 F, H), Roman Panel "Roman Panel Headrail
+// Price" = Roman Headrail (customer 5 A, customer 6 B–E; Finish Logic's own Order Message says it has no BlindIQ ID
+// for it), Curtain Somfy "Ripple Glydea 60kg" = Glydea 220v 60 Ripple (the BDO669378 customer A and AA). Only when the
+// printed range doesn't resolve for the blind type and BlindIQ's range does.
+const BIQ_BDPO_RANGES = [
+    [14, /^linear\s*(65|108)\s*mm$/i, 'Linear Valance'],
+    [2, /^roman\s*panel\s*headrail(\s*price)?$/i, 'Roman Headrail'],
+    [20, /^ripple\s*glydea\s*60\s*kg$/i, 'Glydea 220v 60 Ripple'],
+];
+function biqBdpoRange(mappings, it) {
+    if (!biqNorm(it.range) || biqResolveRange(mappings, it.blindType, it.range).known) return null;
+    const bt = biqResolve(mappings, 'blindTypes', it.blindType);
+    const hit = bt.known && BIQ_BDPO_RANGES.find(([id, re]) => id === bt.id && re.test(biqNorm(it.range)));
+    return hit && biqResolveRange(mappings, it.blindType, hit[2]).known ? hit[2] : null;
+}
+export function biqNormalizeBdPo(mappings, p, fileName) {
     const o = biqBlankOrder();
-    o.source = 'bdpo'; o.sourceDesc = 'BD online purchase order (Total Blind Design)';
-    o.customer = p.meta.customer; o.orderNumber = p.meta.orderNumber || '';
+    o.source = 'bdpo'; o.sourceDesc = 'Finish Logic purchase order (' + (p.meta.customer || 'dealer not named') + ')';
+    // The dealer's job number when the file name starts with one (BIQ_BDPO_JOB_RE), else the Quote Ref. TBD's files
+    // ("BD_PO_BD_Indoor_<client>_<date>.pdf") carry none, so its orders keep the Quote Ref.
+    const job = (String(fileName || '').match(BIQ_BDPO_JOB_RE) || [])[1];
+    o.customer = p.meta.customer; o.orderNumber = (job ? job.toUpperCase() : '') || p.meta.orderNumber || '';
     o.orderDate = biqParseDate(p.meta.orderDate); o.requiredDate = biqParseDate(p.meta.requiredDate);
     o.notes = [(p.meta.measured ? 'FINAL MEASURED' : ''), (p.meta.operator ? 'Captured by ' + p.meta.operator : '')].filter(Boolean).join(' | ');
     const canon = s => biqLc(s).replace(/[^a-z0-9]/g, '');
     const hw = [];                             // options hardware, for the sundry-line union below
+    const poCrank = new Map();                 // the lines the PO gives a crank or handle option, and its value (Crank Handle None)
     p.rows.forEach(r => {
         const it = biqBlankItem(r['Item'] || '');
+        it._poLine = true;                     // read from the PO (the Blind Total check, biqCollectProblems)
         // The notes the converter writes from TBD's options (not the dealer's own note): only these can be
         // left out of the XML as information BlindIQ already holds (biqBdpoNoteIsInfo).
         const gen = [];
@@ -2279,6 +2338,10 @@ export function biqNormalizeBdPo(mappings, p) {
         it.blindType = r['Blind Type'] || ''; it.range = r['Range'] || ''; it.colour = r['Colour'] || '';
         it.width = r['Width'] || ''; it.drop = r['Drop'] || '';
         it.fix = r['Fix'] || '';
+        // Finish Logic's name for a BlindIQ range (biqBdpoRange), noted "read as" for the capturer after the dealer's own
+        // note (below); BlindIQ doesn't get it.
+        const printedRange = it.range, flRange = biqBdpoRange(mappings, it);
+        if (flRange) it.range = flRange;
         // Curtain/valance drops print as 0 and the narrow "0" can land on the Cont. Drop
         // anchor — a missing drop on a no-drop product IS 0.
         if (!it.drop) { const rt = biqResolve(mappings, 'blindTypes', it.blindType); if (rt.known && [13, 17, 18, 20, 14, 27].includes(rt.id)) it.drop = '0'; }
@@ -2291,15 +2354,20 @@ export function biqNormalizeBdPo(mappings, p) {
             const i = pair.indexOf('=');
             return i < 1 ? null : [biqNorm(pair.slice(0, i)), biqNorm(pair.slice(i + 1))];
         }).filter(kv => kv && kv[0] && kv[1]);
+        // Finish Logic's own remarks among the options (no "=": "width 2455mm past Blind Designs' 2400mm headrail grid —
+        // confirm price") are a heads-up for the capturer: kept on the line, never sent to BlindIQ (biqBdpoNoteIsInfo).
+        const remarks = String(r._opts || '').split('|').map(biqNorm).filter(s => s && !s.includes('='));
         const drb = biqBdpoDoubleRoller(mappings, it, pairs);
         { const cd = biqNorm(r['Cont. Drop'] || '');
           it.controlDrop = biqComputeControlDropV2(mappings, biqStatedControlLength(cd), it.drop, it.blindType, it.range);
           it._cdAuto = !biqStatedControlLength(cd); }
         it.variants = biqTemplateFor2(mappings, it.blindType, it.range);
         if (r._notes) it.notes = r._notes;
-        biqBdpoChainNote(it);
+        biqBdpoChainNote(it);                  // reads the dealer's note alone
+        if (flRange) addNote('Range "' + printedRange + '" read as ' + flRange);
         const spec = biqVariantSpec(mappings, it.blindType, it.range) || [];
         pairs.forEach(([k, v]) => {
+            if (/crank|handle/i.test(k)) poCrank.set(it, v);   // any crank or handle option: never Crank Handle None (below)
             // BlindIQ runs its own runner / tape-length / stack calculations; importing TBD's
             // conflicts with them and the notes were pure delete-work for the capturer
             // (Russel→Dean 13 Aug, Sharon 20 Aug). Never imported, never a note.
@@ -2327,6 +2395,10 @@ export function biqNormalizeBdPo(mappings, p) {
             }
             if (/^joined to$/i.test(k)) {
                 addNote('Joined To ' + v);
+                // the partner, below: "Blind 4 (Coupled)", or an item letter with its kind ("g (Coupled)", as asked of
+                // Finish Logic); a bare "N" or "Y" names no one
+                const jm = v.match(/\bblind\s*(\d+)/i), jl = !jm && v.match(/^([a-z]{1,2})\s*\(\s*(coupled|intermediate)\b/i);
+                if (jm || jl) it._bdpoJoin = { n: jm ? +jm[1] : 0, code: jl ? jl[1] : '', kind: /coupl/i.test(v) ? 'coupled' : /interm/i.test(v) ? 'intermediate' : '' };
                 if (/coupled/i.test(v)) { const bo = spec.find(s => canon(s.k) === 'coupledbracket'); if (bo) biqSetVar(it.variants, bo.k, 'Yes'); }
                 return;
             }
@@ -2369,6 +2441,7 @@ export function biqNormalizeBdPo(mappings, p) {
             else if (alt) biqSetVar(it.variants, alt.k, alt.v);
             else addNote(k + ': ' + v);   // computed specs (Stack Size, Fullness…) inform the factory
         });
+        remarks.forEach(t => addNote('Finish Logic: ' + t));
         it._bdpoGen = gen;
         if (/coupled/i.test(c1 + ' ' + c2)) {
             const bo = spec.find(s => canon(s.k) === 'coupledbracket');
@@ -2384,6 +2457,43 @@ export function biqNormalizeBdPo(mappings, p) {
         }
         o.items.push(it);
     });
+    // "Joined To=Blind N" counts Finish Logic's blinds, not the PO's item letters. With a valance line after each blind,
+    // the BDO670751 customer's e ("Joined To=Blind 4") and g ("Blind 3") are the 3rd and 4th blinds, and BlindIQ holds them as
+    // one coupled pair (BDO670751 E Rh Coupled with the Coupled Bracket, G Lh Coupled); next to each other they had never
+    // been paired. The partner is the Nth line that isn't a valance when it points back (or names a coupled side itself),
+    // else the Nth line on the same terms, or the line with the item letter given; biqApplyBracketPairs then pairs the two
+    // wherever they sit.
+    {
+        const isValance = it => { const r = biqResolve(mappings, 'blindTypes', it.blindType); return r.known && [14, 27].includes(r.id); };
+        const blinds = o.items.filter(it => !isValance(it));
+        // the lines a reference can name (none when it names no line on the PO, which then counts as no reference)
+        const named = x => { const j = x._bdpoJoin; return !j ? [] : j.code ? o.items.filter(y => y !== x && biqLc(y.code) === biqLc(j.code)) : [blinds[j.n - 1], o.items[j.n - 1]].filter(y => y && y !== x); };
+        const fits = (it, cand) => !!cand && cand !== it
+            && (named(cand).length ? named(cand).includes(it) : /coupl/i.test((cand.control1 || '') + ' ' + (cand.control2 || '')));
+        o.items.forEach(it => {
+            const j = it._bdpoJoin;
+            if (!j || j.kind !== 'coupled') return;
+            const partner = named(it).find(c => fits(it, c));
+            if (partner) it._joinWith = partner.code;
+        });
+    }
+    // Finish Logic prints the crank handle on the one blind it comes with ("Crank Handle=1200mm White" on customer 1's a). BlindIQ asks for Crank Handle on every Free Hang line, and Sharon stored None on all 5 lines that
+    // had none (customer 1 b, customer 2 b and c, customer 3 b, customer 4 a). Only a line the
+    // PO gives no crank or handle option at all: a handle its sheet doesn't offer, or under another name ("Crank=1200mm
+    // White"), stays a problem for the capturer. A crank-driven line on a PO with no handle anywhere, on a line or under
+    // SUNDRIES (customer 4), also gets an amber heads-up (biqCollectWarnings).
+    {
+        const handleOf = it => biqNorm((it.variants.find(v => /^crank\s*handle$/i.test(biqNorm(v[0]))) || [])[1]);
+        const anyHandle = [...poCrank.values()].some(v => !/^none$/i.test(biqNorm(v))) || p.sundries.some(s => /crank\s*handle/i.test(s.name));
+        o.items.forEach(it => {
+            if (poCrank.has(it) || handleOf(it)) return;
+            const ch = (biqVariantSpec(mappings, it.blindType, it.range) || []).find(s => /^crank\s*handle$/i.test(s.k));
+            const none = ch && ch.req && (ch.values || []).find(x => /^none$/i.test(x));
+            if (!none) return;
+            biqSetVar(it.variants, ch.k, none);
+            if (!anyHandle && /crank/i.test([it.control1, it.control2].concat(it.variants.map(v => v[1])).join(' '))) it._crankNone = true;
+        });
+    }
     const OV = biqOrderableSundryView(mappings);           // active, non-component sundries only
     p.sundries.forEach(s => {
         const hit = biqResolveSundry(OV, s.code) || biqResolveSundry(OV, s.name) || { sundry: '', type: '' };
@@ -2408,6 +2518,17 @@ export function biqNormalizeBdPo(mappings, p) {
         o.sundries.push({ code: '', qty: String(h.qty), type: hit && hit.type != null ? String(hit.type) : '', sundry: id, notes: disp, _src: h.name + (h.code ? ' (' + h.code + ')' : '') });
         if (id) seenIds.add(id);
     });
+    // The PO's own arithmetic: its blind lines and SUNDRIES add up to its "Blind Total" (110 of the 111 Finish Logic POs
+    // of 24 Aug – 16 Oct 2026 to the cent, one a cent out). A difference means a line wasn't read, or something else was
+    // read as one (Task437134, 16 Oct: R2,114 short while its last two Roman Panels weren't read) — biqCollectProblems
+    // says so while the lines and sundries are still the ones read here (_poLine, _poSundry).
+    const money = s => { const a = String(s || '').match(/\d{1,3}(?:,\d{3})+\.\d{2}|\d+\.\d{2}/g); return a ? a.reduce((t, x) => t + +x.replace(/,/g, ''), 0) : null; };
+    const prices = p.rows.map(r => money(r['Price']));
+    if (typeof (p.meta || {}).blindTotal === 'number' && prices.length && prices.every(x => x != null) && (p.sundries || []).every(s => typeof s.price === 'number')) {
+        o._bdpoTotal = { stated: p.meta.blindTotal, rows: p.rows.length, sundries: o.sundries.length,
+            read: Math.round((prices.reduce((t, x) => t + x, 0) + p.sundries.reduce((t, s) => t + s.price, 0)) * 100) / 100 };
+        o.sundries.forEach(s => { s._poSundry = true; });
+    }
     return o;
 }
 
@@ -3260,6 +3381,11 @@ export function biqJobNumberFromFileName(fileName) {
     const m = base.match(/^([A-Za-z]{1,4}-?\d{4,8})\b/);
     return m ? m[1].toUpperCase() : '';
 }
+// A Finish Logic PO's job number (biqNormalizeBdPo), by the dealers' own patterns only: Galaxy Blinds names its POs
+// "H17314 [client].pdf", and all 9 of its Finish Logic orders were stored under a number starting with it (H17314[client],
+// L17233[client], H17264). A scanner's "Scan0001", Blind Designs' own "BDO670751" or a date is no dealer's job number.
+// Add a dealer's pattern here when one sends its POs named by job number.
+const BIQ_BDPO_JOB_RE = /^([LH]\d{5})(?!\d)/i;
 export function biqNormalizeTbd(mappings, p, fileName) {
     const o = biqBlankOrder();
     o.source = 'tbd';
@@ -4197,6 +4323,9 @@ export function biqCollectWarnings(mappings, order) {
         if (it._drRollCheck && biqIsDoubleRoller(mappings, it)) out.push({ t: w + it._drRollCheck + '.', sev: 'warn' });
         if (it._drMotorCheck && it._drMotorAuto && biqLc(it[it._drMotorAuto.field]) === biqLc(it._drMotorAuto.value))
             out.push({ t: w + it._drMotorCheck + '.', sev: 'warn' });
+        // A Finish Logic PO's crank blind left with Crank Handle None while no blind on the PO has a handle (biqNormalizeBdPo)
+        if (it._crankNone && /^none$/i.test(biqNorm((it.variants.find(v => /^crank\s*handle$/i.test(biqNorm(v[0]))) || [])[1])))
+            out.push({ t: w + 'Crank Handle set to None: no blind on this purchase order comes with a crank handle — confirm.', sev: 'warn' });
     });
     return out;
 }
@@ -4218,6 +4347,17 @@ export function biqCollectProblems(mappings, order) {
     if (order.packingType && !pk.known) probs.push({ t: 'Packing type "' + order.packingType + '" not mapped.', cat: 'packingTypes', name: order.packingType });
     if (!order.packingType) probs.push({ t: 'Packing type is empty — BlindIQ\'s importer needs a number here (e.g. Boxed / Standard).' });
     if (!order.items.length && !order.sundries.length) probs.push({ t: 'Order has no items and no sundries.' });
+    // A Finish Logic PO whose lines don't add up to its own Blind Total (biqNormalizeBdPo): something wasn't read, or was
+    // read as a line. Shown until the capturer adds or deletes a line or a sundry.
+    {
+        const tot = order.source === 'bdpo' && order._bdpoTotal;
+        if (tot && Math.abs(tot.stated - tot.read) > 1 && order.items.length === tot.rows && order.items.every(it => it._poLine)
+            && order.sundries.length === tot.sundries && order.sundries.every(s => s._poSundry)) {
+            const rand = n => 'R' + Number(n).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+            probs.push({ t: 'The purchase order\'s Blind Total is ' + rand(tot.stated) + ' but the lines and sundries read from it add up to ' + rand(tot.read)
+                + ' — a blind or sundry may not have been read: compare the order with the PDF.' });
+        }
+    }
     order.items.forEach((it, i) => {
         const w = 'Item ' + (it.code || i + 1) + ': ';
         if (!biqResolve(mappings, 'blindTypes', it.blindType).known) probs.push({ t: w + 'blind type "' + (it.blindType || '?') + '" not mapped.', cat: 'blindTypes', name: it.blindType });
@@ -4250,7 +4390,17 @@ export function biqCollectProblems(mappings, order) {
         // offer imports as the wrong fabric ("129 White" — a Retro Venetian colour — went in on
         // all 48 Blockout blinds of one order on 25 Jul 2026 and was fixed by hand).
         if (rc.known && rc.onRange === false) {
-            if (!rangeCols.length) probs.push({ t: w + 'range "' + it.range + '" has no colours in BlindIQ — "' + it.colour + '" belongs in the options or the item notes.' });
+            if (!rangeCols.length) {
+                // A Finish Logic PO prints the track colour on a motorised curtain track (Curtain Somfy: Movelite, Glydea),
+                // whose range carries no colours and whose sheet has no Colour option. BlindIQ takes it as the item colour,
+                // and Sharon kept White on all 9 such TBD lines (the BDO669378 customer A and AA; a second curtain customer A–C, and A, B,
+                // BA, C keyed again by hand). White only, as stored: another colour would import as whichever BlindIQ
+                // colour has that name (Black is 75, a venetian and roller colour), so it stays the capturer's call, as do
+                // other curtain tracks.
+                const fl = order.source === 'bdpo' && /^white$/i.test(biqNorm(it.colour))
+                    && (() => { const r = biqResolve(mappings, 'blindTypes', it.blindType); return r.known && r.id === 20; })();
+                if (!fl) probs.push({ t: w + 'range "' + it.range + '" has no colours in BlindIQ — "' + it.colour + '" belongs in the options or the item notes.' });
+            }
             else {
                 const cn = mappings.colourNames || {};
                 const names = rangeCols.map(id => cn[String(id)]).filter(Boolean);
@@ -4408,6 +4558,7 @@ export function biqBdpoNoteIsInfo(mappings, it, f) {
     if (BIQ_BDPO_RULE_NOTES.some(re => re.test(f))) return true;
     if (biqBdpoChainOnly(it, f)) return true;
     if (!(it._bdpoGen || []).some(g => biqLc(biqNorm(g)) === biqLc(f))) return false;
+    if (/^finish logic:/i.test(f)) return true;                     // Finish Logic's own heads-up ("… confirm price")
     if (/^joined to\b/i.test(f)) return true;                       // the Coupled Bracket option / Lh-Rh Coupled controls
     const kv = f.match(/^([^:]{1,48}):\s*(.+)$/);
     if (!kv) return false;
@@ -6272,6 +6423,24 @@ export function biqApplyBracketPairs(mappings, order) {
             if (m === 'coupled') biqApplyCoupledPair(mappings, order, i, i + 1); else biqApplyIntermediatePair(mappings, order, i, i + 1);
             consumed.add(i); consumed.add(i + 1);
         }
+    }
+    // Partners the order itself names (a Finish Logic PO's "Joined To", biqNormalizeBdPo), wherever they sit, when both
+    // lines state sides that meet (one Rh Coupled, the other Lh Coupled): the bracket is costed on the Rh Coupled blind
+    // and no control is touched (biqApplyCoupledPair), so a valance line between them no longer leaves both "no matching
+    // pair". Anything else (a side not stated, two Rh Coupled, a capturer who has taken the coupling out) is left to the
+    // pairing below, exactly as before.
+    const coupledSide = it => { const l = /coupl/i.test(it.control1 || ''), r = /coupl/i.test(it.control2 || ''); return l === r ? '' : l ? 'L' : 'R'; };
+    for (let i = 0; i < items.length; i++) {
+        const w = biqLc(biqNorm(items[i]._joinWith));
+        if (!w || consumed.has(i)) continue;
+        const j = items.findIndex((x, k) => k !== i && !consumed.has(k) && biqLc(biqNorm(x.code)) === w
+            && (!x._joinWith || biqLc(biqNorm(x._joinWith)) === biqLc(biqNorm(items[i].code))));
+        if (j < 0) continue;
+        const si = coupledSide(items[i]), sj = coupledSide(items[j]);
+        if (!si || !sj || si === sj) continue;
+        const [l, r] = si === 'R' ? [i, j] : [j, i];
+        biqApplyCoupledPair(mappings, order, l, r);
+        consumed.add(l); consumed.add(r);
     }
     biqPairIntermediatePartners(mappings, order).forEach(x => consumed.add(x));
     let i = 0;                                                     // auto: pair consecutive flagged lines

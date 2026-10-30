@@ -149,12 +149,12 @@ BlindIQ's importer silently drops sundry lines without a code, according to the 
 
 ## Notes sent to BlindIQ (Finish Logic purchase orders)
 
-For orders read from a Finish Logic "Online Purchase Order" (TBD's or any other dealer's, `order.source === 'bdpo'`), the XML carries only the notes a capturer still needs. Every other source is exported with its notes as they are.
+For orders read from a Finish Logic "Online Purchase Order" (TBD's or any other dealer's, `order.source === 'bdpo'`), the XML carries only the notes a capturer still needs. Every other source is exported with its notes as they are, apart from the notes for parts on sundry lines ([next section](#notes-for-parts-on-sundry-lines-every-source)).
 
 | Function | Element | Leaves out |
 |---|---|---|
 | `biqExportOrderNotes(order)` | `CO_Notes` | "FINAL MEASURED" and "Captured by <operator>" |
-| `biqExportItemNotes(mappings, order, it)` | `COI_Order_Notes` | Note fragments (split on `' \| '`) that `biqBdpoNoteIsInfo` says BlindIQ already holds, listed below |
+| `biqExportItemNotes(mappings, order, it)` | `COI_Order_Notes` | Note fragments (split on `' \| '`) that `biqBdpoNoteIsInfo` says BlindIQ already holds, listed below; for every source, the notes for parts on sundry lines (`it._partNotes`, next section) |
 | `biqExportSundryNotes(mappings, order, s)` | `COS_Sundry_Notes` | The note when it is exactly the resolved sundry's BlindIQ name |
 
 `biqBdpoNoteIsInfo` removes:
@@ -171,6 +171,17 @@ For orders read from a Finish Logic "Online Purchase Order" (TBD's or any other 
 It keeps the dealer's own line notes, anything typed into the notes box, TBD options BlindIQ has no place for (tight sizes, Float Weights, side channels…), the Out of Warranty reason, and the name of a sundry that didn't resolve.
 
 The order itself keeps every note. The editor shows "BlindIQ gets: …" under a line whose exported notes differ, and the comparison's converter reading still sees them all. The evidence is the 109 TBD orders converted from 12 August to 14 October 2026: the capturer deleted the imported order note on all 108 that had one, 276 of 278 line notes and all 49 sundry notes. Replayed over 97 purchase orders, order notes went from 95 to 0, line notes from 133 of 446 lines to 22, and sundry notes from 54 to 1.
+
+## Notes for parts on sundry lines (every source)
+
+A part a dealer lists under a blind (a motor, remote, adaptor kit, charger, hub, touch-up paint…) becomes a sundry line of its own. The parser records the note it wrote for that part in `it._partNotes`, and `biqExportItemNotes` leaves those fragments out of `COI_Order_Notes` for every source (compared word for word, ignoring case). The order keeps the note, so the editor, the One Touch Dual rule (`biqApplyOneTouchDual`) and the comparison's converter reading still see which blind the part is for. The editor shows "BlindIQ gets: …" beside the line.
+
+- Mathéo's accessory rows ("Accessory: <name>") are the only notes recorded this way. On the 14 Mathéo orders imported from 25 August to 28 October 2026 the XML carried 52 of them, and none is on the stored orders. Sharon asked for them to go (30 October 2026).
+- The part itself is always on the order, as its sundry line. Until a BlindIQ part is picked for it, that line is blank and flagged and carries the dealer's wording in `COS_Sundry_Notes`. Once a part is picked (by the converter, the AI's match or the capturer), BlindIQ shows that part's name; the dealer's wording stays under the sundry line in the editor (`_src`), as on Finish Logic orders.
+- Wire side guides keep their note. They become the blind's Wire Side Guides option, which on Roller System 40 only holds Yes (the floor or sill fix would be lost), or, on a sheet without that option, a blank sundry line.
+- A note typed into the notes box goes, unless it repeats the converter's accessory note word for word. The converter's note stays out even after the capturer deletes the part's sundry line.
+- `biqMergeDoubleRollerRows` (BD order form, AI path) carries a merged row's `_partNotes` to the blind above, with its notes.
+- Notes for parts that aren't made into sundry lines still go: Blind Guys' "Extras" and "Motor type", CNBW's "Motor" (venetians) and "Motorized", and whatever the AI writes in a line's notes.
 
 ## What stops an export
 

@@ -1020,6 +1020,7 @@ export function biqMergeDoubleRollerRows(mappings, order, copySizes) {
         const add = t => { if (t && !biqLc(a.notes).includes(biqLc(t))) a.notes = (a.notes ? a.notes + ' | ' : '') + t; };
         add(second + ' from the next row of the form (the second fabric of this double roller)');
         String(b.notes || '').split('|').map(x => biqNorm(x)).forEach(add);
+        if ((b._partNotes || []).length) a._partNotes = [...(a._partNotes || []), ...b._partNotes];   // still left out of the XML (biqExportItemNotes)
         // What the row gives (a ticked chain, a cassette colour) goes to the blind, unless the blind's own row gave that option.
         const tplB = biqTemplateFor2(mappings, b.blindType, b.range) || [], tplA = biqTemplateFor2(mappings, a.blindType, a.range) || [];
         const defOf = (tpl, k) => { const d = tpl.find(x => biqLc(x[0]) === biqLc(k)); return d ? biqLc(biqNorm(d[1])) : null; };
@@ -2097,14 +2098,25 @@ export function biqNormalizeMatheo(mappings, p) {
         // exists (wire side guides), otherwise they are BlindIQ SUNDRY lines — motors, remotes,
         // adapter kits, touch-up paint (Russel 2026-08-07, J6966). Unmatched sundries stay
         // blank + flagged for mapping. The dealer price is ignored — BlindIQ prices for itself.
+        // "Accessory: …" stays in the line's notes on the order (which blind the part is for:
+        // biqApplyOneTouchDual and the comparison read it), but a part that became a sundry line
+        // is not sent to BlindIQ as a line note too (it._partNotes, biqExportItemNotes): the
+        // capturers deleted all 52 such notes on the 14 Mathéo orders imported 25 Aug – 28 Oct
+        // 2026 (Sharon, 30 Oct). Wire side guides keep their note, option or not: Roller System
+        // 40's option only holds Yes, so the floor / sill fix would be lost, and a sheet without
+        // the option leaves them a blank sundry line (BlindIQ has no such part).
         (raw._accessories || []).forEach(a => {
             const acc = (a && a.name) || String(a || ''); if (!acc) return;
             const qty = (a && a.qty) || '1';
             const spec = biqVariantSpec(mappings, it.blindType, it.range) || [];
             const wsg = spec.find(s => /wire\s*side\s*guide/i.test(s.k));
-            if (/wire\s*side\s*guide/i.test(acc) && wsg) biqSetVar(it.variants, wsg.k, 'Yes');
-            else biqAddMotorSundry(mappings, o, acc, qty, BIQ_MOTORISH_RE.test(acc));
-            it.notes = (it.notes ? it.notes + ' | ' : '') + 'Accessory: ' + acc;
+            const guides = /wire\s*side\s*guide/i.test(acc), note = 'Accessory: ' + acc;
+            if (guides && wsg) biqSetVar(it.variants, wsg.k, 'Yes');
+            else {
+                biqAddMotorSundry(mappings, o, acc, qty, BIQ_MOTORISH_RE.test(acc));
+                if (!guides) (it._partNotes = it._partNotes || []).push(note);
+            }
+            it.notes = (it.notes ? it.notes + ' | ' : '') + note;
         });
         o.items.push(it);
     });
@@ -4581,7 +4593,7 @@ export const biqOrderNumberForBiq = n => String(n == null ? '' : n).replace(/[\s
 // (source 'bdpo') BlindIQ now gets only what she still needs: the dealer's own line notes, options BlindIQ has
 // no place for, the Out of Warranty reason (she re-typed it herself on BDO669420 D) and the name of a sundry
 // that didn't resolve. The order itself keeps every note, so the editor and OrderBot's comparison see them all.
-// Every other source is exported exactly as before.
+// Every other source is exported as before, except a note for a part that is on a sundry line (it._partNotes, below).
 const BIQ_BDPO_ORDER_INFO = /^(final\s+measured|captured\s+by\s+\S+)$/i;
 const BIQ_BDPO_RULE_NOTES = [
     /\(confirm stock\)$/i,                                          // a retired colour ordered from its Discontinued range
@@ -4652,9 +4664,16 @@ export function biqExportOrderNotes(order) {
     if (order.source !== 'bdpo') return order.notes;
     return String(order.notes || '').split(' | ').map(biqNorm).filter(f => f && !BIQ_BDPO_ORDER_INFO.test(f)).join(' | ');
 }
+// A part the converter moved onto a sundry line is not sent to BlindIQ again as a note on the blind's line
+// (Sharon, 30 Oct 2026: capturers delete those notes). The parser lists the notes it wrote for such parts in
+// it._partNotes (Mathéo's "Accessory: …" rows); the order keeps them. Compared word for word, like _bdpoGen.
+const biqIsPartNote = (it, f) => (it._partNotes || []).some(g => biqLc(g) === biqLc(f));
 export function biqExportItemNotes(mappings, order, it) {
-    if (!order || order.source !== 'bdpo') return it.notes;
-    return String(it.notes || '').split(' | ').map(biqNorm).filter(f => f && !biqBdpoNoteIsInfo(mappings, it, f)).join(' | ');
+    if (!order) return it.notes;
+    const bdpo = order.source === 'bdpo';
+    if (!bdpo && !(it._partNotes || []).length) return it.notes;    // every other line goes exactly as before
+    return String(it.notes || '').split(' | ').map(biqNorm)
+        .filter(f => f && !biqIsPartNote(it, f) && !(bdpo && biqBdpoNoteIsInfo(mappings, it, f))).join(' | ');
 }
 export function biqExportSundryNotes(mappings, order, s) {
     if (!order || order.source !== 'bdpo') return s.notes;

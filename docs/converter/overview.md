@@ -88,7 +88,7 @@ Every order, whichever way it was read, then goes through the same 14 steps. In 
 | 4 | `biqAssignSundryCodes` | Gives sundry lines without a code the next item code. |
 | 5 | `biqApplyCustomerDefaults` | Canonical customer name, the customer's default delivery method and packing type, courier means Boxed. |
 | 6 | `biqApplyShutterConfig` | Reads a shutter configuration string ("LTLTRTR") into a range and a note. |
-| 7 | `biqFoldOptionSynonyms` | Moves dealer option names onto BlindIQ's keys and values; then `biqFoldCassette` and `biqApplyHardwareColours`. |
+| 7 | `biqFoldOptionSynonyms` | Moves dealer option names onto BlindIQ's keys and values; then `biqFoldCassette`, `biqCassetteFromNotes` (AI readings) and `biqApplyHardwareColours`. |
 | 8 | `biqApplyBracketPairs` | Intermediate and coupled brackets: options on the type's own key, pairing, partners, costing. |
 | 9 | `biqApplyOptionDefaults` | Perfect Fit, Top fix, Out of Warranty, standard values and option defaults. |
 | 10 | `biqNormalizeControlSides` | Re-encodes controls in the convention of the line's type and range. |
@@ -237,7 +237,7 @@ The converter makes two Gemini calls, both from `js/biq-converter-ui.js` through
 
 | Call | Model constant | Prompt and schema | When | What happens to the answer |
 |---|---|---|---|---|
-| Extraction (`aiExtract`) | `EXTRACTION_MODEL` | `biqBuildExtractionPrompt` with the vocabulary from `biqExtractionVocabulary` (live blind types and their live ranges); `BIQ_EXTRACTION_SCHEMA`; the file as base64 inline data | An image, or a PDF or spreadsheet no layout recognised | `biqAiResultToOrder` builds the order; the pipeline then runs as for any layout |
+| Extraction (`aiExtract`) | `EXTRACTION_MODEL` | `biqBuildExtractionPrompt` with the vocabulary from `biqExtractionVocabulary` (live blind types, their live ranges and their BlindIQ option names); `BIQ_EXTRACTION_SCHEMA`; the file as base64 inline data | An image, or a PDF or spreadsheet no layout recognised | `biqAiResultToOrder` builds the order; the pipeline then runs as for any layout |
 | Name matching (`aiDiscern`) | `COMPARISON_MODEL` (falls back to `EXTRACTION_MODEL`) | `biqBuildDiscernPrompt` over the slots from `biqBuildDiscernment` (each unresolved name with a shortlist of real catalogue names); `BIQ_DISCERN_SCHEMA` | Automatically after any non-manual order loads with unresolved names, and from the "AI match names" button | `biqApplyDiscernment`: confidence 0.85 or more is applied and marked amber, 0.5 to 0.85 is offered as a suggestion, less is ignored |
 
 Both make up to three attempts (extraction retries only on 429 and 5xx errors), and pin a low temperature only for pre-Gemini-3 models (`isGemini3`). The name-matching prompt tells the AI to pick only from each shortlist; a name it returns that isn't a catalogue name simply stays unresolved and flagged. The customer account is never AI-matched, because it decides who is billed. In admin mode, matches the capturer kept are saved as mappings when the XML is downloaded (`biqLearnFromAI`). See [AI models](../ai-models.md).

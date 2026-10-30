@@ -19,6 +19,7 @@ How OrderBot got to where it is, in a short timeline built from the Git history 
 | 14–16 October 2026 | Wood and retro venetians, Total Blind Designs note filtering, and double rollers. Finish Logic purchase-order support is built and tested (merged on 29 October). |
 | **19–21 October 2026** | The admin **Cost report** view for the Daily Cost Report: settings, then the send time and days, then the report layout and price check (pull requests #22 to #24). |
 | 29 October 2026 | Finish Logic purchase orders are read for every dealer and checked against the PO's Blind Total (the first change to go through the new workflow). Development practices formalised: a local clone outside OneDrive, this wiki, `CONTRIBUTING.md`, and the plan to move to a private company GitHub organisation with tests on every pull request and preview links ([plan](plans/move-to-company-github.md)). |
+| 29 October 2026 | **70 mm cassettes and fabric inserts** on the converter: the AI is given BlindIQ's option names, every cassette and insert wording reaches BlindIQ's own options, a cassette left in the AI's notes is read, and an insert without a cassette is flagged. Of 190 AI-read cassette blinds since June, 26 had kept their cassette; in the A/B test, 138 of 175 came through right (26 before). |
 | January 2027 (scheduled) | The first automatic **quarterly review** of OrderBot and the converter. |
 
 ## Related pages

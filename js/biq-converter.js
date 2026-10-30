@@ -937,7 +937,7 @@ function biqDoubleRollerLine(mappings, it) {
             dropRows(BIQ_DR_HW_KEY);
             const inList = (o, x) => (o.values || []).some(y => biqLc(y) === biqLc(x));
             const ccRow = it.variants.find(v => biqLc(v[0]) === biqLc(cc.k)), m = hw ? biqHardwareMatch(cc.values || [], hw, 'cassette') : '';
-            if (m && (!ccRow || !biqNorm(ccRow[1]) || !inList(cc, ccRow[1]))) biqSetVar(it.variants, cc.k, m);
+            if (m && (!ccRow || !biqNorm(ccRow[1]) || !inList(cc, ccRow[1]))) { biqSetVar(it.variants, cc.k, m); it._casFromHw = m; }   // biqFoldCassette: the order's own cassette colour wins
             else if (hw && m && ccRow && biqLc(ccRow[1]) !== biqLc(m)) noteOnce('Mech Colour ' + hw + ' on the order (the cassette is ' + biqNorm(ccRow[1]) + ')');
             else if (hw && !m) noteOnce('Mech Colour ' + hw + ' on the order');
             const barRow = bb ? it.variants.find(v => biqLc(v[0]) === biqLc(bb.k)) : null;
@@ -4083,10 +4083,46 @@ export function biqExtractionVocabulary(mappings) {
     });
     const ranges = {};
     Object.keys(byType).sort().forEach(t => { ranges[t] = [...byType[t]].sort((a, b) => a.localeCompare(b)); });
-    return { ranges, types: Object.keys(ranges) };
+    return { ranges, types: Object.keys(ranges), options: biqExtractionOptions(mappings, Object.keys(ranges)) };
 }
-export function biqBuildExtractionPrompt(knownRanges, knownBlindTypes) {
+// BlindIQ's own option names per live blind type, for the AI extraction prompt: the union of the option sheets of the
+// type's live ranges (`variantSheetIndex` / `variantTemplateSheets`), in sheet order, with the values where BlindIQ
+// lists them. The AI wasn't told these names before October 2026: of the 190 cassette blinds read by the AI from
+// 10 Jun to 28 Oct 2026, 77 lost the cassette between the AI and BlindIQ because it wrote "Cassette=Black",
+// "Cassette Colour=Black" or another product's option (project doc orderbot-converter-cassettes-2026-10).
+// Fields BlindIQ works out itself (percentages, "Form …", Total Length of …) aren't offered, nor a key with a ";" in it
+// (Perfect Fit's "Remove Universa; Frame", which the Gasket rule sets itself) — the list is ";"-separated.
+const BIQ_PROMPT_SKIP_OPTION = /percent$|^form\s|^total\s+length\s+of|;/i;
+export function biqExtractionOptions(mappings, typeNames) {
+    const btn = mappings.blindTypeNames || {}, bth = mappings.blindTypeHidden || {}, rh = mappings.rangeHidden || {};
+    const rn = mappings.rangeNames || {}, vsi = mappings.variantSheetIndex || {}, vts = mappings.variantTemplateSheets || {};
+    const want = typeNames ? new Set(typeNames.map(biqLc)) : null, byType = {};
+    Object.keys(vsi).forEach(key => {
+        const [t, r] = key.split('|');
+        if (+bth[t] === 1 || +rh[r] === 1 || /^discontinued\b/i.test(biqNorm(rn[r] || ''))) return;
+        const tn = biqNorm(btn[t] || ''); if (!tn || (want && !want.has(biqLc(tn)))) return;
+        const m = byType[tn] = byType[tn] || new Map();
+        (vts[vsi[key]] || []).forEach(o => {
+            const k = biqNorm(o.k); if (!k || BIQ_PROMPT_SKIP_OPTION.test(k)) return;
+            const vals = m.get(k) || []; (o.values || []).map(biqNorm).filter(Boolean).forEach(v => { if (!vals.includes(v)) vals.push(v); }); m.set(k, vals);
+        });
+    });
+    const out = {};
+    Object.keys(byType).sort().forEach(t => { out[t] = [...byType[t].entries()].map(([k, values]) => ({ k, values })); });
+    return out;
+}
+// One line per blind type: "Name (Value / Value …)", toggles as "Name (Yes)", free-text options as just the name.
+function biqPromptOptionLine(type, opts) {
+    return '  • ' + type + ': ' + opts.map(({ k, values }) => {
+        const vs = (values || []).filter(v => !/^no$/i.test(v));
+        if (!vs.length) return k;
+        if (vs.length > 12) return k + ' (' + vs.slice(0, 12).join(' / ') + ' …)';
+        return k + ' (' + vs.join(' / ') + ')';
+    }).join('; ');
+}
+export function biqBuildExtractionPrompt(knownRanges, knownBlindTypes, knownOptions) {
     // knownRanges: a flat list (legacy) or {blindType: [ranges]} from biqExtractionVocabulary.
+    // knownOptions: {blindType: [{k, values}]} from biqExtractionVocabulary (BlindIQ's option names), optional.
     const perType = knownRanges && !Array.isArray(knownRanges) && typeof knownRanges === 'object';
     const rangeRule = perType
         ? `
@@ -4094,13 +4130,16 @@ export function biqBuildExtractionPrompt(knownRanges, knownBlindTypes) {
 ${Object.entries(knownRanges).map(([t, rs]) => '  • ' + t + ': ' + rs.join(', ')).join('\n')}`
         : (knownRanges && knownRanges.length ? `
 - Known fabric ranges (use EXACTLY these spellings when the document matches one): ${knownRanges.join(', ')}.` : '');
+    const optionRule = knownOptions && Object.keys(knownOptions).length ? `
+- BlindIQ's option names for each blind type. When the document asks for one of these options, write it in "options" as "<option name>=<value>" with EXACTLY that name and, where values are listed, one of those values (or "Yes" for a cassette whose colour the document doesn't give, as below). Only write an option the document actually asks for (never fill in a default), and never put one product's option on another product (e.g. Roller System 55's "Closed Cassette (Motor Only)" or a double roller's "Cassette Colour" on a Roller System 40). The keys the rules below name keep their names on every product: Mech Colour, a valance's Valance Type / Colour / Width / Returns on a blind line, a double roller's Blockout Fabric and View Fabric. A choice the document makes that matches none of these options goes into "options" in the document's own words ("Key=Value"), so the capturer sees it; a remark that isn't a choice goes into the line's notes:
+${Object.entries(knownOptions).map(([t, os]) => biqPromptOptionLine(t, os)).join('\n')}` : '';
     return `You are extracting a window-blind customer order from the attached document(s) for import into Blind Designs' manufacturing system (BlindIQ).
 
 RULES:
 - Extract EVERY line item. One output line item per physical blind.
 - Measurements: millimetres, digits only. South African number formats. Width is horizontal, drop/height vertical.
 - "range" is the fabric collection name; "colour" is the colour name. NEVER combine them: if the document shows "5 Screen Charcoal Grey", range="5 Screen", colour="Charcoal Grey".${rangeRule}${knownBlindTypes && knownBlindTypes.length ? `
-- Known blind types: ${knownBlindTypes.join(', ')}.` : ''}
+- Known blind types: ${knownBlindTypes.join(', ')}.` : ''}${optionRule}
 - Controls: chain/pin/motor and which side. A control written as just "Left" on a roller blind means chain on the left (controlLeft="Lh Chain", controlRight="Rh Pin"); "Right" means chain right (controlLeft="Lh Pin", controlRight="Rh Chain").
 - Put every other specification (mechanism/hardware colour, bottom bar, roll type, cassette, motor, remotes, valance, ladder tape, etc.) into "options" as "Key=Value" strings.
 - The "Hardware Colour" (a.k.a. Mechanism/Mech Colour) column is the colour of the blind's mechanism/brackets (e.g. White, Black, Grey, Beige, Anthracite) — read it from its own column and output it as "Mech Colour=<value>". Do NOT confuse it with the fabric "colour". Never default it to White: if it is blank or illegible leave it out entirely rather than guessing.
@@ -4111,7 +4150,13 @@ RULES:
 - "Mk" is the item/mark number; the "No." column is the quantity. "Fab / Slat" is the fabric range; map it to "range".
 - Fix abbreviations: "F/F" = Face; "I/R" = Reveal. "Rev L" / "Rev R" = Reveal with the control on the Left / Right respectively — set fix="Reveal" AND, if controls aren't otherwise stated, set the control side from L/R ("Left" → controlLeft="Lh Chain", controlRight="Rh Pin"; "Right" → controlLeft="Lh Pin", controlRight="Rh Chain"; for crank/motor products use the matching side, e.g. LH Crank / RH Crank).
 - CONTROL COLUMNS ARE PER PRODUCT FAMILY. Roller / vision / double roller / perfect fit: the SIDE picks the column — left-side option in controlLeft ("Lh Chain"/"Lh Motor"), right-side in controlRight ("Rh Chain"/"Rh Motor"), idle side "Lh Pin"/"Rh Pin". VENETIAN family (wood/aluminium venetian, bamboo, roman panel, RomaShade): the side is a VALUE — put the plain word "Left" or "Right" (bamboo also "Far Left"/"Far Right") in controlLeft, and put a mechanism in controlRight ONLY when the document states one (Motor / Grouped / Split / Chain / Cord) — NEVER "Lh Chain"/"Rh Pin" for these products. Outdoor / cellular / curtain-motion products: both sides' options live in controlLeft ("Lh Motor" / "Rh Motor" / "Rh Cordlock" — the side is part of the option name); leave controlRight empty (no Pins).
-- Map the dealer's column wording to BlindIQ options in "options": Comp / Comp Col → Mech Colour; Bott Bar Col → Bottom Bar; Cass Col → the cassette colour option; Fabric Insert ticked/yes on a cassette blind → "Fabric Insert=Yes"; Steel Chain=Yes or Chain Type=Steel → Steel Ball Chain=Yes; Roll → Roll Type; Int Bracket → Intermediate Bracket; Tilt Cord → the tilt control side; Cord Ht / Chain Height → controlDrop; Br col → Bracket Colour; Alum col → Powder Coat Colour; Add H/D → Hold Downs; Twist Lock Pole / Skylight Pole → the pole option; Crank + Crank length + Crank col → the crank handle/control. Put true accessories (motor Type, Charger, Remote, crank handle as a separate part) into "sundries" when they are charged components.
+- Map the dealer's column wording to BlindIQ options in "options": Comp / Comp Col → Mech Colour; Bott Bar Col → Bottom Bar; Cass Col → the cassette option below; Fabric Insert / Fabric Inlay ticked or yes on a cassette blind → "Fabric Insert for 70mm Cassette=Yes"; Steel Chain=Yes or Chain Type=Steel → Steel Ball Chain=Yes; Roll → Roll Type; Int Bracket → Intermediate Bracket; Tilt Cord → the tilt control side; Cord Ht / Chain Height → controlDrop; Br col → Bracket Colour; Alum col → Powder Coat Colour; Add H/D → Hold Downs; Twist Lock Pole / Skylight Pole → the pole option; Crank + Crank length + Crank col → the crank handle/control. Put true accessories (motor Type, Charger, Remote, crank handle as a separate part) into "sundries" when they are charged components.
+- THE 70MM CASSETTE AND ITS FABRIC INSERT (roller blinds). A cassette ("70mm cassette", "open cassette", "casette", "in cassette", "headrail with cassette", "pelmet/cassette") is an option of the blind it covers, not a line item of its own — unless the document lists a cassette on its own row with its own width and no blind.
+  • Roller System 40: "Sys 40 70mm Cassette=<White / Black / Beige / Silver / Anthracite>", the cassette's own colour (Grey = Silver). When the document asks for a cassette but gives no colour for it, write "Sys 40 70mm Cassette=Yes" (the converter takes the hardware colour) — never guess a colour. A fabric insert or inlay (the cassette's front covered in fabric) is "Fabric Insert for 70mm Cassette=Yes", on the same blind as its cassette.
+  • Double Roller Blind: "Cassette Colour=<colour>" (its cassette always comes with it) and "Fabric Insert for 70mm Cassette=Yes" when asked. Vision Blind: "Cassette Type and Colour=70mm <colour>".
+  • Look for the cassette and the insert everywhere in the document, not only in a column headed Cassette: a column whose cell says both ("SYS 40 70mm OPEN CASSETTE: Black with Duo Screen - Col: Charcoal fabric insert" = Sys 40 70mm Cassette=Black and Fabric Insert for 70mm Cassette=Yes); a priced line under the blind ("› 70mm Cassette", "› Fabric Insert", "System 40 70mm Cassette: Black"); handwriting across the blind's row ("Incl. White Cassette"); the order notes or a general sentence ("With Black Cassette", "6x roller blinds … and 70mm cassette", "all with cassettes"); or the text of the e-mail. Put it on every blind it applies to: a general mention with no blinds named applies to every roller blind on the order.
+  • One cassette shared by several blinds ("one cassette for A and B", "two blinds one cassette", "one long cassette for lines 1 & 2"): put the cassette (and insert) on each of those blinds and copy the sentence into each one's notes.
+  • "No cassette", "without cassette" or "Cassette: No" means no cassette option at all.
 - A valance or pelmet requested ON a blind line: put it into that line's "options" as "Valance Type=Linear" (or Half Round etc.), "Valance Colour=...", "Valance Width=...", "Valance Returns=..." (copy the document's own value, e.g. "Valance Width=Std", "Valance Returns=N") — do NOT invent a separate line item for it; the converter turns it into BlindIQ's valance line, or for wood and retro venetians into the blind's own valance options. A valance printed as its OWN row in the document stays its own line item (blindType "Valance").
 - DOUBLE ROLLER BLINDS are ONE blind with TWO fabrics in one cassette: a blockout (Blockout, Duo Block, Surface Block, Edge Block, Texblock, Urban Block, Linen Block, Moscow FR, Didsbury Block …) and a screen or filter (Duo Screen, 3 / 5 / 10 Screen, Texfilter, Urban Filter, Sheerweave …). Output each double roller as ONE line item, blindType "Double Roller Blind", with BOTH fabrics as options, each as fabric + colour: "Blockout Fabric=Edge Block Pumice", "View Fabric=5 Screen Gull". Leave "colour" empty and never use one fabric as the range while dropping the other. Its cassette colour is "Cassette Colour=<colour>". Controls as for a roller ("Lh Chain" or "Lh Motor" plus the pin opposite); copy any wording about which fabric has the motor or a motor on both into the line's notes.
 - On Blind Designs' own order form a double roller's second fabric is often written on the NEXT row with no size and no blind type of its own (e.g. "Blockout Dune" under a "5% Screen Dune Grey" double roller): that row belongs to the double roller above it — put its fabric on that blind and do not output the row as a line item. This applies only under a double roller; any other row keeps its own line item.`;
@@ -4157,6 +4202,11 @@ export function biqAiResultToOrder(mappings, ai) {
         if (biqIsDoubleRoller(mappings, it) && [...given].some(k => /^(mech(anism)?|h\/?\s*ware|hardware)\s*colou?r$/.test(k)))
             it.variants.forEach(v => { if (/^(cassette\s*colou?r|bottom\s*bar)$/i.test(biqNorm(v[0])) && !given.has(biqLc(v[0]))) v[1] = ''; });
         if (biqIsDoubleRoller(mappings, it) || !biqNorm(it.blindType)) it._givenOpts = [...given];   // for biqMergeDoubleRollerRows
+        // The AI is told never to fill in a hardware colour the document doesn't give, so its "Mech Colour=White" is the
+        // order's — the cassette "Yes" beside it is a White cassette, not a red one (biqApplyHardwareColours).
+        if ((li.options || []).some(opt => { const t = String(opt), i = t.indexOf('=');
+            return i > 0 && /^(mech(anism)?|h\/?\s*ware|hardware)\s*colou?r$/i.test(biqNorm(t.slice(0, i))) && !!biqNorm(t.slice(i + 1)); })) it._hwFromOrder = true;
+        it._aiLine = true;                                                  // biqCassetteFromNotes reads the AI's own lines only
         it.notes = biqNorm(li.notes);
         o.items.push(it);
     });
@@ -4326,6 +4376,20 @@ export function biqCollectWarnings(mappings, order) {
         // A Finish Logic PO's crank blind left with Crank Handle None while no blind on the PO has a handle (biqNormalizeBdPo)
         if (it._crankNone && /^none$/i.test(biqNorm((it.variants.find(v => /^crank\s*handle$/i.test(biqNorm(v[0]))) || [])[1])))
             out.push({ t: w + 'Crank Handle set to None: no blind on this purchase order comes with a crank handle — confirm.', sev: 'warn' });
+        // The 70mm cassette: an insert with nothing to sit in went through without a word (TBD's BDO671259 PO, where
+        // Sharon removed it; BDO669160 D; Galaxy's BDO673492 I–K), and a cassette the converter took from the AI's notes
+        // (biqCassetteFromNotes) is the converter's reading, not the document's option.
+        {
+            const spec = biqVariantSpec(mappings, it.blindType, it.range), casO = biqCassetteOption(spec), insO = biqInsertOption(spec);
+            const val = o => { const r = o && it.variants.find(v => biqLc(v[0]) === biqLc(o.k)); return r ? biqNorm(r[1]) : ''; };
+            const pvc = (spec || []).find(o => /pvc/i.test(o.k) && /cassette/i.test(o.k) && !biqCassetteOption([o]));   // "White PVC 70mm Cassette" = Yes is one too
+            const cas = val(casO), on = (!!cas && !biqSaysNo(cas)) || (!!pvc && /^yes$/i.test(val(pvc)));
+            const insOn = !!insO && /^yes\b/i.test(val(insO));
+            if (insOn && casO && !casO.req && !on)
+                out.push({ t: w + 'fabric insert but no 70mm cassette — the insert goes on a cassette; confirm with the customer.', sev: 'warn' });
+            const f = it._casFromNotes, what = !f || !casO ? '' : f.insert ? (insOn ? insO.k : '') : (cas && !biqSaysNo(cas) ? casO.k + ' ' + cas : '');
+            if (what) out.push({ t: w + what + ' taken from the ' + f.from + ' ("' + f.text + '") — confirm it applies to this blind.', sev: 'warn' });
+        }
     });
     return out;
 }
@@ -5055,14 +5119,18 @@ export function biqFoldOptionSynonyms(mappings, order) {
                 if (rule.aliases.some(a => nl.includes(a))) setCanon(rule.value);
             }
         });
+        if (spec) biqCassetteInsertFromValue(spec, it);
         // Value-level canonicalization (Russel 2026-08-07, Mathéo "Beige (S40)"): when a value
         // isn't on the sheet's list but the value MINUS bracketed qualifiers is, use the
         // catalogue spelling and note the original. Anything still off-list keeps flagging.
         const spec2 = biqVariantSpec(mappings, it.blindType, it.range);
+        const casO2 = spec2 ? biqCassetteOption(spec2) : null;
         if (spec2) it.variants.forEach(v => {
             const o = spec2.find(s => biqLc(s.k) === biqLc(v[0]));
             if (!o || !(o.values || []).length) return;
             const val = biqNorm(v[1]); if (!val) return;
+            // "White or Black", "Black & White", "White closed" on a cassette: biqFoldCassette keeps them for the capturer
+            if (o === casO2 && !o.values.some(x => biqLc(x) === biqLc(val)) && biqCassetteWordingUnsafe(val, /closed/i.test(o.k), true)) return;
             const ci = o.values.find(x => biqLc(x) === biqLc(val));
             if (ci) { if (ci !== val) v[1] = ci; return; }            // case-only difference -> catalogue spelling, silently
             // Spacing/punctuation-only difference ("MultiL Frame", "Front- Hinge Side") ->
@@ -5113,44 +5181,338 @@ export function biqFoldOptionSynonyms(mappings, order) {
         });
     });
     biqFoldCassette(mappings, order);
+    biqCassetteFromNotes(mappings, order);
     biqApplyHardwareColours(mappings, order);
 }
 
-// Dealers (TBD software especially) write a cassette as plain keys — "Cassette=Yes",
-// "Cassette Colour=Black", "Fabric Insert=Yes" — while BlindIQ's option is a single
-// colour-valued key ("Sys 40 70mm Cassette=Black") plus a separate insert toggle
-// ("Fabric Insert for 70mm Cassette=Yes"). Fold the dealer keys onto the blind type's own
-// cassette options. Template-aware: works for any blind type whose spec has a colour-valued
-// *Cassette* option, and leaves the raw keys (to be flagged, never dropped) where it doesn't.
-// A Cassette=Yes with a missing/unknown colour keeps the raw value so the emit gate flags it.
-export function biqFoldCassette(mappings, order) {
-    (order ? order.items : []).forEach(it => {
-        const spec = biqVariantSpec(mappings, it.blindType, it.range); if (!spec) return;
-        const isYes = s => /^(yes|true)$/i.test(biqNorm(s));
-        const idxOf = re => it.variants.findIndex(v => re.test(biqLc(v[0])));
-        const colourCassette = spec.find(o => /cassette/i.test(o.k) && (o.values || []).length
-            && !(o.values || []).every(x => /^(yes|no)$/i.test(x)));
-        const ci = idxOf(/^cassette$/);
-        let coli = idxOf(/^cassette\s+colou?r$/);
-        // Double Roller (and others) call their OWN option "Cassette Colour": that row is already
-        // the real key — folding it onto itself and then splicing the "dealer" row deleted the
-        // colour (Blind Guys DRB: Cassette Colour=Anthracite came out empty + "required").
-        const coliIsReal = coli >= 0 && colourCassette && biqLc(it.variants[coli][0]) === biqLc(colourCassette.k);
-        if (coliIsReal && ci < 0) coli = -1;
-        if (colourCassette && (ci >= 0 || coli >= 0)) {
-            const on = ci >= 0 ? isYes(it.variants[ci][1]) : true;   // a colour alone implies a cassette
-            const colour = coli >= 0 ? biqNorm(it.variants[coli][1]) : '';
-            if (on) {
-                const match = (colourCassette.values || []).find(x => biqLc(x) === biqLc(colour));
-                biqSetVar(it.variants, colourCassette.k, match || colour || 'Yes');
-            }
-            [ci, coliIsReal ? -1 : coli].filter(x => x >= 0).sort((a, b) => b - a).forEach(x => it.variants.splice(x, 1));
+// ---------- the 70mm cassette and its fabric insert (Oct 2026) ----------
+// BlindIQ orders a cassette as ONE colour-valued option of the blind — Roller System 40 "Sys 40 70mm Cassette", a double
+// roller's "Cassette Colour", Vision "Cassette Type and Colour" (70mm White …), Roller System 55's "Closed Cassette (Motor
+// Only)" — and the insert as a Yes toggle ("Fabric Insert for 70mm Cassette"; on a Valance "70mm Cassette" line, "Fabric
+// Insert" with the fabric in the note). Dealers and the AI write both in many other ways: "Cassette=Yes" + "Cassette
+// Colour=Black" (TBD), "Cassette=Black", "Cassette=70mm", "System 40 70mm Cassette=Silver", "Cassette with Fabric
+// Inlay=Yes", "Fabric Insert=Yes (same fabric)". Until Oct 2026 everything but the TBD pair was dropped here without a
+// word or left red: of the 190 cassette blinds the AI read from 10 Jun to 28 Oct 2026, 26 kept their cassette
+// (project doc orderbot-converter-cassettes-2026-10). These rules read every such wording onto the blind's own options;
+// what they can't read stays on the line (red, "will NOT import") or in its notes — never silently lost.
+const BIQ_CAS_WORD = /\bcas+et+e?s?\b/i;                                   // cassette, casette, cassete, "… on Casset"
+const BIQ_CAS_KEY = /\bcas+et+e?s?\b|\bcass\b/i;                           // + "Cass Col"
+const BIQ_CAS_KEY_OTHER = /end\s*cap|\bfix|pvc|full\s+cas|\b1\d\d\s*mm\b/i; // other cassette parts: their own rules or the red flag
+const BIQ_CAS_KEY_HEAD = /^\W*(sys(tem)?\s*40\s+)?(70\s*mm\s+)?(open\s+)?cas+et+e?s?\b(?!\s*(fabric|insert|inlay))/i;
+const BIQ_INS_KEY = /^\W*(fabric\s+)?(insert|inlay)s?\b/i;                 // an insert key starts with it ("Bottom Bar Fabric Insert" isn't one)
+const BIQ_CAS_OFF = /^(no|nee|geen|none|nil|n|n\/a|na|not|without|excl\w*|false|0+|-+|–|—)(?=$|[\s.,:;!()])/i;   // "No thanks", "None required", "Not req.", Afrikaans "Nee"
+const BIQ_CAS_COLOUR = /\b(white|black|beige|silver|grey|gray|anthracite|charcoal)\b/i;
+const biqCasColourWord = c => biqLc(c).replace(/^gr[ae]y$/, 'silver').replace(/^charcoal$/, 'anthracite');   // Grey is Silver, Charcoal Anthracite
+const BIQ_CAS_TICK = /^(yes|y|ja|true|✓|✔|x|tick(ed)?|incl\.?|included|include|including|required|req\.?|fitted|with|on)$/i;
+const BIQ_CAS_PLAIN = /^(sys(tem)?\s*40\s*)?(70\s*mm\s*)?(open\s*)?(cas+et+e?s?)?$/i;   // "Sys 40 70mm Cassette", "70mm", "Open"
+const BIQ_INS_WORD = /\b(insert|inlay)s?\b/i;
+// "no insert", "without a fabric inlay", "insert: none", "(insert - no)"
+const BIQ_INS_NEG = /\b(no|not|without|excl\w*|minus)\s+(a\s+|an\s+|the\s+|any\s+)?(fabric\s+)?(insert|inlay)s?\b|\b(insert|inlay)s?\s*[:=\-–(]*\s*(no|nee|n|none|nil|n\/a|not|without|excl\w*)\b/i;
+// A no: the wording starts with one and names no colour ("Not black" is a question for the capturer, not a no).
+export function biqSaysNo(text) {
+    const v = biqNorm(text);
+    return !!v && BIQ_CAS_OFF.test(v) && !BIQ_CAS_COLOUR.test(v) && !biqUnsure(v);   // "Not sure" stays red; "No (confirmed)" is a no
+}
+// An answer that isn't one yet: "Not sure", "Not confirmed yet", "TBC", "to be confirmed", "maybe", "?"
+export function biqUnsure(text) {
+    return /\bnot\s+(sure|certain|confirmed|decided|known)\b|\b(tb[cda]|unsure|undecided|maybe|possibly|optional)\b|\bto\s+be\s+(confirmed|decided|advised)\b|\?/i.test(biqNorm(text));
+}
+// "Closed", but not "not closed" / "closed not available"
+const biqSaysClosed = t => /\bclosed\b/i.test(t) && !/\b(not|no|non)[\s-]+closed\b|\bclosed\s*\(?\s*(not\s+available|n\/a|unavailable)\b/i.test(t);
+// The insert the wording asks for: mentioned in a clause that isn't a no, unsure, declined or "separately" — "with fabric insert,
+// motor optional" asks for it; "fabric insert TBC", "declined the insert", "insert to be quoted separately" don't.
+function biqInsertAsked(text) {
+    const t = biqNorm(text); if (!BIQ_INS_WORD.test(t)) return false;
+    return t.split(/\s*(?:[,;()]|\s[-–]\s)\s*/).filter(c => BIQ_INS_WORD.test(c))
+        .every(c => !BIQ_INS_NEG.test(c) && !biqUnsure(c) && !/\b(declin\w*|separately|if\s+possible)\b/i.test(c));
+}
+// Cassette wording a value reading must not shorten to its first colour: a closed cassette, "or", "not", two colours.
+function biqCassetteWordingUnsafe(text, closedOnly, pvcToo) {
+    const v = biqNorm(text), cols = new Set((v.match(new RegExp(BIQ_CAS_COLOUR.source, 'gi')) || []).map(biqCasColourWord));
+    return (!closedOnly && /\bclosed\b/i.test(v)) || (!!pvcToo && /\bpvc\b/i.test(v)) || /\b(or|not|no|either|tb[cda]|confirm\w*|sure|check)\b/i.test(v) || cols.size > 1;
+}
+// The option a blind orders its cassette by (never the end cap, insert or PVC toggles), and its insert toggle.
+export function biqCassetteOption(spec) {
+    return (spec || []).find(o => BIQ_CAS_WORD.test(o.k) && !/end\s*cap|insert|inlay|pvc|fabric/i.test(o.k) && (o.values || []).length
+        && !(o.values || []).every(x => /^(yes|no)$/i.test(x))) || null;
+}
+export function biqInsertOption(spec) {
+    return (spec || []).find(o => BIQ_INS_WORD.test(o.k) && (o.values || []).some(x => /^yes\b/i.test(x))) || null;
+}
+// A cassette colour word ("Black", "Grey" = Silver, "Anthracite (S40)") as the option's catalogue value, also where
+// BlindIQ spells it "70mm Black" (Vision, Romashade); '' when the option has no such colour.
+export function biqCassetteColour(values, word) {
+    if (biqUnsure(word)) return '';                                     // "Black?", "Black (TBC)": the capturer decides
+    if (/\bpvc\b/i.test(String(word == null ? '' : word))) {          // a PVC cassette is its own value ("White PVC"), never the plain colour
+        const words = t => biqLc(String(t).replace(/^\s*70\s*mm\s+/i, '')).split(/[^a-z]+/).filter(Boolean).sort().join(' ');
+        return (values || []).find(x => words(x) === words(word)) || '';
+    }
+    const m = biqHardwareMatch(values, word, 'cassette'); if (m) return m;
+    const sq = s => biqLc(s).replace(/[^a-z]/g, '');
+    const w = sq(String(word == null ? '' : word).replace(/\([^)]*\)/g, ' ')); if (!w) return '';
+    for (const c of [w, (BIQ_HW_SUBST.cassette || {})[w] || '']) {
+        const v = c && (values || []).find(x => sq(String(x).replace(/^\s*70\s*mm\s+/i, '')) === c);
+        if (v) return v;
+    }
+    return '';
+}
+// What one cassette wording asks for: { off } no cassette; { word } a colour as written, which biqApplyHardwareColours
+// reads (Grey -> Silver, with its note); { colour } a colour taken out of longer wording ("Open 70mm White", "Black with
+// Duo Screen - Col: Charcoal fabric insert", "PVC white" -> White PVC); { yes } a cassette with no colour of its own
+// ("70mm", "Sys 40 70mm Cassette", "✓", a length); { raw } anything else, which stays red: two colours ("Black & White"),
+// "White or Black", "Not black", a closed cassette where the blind only has an open one (BDO669483), or an open / 70mm one
+// where it only has Roller System 55's closed one. `insert`: the wording also asks for the fabric insert; `told`: the
+// reading changed the dealer's words, so a note keeps them.
+function biqReadCassette(values, text, closedOnly) {
+    const v0 = biqNorm(text); if (!v0) return { empty: true };
+    // "No insert", "Without fabric inlay": a cassette, without its insert
+    const v = biqNorm(v0.replace(new RegExp(BIQ_INS_NEG.source, 'gi'), ' ').replace(/\(\s*\)|\[\s*\]/g, ' ').replace(/^[\s,;:.\-–]+|[\s,;:.\-–]+$/g, ''));
+    const insNo = v !== v0;
+    if (!v) return { yes: true, told: true, insNo };
+    if (biqSaysNo(v)) return { off: true };
+    const insert = !insNo && biqInsertAsked(v);
+    if (closedOnly ? /\b(70\s*mm|open|sys(tem)?\s*40)\b/i.test(v) : biqSaysClosed(v)) return { raw: v0, insert, closed: !closedOnly };
+    if ((values || []).some(x => biqLc(x) === biqLc(v)) || biqCassetteColour(values, v)) return { word: v, insert, insNo, told: insNo };
+    if (BIQ_CASSETTE_GENERIC.test(v) || BIQ_CAS_TICK.test(v)) return { yes: true, insert, insNo, told: insNo };
+    // the cassette's own words end where the insert is described: "Black with Duo Screen - Col: Charcoal fabric insert".
+    // Words that run straight into the insert describe it ("Duo Screen Charcoal fabric insert", "Charcoal insert"):
+    // their colour is the insert's, so the cassette takes the hardware colour.
+    let head = v;
+    if (BIQ_INS_WORD.test(v) || /\bfabric\b/i.test(v)) {
+        const m = v.match(/\s+(?:with|w\/|incl\w*\.?|plus)\s+|\s+[-–]\s+|\s*[,;(+&]\s*|\b(?:fabric|insert|inlay)\b/i);
+        if (m && /^(fabric|insert|inlay)/i.test(m[0])) {
+            // the insert first, the cassette after it: "Fabric insert + black cassette", "Insert: charcoal, cassette: black"
+            const later = v.match(/\b(white|black|beige|silver|grey|gray|anthracite|charcoal)\s+(70\s*mm\s+)?(open\s+)?cas+et+e?\b|\bcas+et+e?\s*(colou?r)?\s*[:=\-–]?\s*(white|black|beige|silver|grey|gray|anthracite|charcoal)\b/i);
+            const lc0 = later ? biqCasColourWord(later[1] || later[5]) : '', lcol = lc0 ? biqCassetteColour(values, lc0) : '';
+            return lcol ? { colour: lcol, insert, told: true } : { yes: true, insert, told: true };
         }
-        const fii = idxOf(/^fabric\s+insert$/);
-        const fiOpt = spec.find(o => /fabric\s+insert/i.test(o.k));
-        if (fii >= 0 && fiOpt && biqLc(fiOpt.k) !== 'fabric insert') {
-            if (isYes(it.variants[fii][1])) biqSetVar(it.variants, fiOpt.k, 'Yes');
-            it.variants.splice(fii, 1);
+        head = biqNorm(m ? v.slice(0, m.index) : v);
+        // "Duo Screen - Col: Charcoal fabric insert": the words before are the insert's fabric, not the cassette
+        if (insert && !BIQ_CAS_COLOUR.test(head) && /\b(screen|block|blockout|filter|sheer|linen|weave|texblock|texfilter|duo)\b/i.test(head)) return { yes: true, insert, told: true };
+    }
+    if (biqCassetteWordingUnsafe(head, closedOnly)) return { raw: v0, insert };
+    const col0 = (head.match(BIQ_CAS_COLOUR) || [])[0], col = col0 ? biqCasColourWord(col0) : '';
+    if (col) {
+        // "White PVC", "PVC white", "Double roller black": BlindIQ's value with those words, never the plain colour
+        const words = s => biqLc(String(s).replace(/^\s*70\s*mm\s+/i, '')).replace(/gr[ae]y/g, 'silver').split(/[^a-z]+/).filter(Boolean).sort().join(' ');
+        const extra = /\bpvc\b/i.test(head) ? ' pvc' : /\bdouble\s*roller\b/i.test(head) ? ' double roller' : '';
+        if (extra) { const want = words(col + extra), x = (values || []).find(y => words(y) === want); return x ? { colour: x, insert, insNo, told: true } : { raw: v0, insert }; }
+        const c = biqCassetteColour(values, col); return c ? { colour: c, insert, insNo, told: true } : { raw: v0, insert };
+    }
+    if (!head || /^\d{3,4}\s*(mm)?$/i.test(head) || BIQ_CAS_PLAIN.test(head) || BIQ_CASSETTE_GENERIC.test(head) || BIQ_CAS_TICK.test(head))
+        return { yes: true, insert, insNo, told: head !== v0 || /\d{3}/.test(head) };
+    return { raw: v0, insert };
+}
+// Fold the dealer's cassette and insert rows (keys that aren't the blind's own) onto its cassette options:
+//   • a colour wins over a plain "Yes"; "Cassette=No" (None, N/A, "None required", -) means no cassette and the colour
+//     beside it goes too;
+//   • the sheet's own row keeps a usable value — the AI's "Sys 40 70mm Cassette=Black" over a stray "Cassette Colour=White",
+//     which is noted — but a template default (a double roller's White) or a colour taken from the hardware gives way to
+//     the order's colour;
+//   • a "Yes" with no colour stays Yes: biqApplyHardwareColours gives it the colour of the hardware the order states,
+//     and leaves it red when the order states none (the cassette colour is never guessed);
+//   • the insert: any wording that isn't a no ("Yes (same fabric)", "Duo Screen Charcoal", Mathéo's "1800") is Yes, the
+//     wording kept in the notes; a cassette value that mentions an insert or inlay orders one too.
+// A closed cassette on a blind that has none (Roller System 40, BDO669483), an open one on Roller System 55, and a
+// cassette or insert on a blind type without one stay red. Idempotent: the rows it reads are removed.
+export function biqFoldCassette(mappings, order) {
+    (order ? order.items : []).forEach(it => biqFoldCassetteItem(mappings, it));
+}
+function biqFoldCassetteItem(mappings, it) {
+    const spec = biqVariantSpec(mappings, it.blindType, it.range); if (!spec) return;
+    const casO = biqCassetteOption(spec), insO = biqInsertOption(spec), closedOnly = !!casO && /closed/i.test(casO.k);
+    const lc = biqLc, inList = (o, x) => (o.values || []).some(y => lc(y) === lc(x));
+    const note = t => { if (!lc(it.notes).includes(lc(t))) it.notes = (it.notes ? it.notes + ' | ' : '') + t; };
+    const valOf = o => { const r = it.variants.find(v => lc(v[0]) === lc(o.k)); return r ? biqNorm(r[1]) : ''; };
+    const rows = [];
+    it.variants.forEach(v => {
+        const k = biqNorm(v[0]); if (!k || spec.some(o => lc(o.k) === lc(k))) return;
+        const cas = BIQ_CAS_KEY.test(k), ins = (BIQ_INS_WORD.test(k) && (cas || BIQ_INS_KEY.test(k))) || (cas && /\bfabric\b/i.test(k));
+        if (!cas && !ins) return;
+        if (cas && !ins && BIQ_CAS_KEY_OTHER.test(k)) return;
+        if (closedOnly ? /\b(70\s*mm|open|sys(tem)?\s*40)\b/i.test(k) : /closed/i.test(k)) return;   // another product's cassette: red
+        rows.push({ v, k, val: biqNorm(v[1]), cas, ins, head: cas && (!ins || BIQ_CAS_KEY_HEAD.test(k)), colourKey: /colou?r|\bcol\b/i.test(k) });
+    });
+    if (!rows.length && !casO && !insO) return;
+    let insWant = null;
+    if (casO) {
+        // the sheet's own row: wording it can't hold but can read ("Open 70mm White", "2350mm", "✓")
+        const cur0 = valOf(casO);
+        let ownOff = false;
+        if (cur0 && !inList(casO, cur0) && !BIQ_CASSETTE_GENERIC.test(cur0) && !biqCassetteColour(casO.values, cur0)) {
+            const r0 = biqReadCassette(casO.values, cur0, closedOnly);
+            const w0 = r0.word ? ((casO.values || []).find(x => lc(x) === lc(r0.word)) || biqCassetteColour(casO.values, r0.word) || '') : '';
+            if (r0.off) { ownOff = true; it.variants.forEach(v => { if (lc(v[0]) === lc(casO.k)) v[1] = ''; }); }   // "No", "N/A": nothing to import
+            else if (r0.colour || w0 || r0.yes) {
+                biqSetVar(it.variants, casO.k, r0.colour || w0 || 'Yes');
+                if (r0.told) note(casO.k + ' "' + cur0 + '" ' + (r0.colour || w0 ? 'read as ' + (r0.colour || w0) : 'on the order'));
+            }
+            if (r0.insNo) insWant = false;           // its insert: biqCassetteInsertFromValue, once per wording
+        }
+        const cur = valOf(casO);
+        const derived = (casO.def && lc(cur) === lc(casO.def)) || (it._casFromHw && lc(cur) === lc(it._casFromHw));
+        const state = ownOff ? 'off' : !cur ? 'empty' : inList(casO, cur) ? (derived ? 'def' : 'set')
+            : BIQ_CASSETTE_GENERIC.test(cur) ? 'yes' : biqCassetteColour(casO.values, cur) ? 'set' : 'raw';
+        const reads = rows.filter(r => r.head).map(r => Object.assign(r, biqReadCassette(casO.values, r.val, closedOnly)));
+        // an insert that names the cassette ("Fabric insert on Casset=Yes", "Cassette Fabric=Charcoal") asks for one too
+        rows.filter(r => r.cas && !r.head && r.val && !biqSaysNo(r.val) && !BIQ_INS_NEG.test(r.val)).forEach(r => reads.push({ k: r.k, val: r.val, yes: true }));
+        const colourOf = r => r.colour || (r.word ? ((casO.values || []).find(x => lc(x) === lc(r.word)) || r.word) : '');
+        const off = reads.some(r => r.off && !r.colourKey) || (reads.some(r => r.off) && reads.every(r => r.off || r.empty));
+        if (off || ownOff) it._casSaidNo = true;
+        let pick = null;
+        const closed = reads.find(r => r.closed);
+        if (closed && !off) {
+            // a closed cassette the blind doesn't have: red even over an open one, which is noted (BDO669483)
+            pick = closed;
+            if (cur && lc(cur) !== lc(closed.raw)) note(casO.k + ' "' + cur + '" on the order');
+            biqSetVar(it.variants, casO.k, closed.raw);
+        } else if (!off && ['empty', 'def', 'yes', 'raw'].includes(state)) {
+            pick = reads.find(r => r.colourKey && colourOf(r)) || reads.find(r => colourOf(r))
+                || (state === 'empty' ? (reads.find(r => r.yes) || reads.find(r => r.raw)) : null);
+            if (pick) {
+                const val = colourOf(pick) || (pick.yes ? 'Yes' : pick.raw);
+                if (state === 'raw') note(casO.k + ' "' + cur + '" on the order');
+                if (state === 'def' && it._casFromHw && lc(cur) === lc(it._casFromHw) && lc(val) !== lc(cur)) note(casO.k + ' ' + val + ' as the order says (the hardware colour gave ' + cur + ')');
+                biqSetVar(it.variants, casO.k, val);
+                if (pick.told) note(pick.k + ' "' + pick.val + '" ' + (pick.colour ? 'read as ' + casO.k + ' ' + val : 'on the order'));
+            }
+        }
+        // whatever the line now holds, a wording that says otherwise is noted — never lost. A colour beside an explicit
+        // "no cassette" (TBD's Cassette=No with its Cassette Colour) says nothing.
+        const fin = valOf(casO), finOn = !!fin && !biqSaysNo(fin), saidNo = off || state === 'off';
+        const sameColour = c => { const a = biqCassetteColour(casO.values, c) || c, b = biqCassetteColour(casO.values, fin) || fin; return lc(a) === lc(b); };
+        reads.forEach(r => {
+            if (r.insNo && insWant == null) insWant = false;
+            if (r === pick || r.empty) return;
+            if (r.insert) insWant = true;
+            if (r.off ? !finOn : (r.yes ? finOn && !r.told : colourOf(r) ? (finOn ? sameColour(colourOf(r)) : saidNo) : false)) return;
+            note(r.k + ' "' + r.val + '" on the order');
+        });
+        if (pick && pick.insert) insWant = true;
+    }
+    if (insO) {
+        const yesV = (insO.values || []).find(x => /^yes\b/i.test(x)) || 'Yes';
+        // the sheet's own insert row with a wording BlindIQ doesn't list ("Yes (same fabric)", a length, a Valance's plain Yes)
+        const icur = valOf(insO);
+        if (icur && !inList(insO, icur) && !biqUnsure(icur)) {
+            const none = biqSaysNo(icur) || BIQ_INS_NEG.test(icur);
+            it.variants.forEach(v => { if (lc(v[0]) === lc(insO.k)) v[1] = none ? ((insO.values || []).find(x => /^none$/i.test(x)) || '') : yesV; });
+            if (!none && !BIQ_CAS_TICK.test(icur)) note(insO.k + ' "' + icur + '" read as ' + yesV);
+        }
+        const told = [];
+        rows.filter(r => r.ins && r.val).forEach(r => {
+            if (biqUnsure(r.val)) { if (!r.head) r.keep = true; return; }   // "Not sure", "TBC": the capturer decides (red)
+            if (biqSaysNo(r.val) || BIQ_INS_NEG.test(r.val) || (r.head && r.off)) { if (insWant == null) insWant = false; return; }
+            insWant = true;
+            if (!r.head && !BIQ_CAS_TICK.test(r.val)) told.push(r);
+        });
+        if (insWant === true && !/^yes\b/i.test(valOf(insO))) biqSetVar(it.variants, insO.k, yesV);
+        told.forEach(r => note(r.k + ' "' + r.val + '" read as ' + insO.k + ' ' + yesV));
+    }
+    // the rows read above go; a cassette or insert this blind type can't hold stays (red), unless it says no. An insert
+    // key's cassette word only says which insert ("Fabric Insert for 70mm Cassette" on a Valance 70mm Cassette line).
+    for (let i = it.variants.length - 1; i >= 0; i--) {
+        const r = rows.find(x => x.v === it.variants[i]); if (!r) continue;
+        const nothing = !r.val || biqSaysNo(r.val);
+        const casDone = !r.head || !!casO || nothing, insDone = !r.ins || !!insO || nothing;
+        if (casDone && insDone && !r.keep) it.variants.splice(i, 1);
+    }
+}
+// A cassette cell that orders the insert too ("SYS 40 70mm OPEN CASSETTE: Black with Duo Screen - Col: Charcoal fabric
+// insert", Studio Blue 32: 66 blinds on 8 orders): the value reading in biqFoldOptionSynonyms keeps only the colour (its
+// note keeps the words), so the insert is set before it runs — once per wording, so a capturer's removal stays.
+function biqCassetteInsertFromValue(spec, it) {
+    const casO = biqCassetteOption(spec), insO = biqInsertOption(spec); if (!casO || !insO) return;
+    const r = it.variants.find(v => biqLc(v[0]) === biqLc(casO.k)), t = r ? biqNorm(r[1]) : '';
+    if (!t || it._casInsSeen === t) return;
+    it._casInsSeen = t;
+    if (!biqInsertAsked(t) || biqSaysNo(t)) return;
+    if (!it.variants.some(v => biqLc(v[0]) === biqLc(insO.k) && /^yes\b/i.test(biqNorm(v[1]))))
+        biqSetVar(it.variants, insO.k, (insO.values || []).find(x => /^yes\b/i.test(x)) || 'Yes');
+}
+// AI readings only. The AI is told where cassettes are written (biqBuildExtractionPrompt) but can still leave one in the
+// notes: "Incl. White Cassette" across a handwritten row (Blind Guys Kempton Park), "With Black Cassette" or "6x Roller
+// Blinds … And 70mm Cassette" as an order note (Décor Accessories, Sew Sandton), "all with casettes" (Decotique); 64 of the
+// 190 cassette blinds the AI read from Jun to Oct 2026 came through with nothing about the cassette. A line note sets its
+// line's cassette; an order note that names no blind (no location, item number, "A & B" or shared cassette) and no other
+// product sets it on every roller line — but only when the AI put a cassette on none of them (when it did, it has placed
+// the note itself). Not a cassette order: "no / without (the) cassette", "cassette: none", a closed or separate cassette,
+// cassette parts (end caps, brackets). The colour is the note's, else Yes (the hardware colour, or red:
+// biqApplyHardwareColours). Each AI line is read once, when its blind type has the optional cassette, so a capturer's
+// own choice afterwards stays; the line note and an amber warning (biqCollectWarnings) say where it came from. Double
+// rollers have their own rule (biqApplyDoubleRollers).
+function biqCassetteMention(text, items) {
+    // sentences: |, ;, line breaks, sentence ends (not "No. 3"); clauses: commas (not "2,400")
+    const sentences = String(text || '').split(/\s*(?:\||\n|;|\.(?=\s+[A-Z(]|\s*$))\s*/).map(biqNorm).filter(Boolean);
+    const between = '(?:(?:a|an|the|any|this|that|these|its|their|need|needed|needs|for|required|require|want|wanted|include|included|including|in|into|with|fitted|fit|put|place|make|install|supplied|supply|use|using|be|to|longer|have|black|white|beige|silver|grey|gray|anthracite|charcoal|open|70\\s*mm)\\s+){0,4}';
+    const negated = new RegExp('(\\b(no|not|without|excl\\w*|minus|remove\\w*|delete\\w*|cancel\\w*|never|dont)|n[\'’]t)\\s+' + between + 'cas+et+e?s?\\b', 'i');
+    const products = '(double\\s*rollers?|vision|zebra|roma\\s*shades?|venetians?|verticals?|outdoor|shutters?|awnings?|curtains?)';
+    for (const sen of sentences) {
+        if (!BIQ_CAS_WORD.test(sen) || / read as |on the order|— confirm|from the (line|order) note/i.test(sen)) continue;
+        // an order note about named blinds is the AI's to place, not every blind's: the whole sentence is checked
+        if (items && (/\b(blinds?|items?|lines?|windows?|nos?\.?|nr\.?|numbers?)\s*#?\s*\d+(?!\s*mm)\b/i.test(sen) || /#\s*\d+/.test(sen)
+            || /\b\d{1,2}\s*(&|and|\+)\s*\d{1,2}\b/i.test(sen) || /\b\d{1,2},\s+\d{1,2}\b/.test(sen)
+            || /\b[A-Z]\s*(&|and|And|AND|,|\+)\s*[A-Z]\b/.test(sen) || /\b(one|1|single|shared?|long|common)\s+(long\s+)?cas+et+e?\b|\bshare[sd]?\b/i.test(sen)
+            || items.some(it => biqNorm(it.location) && biqHasWords(sen, it.location)))) continue;
+        for (const f of sen.split(/\s*,(?=\s)\s*|\s*,(?=\D)\s*/).map(biqNorm).filter(Boolean)) {
+            if (!BIQ_CAS_WORD.test(f)) continue;
+            // not a cassette order: "no cassette", "do not include a cassette", "not to be in a cassette", "cassette: none"
+            if (negated.test(f) || /\bcas+et+e?s?\s*[:=\-–]?\s*(no|none|n\/a|nil|not)\b/i.test(f)) continue;
+            if (f.split(/\s+[-–]\s+|\s*[()]\s*/).filter(x => BIQ_CAS_WORD.test(x)).some(biqUnsure)) continue;   // "Black cassette?", not "… - remote TBC"
+            // a closed, separate or existing cassette; the cassette's parts ("70mm cassette end caps", "spare cassette brackets")
+            if (/\b(closed|separate|existing|current|old|own)\s+(?:70\s*mm\s+)?cas+et+e?/i.test(f) || /\bcas+et+e?s?\s+(only|on\s+its\s+own)\b/i.test(f)) continue;
+            if (/\bcas+et+e?s?\s+(end\s*caps?|brackets?|clips?|spares?|parts?|covers?|profiles?|lengths?)\b|\bend\s*caps?\b|\b(spares?|replacement|extra|additional)\s+(?:[\w-]+\s+){0,2}?cas+et+e?s?\b/i.test(f)) continue;
+            // an order note about another product's cassette: "double rollers in black cassettes", "black cassettes for the double rollers"
+            if (items) {
+                const prod = f.search(new RegExp('\\b' + products + '\\b', 'i'));
+                if ((prod >= 0 && prod < f.search(BIQ_CAS_WORD)) || new RegExp('\\b(for|on|of|with)\\s+(the\\s+|all\\s+)?' + products, 'i').test(f)) continue;
+            }
+            const c1 = f.match(/\b(white|black|beige|silver|grey|gray|anthracite|charcoal)\s+(70\s*mm\s+)?(open\s+)?cas+et+e?s?\b/i);
+            const c2 = f.match(/\bcas+et+e?s?\s*(colou?r)?\s*[:=\-–]?\s*(in\s+)?(white|black|beige|silver|grey|gray|anthracite|charcoal)\b/i);
+            const on = c1 || c2 || /\b(with|incl\w*\.?|include[sd]?|plus|and|in|\+|&)\s+(a\s+|an\s+|the\s+)?(70\s*mm\s+)?(open\s+)?cas+et+e?s?\b/i.test(f)
+                || /\b70\s*mm\s+(open\s+)?cas+et+e?s?\b/i.test(f) || /\bcas+et+e?s?\s*[:=]\s*(yes|y)\b/i.test(f)
+                || /\b(one|1|single|shared?|long)\s+(long\s+)?cas+et+e?\b/i.test(f);
+            if (!on) continue;
+            // the insert: asked for in the same sentence, not negated, not left open ("fabric insert TBC", "declined the insert")
+            const ins = biqInsertAsked(sen);
+            return { colour: c1 ? c1[1] : c2 ? c2[3] : '', insert: ins, text: sen.length > 80 ? sen.slice(0, 77) + '…' : sen };
+        }
+    }
+    return null;
+}
+export function biqCassetteFromNotes(mappings, order) {
+    if (!order || order.source !== 'ai') return;
+    const valOf = (it, o) => { const r = o && it.variants.find(v => biqLc(v[0]) === biqLc(o.k)); return r ? biqNorm(r[1]) : ''; };
+    const lines = (order.items || []).map(it => {
+        if (!it._aiLine || biqIsDoubleRoller(mappings, it)) return null;
+        const spec = biqVariantSpec(mappings, it.blindType, it.range), casO = biqCassetteOption(spec);
+        return casO && !casO.req && !/closed/i.test(casO.k) ? { it, casO, insO: biqInsertOption(spec) } : null;
+    }).filter(Boolean);
+    const todo = lines.filter(l => !l.it._casNoteChecked);
+    if (!todo.length) return;
+    // a cassette the AI (or the capturer) put on a roller line means the order note has been read; one the capturer took
+    // off a line the order note had set means it doesn't apply
+    const anyOn = lines.some(l => !l.it._casFromNotes && valOf(l.it, l.casO) && !biqSaysNo(valOf(l.it, l.casO)));
+    const rejected = lines.some(l => l.it._casFromNotes && l.it._casFromNotes.from === 'order notes' && !l.it._casFromNotes.insert
+        && (!valOf(l.it, l.casO) || biqSaysNo(valOf(l.it, l.casO))));
+    const general = anyOn || rejected ? null : biqCassetteMention(order.notes, order.items);
+    todo.forEach(({ it, casO, insO }) => {
+        it._casNoteChecked = true;
+        const cur = valOf(it, casO);
+        if (it._casSaidNo || (cur && biqSaysNo(cur))) return;               // the order says no cassette for this blind
+        const own = biqCassetteMention(it.notes, null), m = own || general;
+        if (!m) return;
+        const from = own ? 'line note' : 'order notes';
+        const note = t => { if (!biqLc(it.notes).includes(biqLc(t))) it.notes = (it.notes ? it.notes + ' | ' : '') + t; };
+        if (!cur) {
+            const val = (m.colour && biqCassetteColour(casO.values, m.colour)) || 'Yes';
+            biqSetVar(it.variants, casO.k, val);
+            it._casFromNotes = { from, text: m.text };
+            note(casO.k + (val === 'Yes' ? '' : ' ' + val) + ' from the ' + from + ' — confirm');
+        }
+        if (m.insert && insO && !/^yes\b/i.test(valOf(it, insO))) {
+            biqSetVar(it.variants, insO.k, (insO.values || []).find(x => /^yes\b/i.test(x)) || 'Yes');
+            if (cur) { it._casFromNotes = it._casFromNotes || { from, text: m.text, insert: true }; note(insO.k + ' from the ' + from + ' — confirm'); }
         }
     });
 }
@@ -5204,8 +5566,7 @@ export function biqApplyHardwareColours(mappings, order) {
         // (Silver cassette -> Grey hardware). 867 of the 875 stored System 40 lines that state a cassette
         // colour carry the matching hardware. Never over a hardware colour the order states.
         if (mechRow && !it._hwFromOrder && !it._hwFromCassette && biqLc(mechRow[1]) === biqLc(mechO.def || '')) {
-            const casK = spec.find(o => /cassette/i.test(o.k) && !/end\s*cap|insert|pvc/i.test(o.k) && (o.values || []).length
-                && !(o.values || []).every(x => /^(yes|no)$/i.test(x)));
+            const casK = biqCassetteOption(spec);
             const cr = casK ? it.variants.find(v => biqLc(v[0]) === biqLc(casK.k)) : null;
             const cc = cr && (casK.values || []).find(x => biqLc(x) === biqLc(cr[1]));
             if (cc) {
@@ -5234,15 +5595,14 @@ export function biqApplyHardwareColours(mappings, order) {
             }
         }
         // Cassette colour (a colour-valued *Cassette* option: "Sys 40 70mm Cassette", "Cassette Colour", ...)
-        const casO = spec.find(o => /cassette/i.test(o.k) && !/end\s*cap|insert|pvc/i.test(o.k) && (o.values || []).length
-            && !(o.values || []).every(x => /^(yes|no)$/i.test(x)));
+        const casO = biqCassetteOption(spec);
         if (casO) {
             const r = it.variants.find(v => biqLc(v[0]) === biqLc(casO.k)), cur = r ? biqNorm(r[1]) : '';
             if (cur && !inList(casO, cur) && !/^(no|none|false|n)$/i.test(cur)) {
                 // A bare "Yes" takes the colour of the hardware the ORDER states; with no hardware
                 // colour on the order it stays flagged — the cassette colour is never guessed.
                 const generic = BIQ_CASSETTE_GENERIC.test(cur);
-                const m = (generic ? (hwStated ? biqHardwareMatch(casO.values, hwStated, 'cassette') : '') : biqHardwareMatch(casO.values, cur, 'cassette'))
+                const m = (generic ? (hwStated ? biqCassetteColour(casO.values, hwStated) : '') : biqCassetteColour(casO.values, cur))
                     || (generic && casO.values.length === 1 ? casO.values[0] : '');
                 if (m) { r[1] = m; note(casO.k + ' "' + cur + '" read as ' + m + (generic && hwStated ? ' (' + hwStated + ' hardware)' : '')); }
             }

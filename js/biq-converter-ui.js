@@ -354,8 +354,8 @@ async function fileToB64(f) {
 }
 async function aiExtract(files) {
     setStatus('AI is reading the document… (Gemini)');
-    const voc = biqExtractionVocabulary(MAPS);       // live ranges per blind type once the catalogue is imported
-    const parts = [{ text: biqBuildExtractionPrompt(voc.ranges, voc.types) }];
+    const voc = biqExtractionVocabulary(MAPS);       // live ranges and BlindIQ's option names per blind type once the catalogue is imported
+    const parts = [{ text: biqBuildExtractionPrompt(voc.ranges, voc.types, voc.options) }];
     for (const f of files) { const b = await fileToB64(f); parts.push({ inlineData: b }); }
     const proxyPayload = {
         model: D.EXTRACTION_MODEL,

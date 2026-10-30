@@ -122,6 +122,8 @@ Mathéo's sheet changes with the product ordered (roller, designer roller, doubl
   - The sheet's Control option mirrors the Controls column, and a motorised blind gets Crank Handle None.
 - **Shutter sheet:** the Tilt Bar cell carries both the bar position and the tilt grouping. "Style" is BlindIQ's Rebate. Mid rail positions ("997 & 1997") set Middle Rail and its positions. The hinge configuration gives Control 1.
 - **Accessory rows** become the sheet's Wire Side Guides option where it has one, otherwise sundry lines (motor parts resolve in the motor sundry types). Prices are ignored; BlindIQ prices for itself.
+  - Each row also leaves "Accessory: <name>" in the line's notes, for the editor, the One Touch Dual rule and the comparison. BlindIQ doesn't get that note when the part is a sundry line (`_partNotes`, see [XML export](xml-export.md#notes-for-parts-on-sundry-lines-every-source)); the wire side guides note always goes.
+  - Rows on the valance sheet return before the accessory rows are read, so a valance row's accessories are neither a sundry line nor a note (as before October 2026).
 - **Valance sheet** (`biqMatheoValance`): each row is a BlindIQ Valance line, and "Type of Blind" is filled as Roller Blind and noted, because the sheet doesn't print it.
 
 ## Finish Logic purchase order ("Online Purchase Order")
@@ -333,7 +335,7 @@ After the load, AI name matching (`aiDiscern`) runs on any names still unresolve
    - Choose its position: more specific signatures go before looser ones, and in particular before `biqParseTbd`.
    - Call it through the `BiqConv` namespace with a guard, as `biqParseBiqOnline` is called.
    - Detection is shared with the comparison, so the new reading reaches the comparison's AI at the same time.
-6. **Don't change the shared pipeline for one dealer.** A rule that is true for every layout goes in the pipeline, and then into both `refresh()` and `biqRunRulePipeline`. If the dealer's own notes shouldn't reach BlindIQ, follow the TBD purchase-order pattern: record the notes you generate and filter them in `biqExportItemNotes` by `order.source`.
+6. **Don't change the shared pipeline for one dealer.** A rule that is true for every layout goes in the pipeline, and then into both `refresh()` and `biqRunRulePipeline`. If the dealer's own notes shouldn't reach BlindIQ, follow the TBD purchase-order pattern: record the notes you generate and filter them in `biqExportItemNotes` by `order.source`. A note you write for a part you put on a sundry line goes in `it._partNotes`, which `biqExportItemNotes` already leaves out for every source.
 7. **Test.**
    - Add a node test (`biq-<name>.test.mjs`) to the regression package, and run the whole suite against the known baseline.
    - Replay the real documents and compare line by line with what BlindIQ stored.

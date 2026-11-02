@@ -3104,7 +3104,9 @@ ${feedbackExamples}
                      blind.motorValidation.push(`Control Alert: Missing valid control for motor "${motorProp.motorName}". Valid options: [${motorProp.blindControl}]`);
                 }
 
-                const controllerCheck = checkListItem(orderedControllers, motorProp.controlOptions);
+                // Somfy remotes carry the model's name, not "remote" ("Situo 5 RTS Pure", "Ysia 5 ZIGBEE White"),
+                // so they land with the other dependencies: look for the motor's own controllers there too.
+                const controllerCheck = checkListItem(new Set([...orderedControllers, ...orderedDependencies]), motorProp.controlOptions);
                 if (!controllerCheck.pass) {
                     blind.motorValidation.push(`Controller Alert: No compatible controller (e.g., ${motorProp.controlOptions}) found in sundries.`);
                 }

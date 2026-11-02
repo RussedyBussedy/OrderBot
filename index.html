@@ -3084,7 +3084,7 @@ ${feedbackExamples}
                 const checkListItem = (orderedItems, requiredItemsString) => {
                     // Normalise British "adaptor" spelling onto "adapter" so config-side and
                     // sundry-side strings compare correctly regardless of which spelling is used.
-                    const normalise = s => s.toLowerCase().replace(/ad[ao]?p[a-z]*t[eo]r/g, 'adapter');
+                    const normalise = s => s.toLowerCase().replace(/\bad[ao]?p[a-z]*t[eo]r\b/g, 'adapter');
                     const requiredItems = (requiredItemsString || '').split(',').map(s => normalise(s.trim())).filter(s => s);
                     if (requiredItems.length === 0) return { pass: true };
                     const foundItem = [...orderedItems].find(ordered => {

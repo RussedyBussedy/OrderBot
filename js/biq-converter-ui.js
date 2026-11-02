@@ -27,6 +27,7 @@ import { biqDetectForm, biqParseSpecForm, biqElementGridOptions } from './biq-fo
 // few minutes after a deploy then just doesn't read that layout, instead of failing to load the page.
 import * as BiqConv from './biq-converter.js';
 import { isGemini3 } from './config.js';
+import { findFabric } from './roller-selector.js';
 
 let D = null;            // injected deps
 let MAPS = null;         // live mappings (seeds + Firestore)
@@ -98,8 +99,18 @@ async function saveFormats() {
     catch (e) { console.error('biq formats save failed', e); }
 }
 function freshSeeds() { return JSON.parse(JSON.stringify(BIQ_SEED_MAPPINGS)); }
+// OrderBot's one fabric list (Fabric properties) for the converter's Out of Warranty and 1.5:1 rules, as
+// MAPS.fabricList. Not enumerable, so the mappings file export and the category saves never include it.
+async function loadFabricList() {
+    try {
+        const list = await D.getFabricProperties();
+        if (MAPS) Object.defineProperty(MAPS, 'fabricList', { value: list, writable: true, configurable: true, enumerable: false });
+        if (order) refresh();
+    } catch (e) { console.error('biq fabric list load failed', e); }
+}
 async function loadMappings() {
     MAPS = freshSeeds();
+    loadFabricList();
     if (!D.db) { D.showToast('BlindIQ mappings: database offline — using built-in defaults only.', 'error'); return; }
     try {
         const snap = await D.getDocs(D.collection(D.db, MAPPINGS_COLLECTION));
@@ -650,9 +661,9 @@ async function runChecks() {
         const shaped = biqToComparisonShape(order);
         D.runPostAIValidations(shaped, fabricProps, motorProps, tubeProps);
         checkResults = biqExtractCheckResults(shaped);
-        // note items whose range has no fabric properties (no torque possible)
+        // note items whose range isn't in the fabric list (no weight or torque possible), found as the checks find it
         checkResults.missingFabric = order.items
-            .filter(it => biqLc(it.range) && !fabricProps.get(biqLc(it.range)))
+            .filter(it => biqLc(it.range) && !findFabric(fabricProps, it.range, it.colour))
             .map(it => it.range).filter((v, i, a) => a.indexOf(v) === i);
         setStatus('');
         refresh();
@@ -673,7 +684,7 @@ function renderChecks() {
     }).join(', ');
     html += '</div>';
     if (checkResults.missingFabric && checkResults.missingFabric.length)
-        html += `<div class="text-amber-700 text-xs mt-1">No fabric properties found for: ${checkResults.missingFabric.map(escH).join(', ')} — add them under Fabric Properties (exact range name) to enable weight/torque checks.</div>`;
+        html += `<div class="text-amber-700 text-xs mt-1">No fabric properties found for: ${checkResults.missingFabric.map(escH).join(', ')} — add them under Fabric Properties (by name, or as an "Also known as" name) to enable weight/torque checks.</div>`;
     el.innerHTML = html;
 }
 

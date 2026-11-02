@@ -125,12 +125,13 @@ All three work the same way:
 
 | Field | Type | Meaning |
 |---|---|---|
-| `fabricName` | string | The range name. `getFabricProperties` returns a `Map` keyed by it in lower case. |
+| `fabricName` | string | The fabric's name. `getFabricProperties` returns a `Map` keyed by it and every alias, in lower case (`fabricList` in `js/roller-selector.js`). |
 | `fabricWeight` | number | kg per m², for the blind's weight and the torque it needs |
 | `fabricWidth` | integer | The roll width in mm |
 | `canTurn` | string | `Yes`, `No` or `Out`: the fabric can be turned, can't, or only [out of warranty](glossary.md) |
+| `aliases` | array of strings, optional | Other spellings (Blind IQ range names, dealer spellings), from the panel's **Also known as** box or the CSV's 5th column (Nov 2026) |
 
-CSV columns, in order: name, weight, width, turn.
+CSV columns, in order: name, weight, width, turn, and optionally aliases (separated by `|`). An upload replaces every document, so a file without the 5th column also removes every alias.
 
 **`orderbot_motor_properties`**
 
@@ -231,6 +232,7 @@ The Firestore security rules are managed in the Firebase console and aren't in t
 |---|---|---|---|---|
 | `biq_admin` | `localStorage` | `1`, or absent | `js/biq-converter-ui.js` (`biqIsAdmin`, `biqTryUnlock`) and `index.html` (`costReportAdmin`) | [Admin mode](glossary.md) |
 | `cr_name` | `localStorage` | A name | `js/cost-report-console.js` (`NAME_KEY`, `rememberName`) | Who saves the cost report settings (`updatedBy`) |
+| `ob_roller_lines` | `localStorage` | JSON list of blinds | `js/roller-selector-ui.js` (`STORE`) | The Roller check view's blinds, for that browser only |
 | `ob_guidelines_open`, `ob_fabric_open`, `ob_motor_open`, `ob_tube_open`, `ob_biq_open` | `localStorage` | `open` or `closed` | `index.html` → `setupCollapsible` | Which panels are open |
 
 - OrderBot's own code uses no `sessionStorage`, cookies or IndexedDB. The Firebase SDK keeps its sign-in state itself.

@@ -56,6 +56,8 @@ There are no tests in this repository (the regression package lives outside it, 
 | `js/comparison-context.js` | What the comparison AI is told (pure, tested in node): corrections, `BD_STANDARDS`, `READING_RULES`, `NOT_SPECIFIED_RULES`, `RESULT_VALUES`, the converter reading, the second-reading prompt |
 | `js/comparison-checks.js` | Rule checks after the AI (pure, tested in node): `applyDeterministicChecks`, `applyExactReading`, `needsSecondReading`, `reconcileSecondReading` |
 | `js/outdoor-motors.js` | The Zip X motor table and `validateOutdoorMotors` |
+| `js/roller-selector.js` | The Roller System Selector's rules (pure, tested in node): the fabric list helpers (`fabricList`, `findFabric`; no fabric data), BlindIQ's roller motors (`MOTORS`, `rollerMotorOf`), `selectRollerSystem`, `chainCheck`, `validateRollerSystems` |
+| `js/roller-selector-ui.js` | The "Roller check" view (everyone; loaded on first open) |
 | `js/biq-converter.js` | Document converter core (pure, no DOM): parses Blind Guys xlsx / Mathéo PDF / BD forms / AI JSON → BlindIQ order + XML; name→ID resolution via `orderbot_biq_mappings` (Firestore); also holds `BIQ_SEED_MAPPINGS` and `BIQ_EXTRACTION_SCHEMA` |
 | `js/biq-converter-ui.js` | Converter UI (the "BlindIQ XML converter" section of the Orders view, called "the Drawings tab" in older notes below; the header's Drawings pill is the bd-tools visualiser): drag-drop, preview, mappings manager |
 | `js/biq-form-specs.js` | BD order-form specs: `BIQ_FORM_SPECS`, `biqDetectForm`, `biqParseSpecForm`, `biqElementGridOptions` |
@@ -91,7 +93,7 @@ When extracting more modules to `js/`, follow this pattern: named exports only (
 | `orderbot_comparisons` | Saved comparison results with full line item data |
 | `orderbot_feedback` | User-submitted error corrections (used in AI prompt) |
 | `orderbot_guidelines` | Consolidated business rules (used in AI prompt) |
-| `orderbot_fabric_properties` | Fabric name, weight, width, canTurn |
+| `orderbot_fabric_properties` | OrderBot's one fabric list: name, weight (kg/m²), roll width, canTurn, aliases — read by the comparison, the Roller check view and the converter |
 | `orderbot_motor_properties` | Motor name, torque, blind type, adapter, accessories |
 | `orderbot_tube_properties` | Blind type → tube diameter mapping |
 | `orderbot_biq_mappings` | Converter mappings, one document per category (sharded above 700,000 characters); see `docs/converter/mappings-and-catalogue.md` |
@@ -209,6 +211,48 @@ After Gemini returns results, the frontend runs these validations locally:
 6. **One Touch Dual rule** (Paul, 2026-08-05) — a System 40 roller blind taking a One Touch Dual motor (1.1/2/3Nm family; thinner motor head) must be spec'd "LH DUAL"/"RH DUAL", NOT "LH Motor"/"RH Motor" (plain-motor spec → blind made too narrow); the reverse (DUAL spec, no One Touch Dual motors ordered) is also flagged
 7. **Critical-field surfacing** (Paul, 2026-08-05) — mismatches/omissions on Product Type, Range, Colour, QTY, Width, Drop, Control 1/2 (`CRITICAL_FIELDS` in `js/constants.js`) get the strongest cell highlight (`.critical-cell`), a CRITICAL FIELD CHECK summary at the top of every report, and an end-of-run popup (`#critical-modal`) listing the affected line items per order
 8. **Valance validation** (rules corrected 2026-08-06 after Sharon's cassette false alarms) — runs only when the customer order instructs valances on ALL blinds. A valance ordered AS PART OF THE BLIND (cassette blind, or a valance/cassette in the line's specifications) satisfies the requirement with NO size check — the factory sizes it to the blind. Only STANDALONE valance line items (linear / half round / pelmet — valance wording AND no blind-sized drop) are width-matched: they must be **10–15mm larger** than the blind (was wrongly 20–25mm, and cassette specs were wrongly size-parsed, e.g. "Sys 40" read as 40mm)
+9. **Roller System Selector** (Nov 2026, `js/roller-selector.js`) — chain (`chainValidation`) and Roller System 40/55 limits and motor tubes (`rollerValidation`); see the section below
+
+## Roller System Selector: the Roller check view and System 40/55 flags (Nov 2026)
+
+Russel (2 Nov 2026): check Sales Resource's `Calculation Tools/Roller Blinds/Roller system selector V2.1.xlsx`, put it in OrderBot as a tab for checking motors and chains, and make the comparison flag what's out of spec; then "one editable tidy list" of fabrics. Docs: `docs/roller-check.md`.
+- **Workbook review.** The method is sound: weight = kg/m² × area + bar kg/m × width; torque = weight × 9.81 × tube radius + 20 %. The bugs, fixed in `Roller system selector V2.2.xlsx` beside V2.1 (V2.1 untouched; V2.2's "Changes V2.2" sheet lists fixes and open items; both recalculated in Excel with the same test blinds):
+  - a "Too heavy …" motor showed ✓ OK;
+  - the multi-line sheet's Sonesse 40 WF Zigbee 4Nm doesn't exist (3Nm);
+  - RTS wire-free silently became 220V;
+  - One Touch+ ignored 220V;
+  - Zigbee 220V 6/9Nm and Optuo were missing;
+  - System 55 chain over 11.5 kg still got the Easi-Lift chain;
+  - a blank bottom bar read as over 11.5 kg, and a chain line with no fabric or bar got "Sys 55 Chain + Easi-Lift" even at 1000 × 1000;
+  - the single sheet had no Smart Rail.
+- **Russel's calls (2 Nov 2026).** System 40 chain 4–8 kg without 1.5:1 stays amber from 4 kg (only 602 of 1,460 had it, Nov 2025 – Oct 2026). The Lift Assisting Spring over 4.5 kg on System 55 is advice only, never a flag (11 of 85 had it). The motor list is BlindIQ's live roller motors, not the workbook's Motor Reference.
+- **`MOTORS`.** The tubes each motor goes in follow 12 months of System 40/55 orders and BlindIQ's adaptor kits. System 55 only: Sonesse 40, Optuo, OT Dual 6Nm, Motion 40. Both: Sonesse 30 WF ("Sys 55 Adaptor Kit for Sonesse 30 Wire Free"). The rest are System 40. Torque is worked out on the tube the motor goes in.
+  - `rollerMotorOf`: a known name (also behind "Motors … - "), else a wording with an Nm figure. Never kit/adaptor (any spelling), charger, remote, battery pack/tube, power supply, transformer, plate, drive, spring, or outdoor/curtain/cellular/tilt.
+  - Over the 5,573 names in `data/sundry-names.json`: 53 motors (the 32 plus 21 older/component wordings), no accessories.
+- **One fabric list** (Russel, 2 Nov 2026): `orderbot_fabric_properties` (the Fabric properties panel) is the only fabric data. It gains optional `aliases` (panel "Also known as", CSV 5th column split on `|`; an upload replaces every row, aliases included).
+  - `getFabricProperties` returns `fabricList()` (js/roller-selector.js): a Map keyed by every name and alias (names win), adding `{ name, kg, roll, turn }`. A weight over 5 kg/m² is ignored (Firestore held "Perspective White Back 3%" at 450), and the panel refuses one.
+  - `findFabric(list, range, colour)` returns the fabric with `match`:
+    - `name` (name or alias, no trailing "#");
+    - `print` (Blind IQ's shortened print, 12+ characters, unique prefix);
+    - `design` (Designer Fab colour's design, with the colour's own "NNNNmm" roll; no lookbehind);
+    - `part` (one side of " / ": weight yes, roll width no).
+    It also accepts a bare Map of documents, the pre-Nov 2026 shape.
+  - Used by sections 0 and 1, the Roller check view (via `window.OrderBotRollerDeps`, read again on "Try again") and the converter (`mappings.fabricList`, non-enumerable, set by `loadFabricList` in biq-converter-ui.js; `_oowSig` includes its size, so Out of Warranty is decided again when it arrives).
+  - `BIQ_ROLL_FABRICS`, `BIQ_FABRIC_KG` and `BIQ_DESIGNER_KG` are gone: without the list, the converter's roll Out of Warranty and 1.5:1 weight rules are silent (`convert-cli.mjs` and the tests must pass it). The converter still reads a `part` match's roll for Out of Warranty, as its table did.
+  - Firestore's values were kept over the workbook's (the workbook and converter repeated placeholder Designer weights). Louvolite's pages (roll widths only) agree with Firestore on 15 of 24 disputed widths and with the workbook on 9; Voile and Monet Sheer are 2000 mm (the converter had 3000).
+- **Comparison** (`runPostAIValidations`):
+  - **Section 0:** the line's bottom bar, also from packed options (`optionPairs`: "Hardware Colour = Mech Colour=White | Bottom Bar=…").
+  - **Section 1:** not for verticals, panels or outdoor blinds (`notOnRollerRolls`). A `part` match has no roll, and Roller System 40/55 gets `ROLL_ALLOWANCE` (35 mm). The 19,170-comparison replay drops 187 old red alerts (132 outdoor, e.g. 119 Free Hang in Mode / Mode Zero / Dayscreen made as ordered; 34 verticals; 4 panels) and adds 30. Of 14 new ones checked, 10 were acted on (6 Out of Warranty, 4 narrowed).
+  - **Section 3b:** `chainCheck`. The 1.5:1 is read from its option, packed options or a control; before, any "1.5" anywhere (even a blank "System 40 1.5:1 =") switched the warning off. The spring counts as the option, a "Chain Spring" control, or a lift-assist sundry. System 55 chains over 8 kg are no longer red; the spring advice is `info` (blue, not an alert).
+  - **Section 4b** (before the valances, so `validateOutdoorMotors` stays last): `validateRollerSystems` sets `rollerValidation`:
+    - beyond the selling limit: amber, or blue with Out of Warranty=Yes;
+    - System 55 over 11.5 kg: red;
+    - motors on the wrong tube, blinds counted by quantity, only when every motorised line is Roller System 40/55: red when every roller motor is the wrong kind, else amber.
+    Replay: 6 red, BDO668562 and BDO658467, both real and corrected later.
+  - **`validateMotorDependencies`:** "Adpator"/"Adpater" kits count as adapter kits; 102 of 173 stored "only N adapter kits" alerts were these.
+  - `info` flags aren't alerts in the report or the converter (`biqExtractCheckResults`). The critical box and modal escape what they show.
+- **Deploying:** the aliases ("Linen Block", "Sheerweave 4500/4901 Fr", "Didsbury Block", "Bird Song", "Como") and a "10 Screen" row must be in Firestore first. The live code ignores aliases. Delete "Urban Block / Paris" only after the new code is live (the live code finds System 55 Urban Block by that exact name).
+- **Tests** (review package "Roller check 2026-11", to fold into `orderbot-tests.zip`): `new-tests/biq-roller-selector.test.mjs` (29 checks); `new-tests/_maps.mjs` attaches `fixtures/fabric_properties_2026-11-02.json` as `fabricList`; `tests/biq-converter.test.mjs` and `tests/biq-coupled-control.test.mjs` pass the module's exports into the code they lift from index.html. On main 7b22238 + this change: 1,485 passed, 34 failed (main alone 1,456 / 34). The 34 are the 25 known plus 9 `biq-comparison-legibility` checks that need pdf.js to open the samples; on Windows it can't.
 
 ## Converter Rules (Drawings tab)
 
@@ -294,10 +338,10 @@ OrderBot comparison history (`orderbot_comparisons`) against the same orders and
 
 Source: the Sales Resource `_AI-Index` (Blind / Shutter Price Lists July 2026, Roller System Selector V2.1, product pages and their owner rulings). A documented rule went in only when the stored orders follow it — each commit message carries the counts — and Russel made the four judgement calls on 10 Oct 2026. Anything assumed is noted on the line ("confirm" where the capturer should check). All of it lives in the shared refresh pipeline (mostly `biqApplyOptionDefaults`), so the UI, the replay and the server automation behave the same.
 
-- **Out of Warranty** (`biqWarrantyReason`): a Roller System 40/55 blind more than 35 mm wider than its fabric's roll when the selector says the fabric turns only out of warranty or not at all (`BIQ_ROLL_FABRICS`; Designer fabrics are Do Not Turn, roll width from the colour's "NNNNmm"), or a blind over the price list's selling limit (`BIQ_SELL_LIMITS`: System 40 3200 × 3400, System 55 4000 × 4500, Vision 2200 × 2600, Allusion 3990 × 3000 and at least 750 wide). Decided again when the type, range, colour or size changes (`_oowSig`): an automatic tick is removed when the line comes back within the limits; otherwise a capturer's own tick or untick stays. Narrow, long rollers (System 40 / Double Roller under 600 mm wide, drop ≥ 2.9 × width) only get an amber warning (`biqNarrowLong`, Russel — capturers ticked 64 and left 41). Documented but not followed by any stored order, so not applied: the Double Roller limit and the wood venetian "thick line".
+- **Out of Warranty** (`biqWarrantyReason`): a Roller System 40/55 blind more than 35 mm wider than its fabric's roll when the fabric list says it turns only out of warranty or not at all (OrderBot's fabric list since Nov 2026, was `BIQ_ROLL_FABRICS`; Designer fabrics are Do Not Turn, roll width from the colour's "NNNNmm"), or a blind over the price list's selling limit (`BIQ_SELL_LIMITS`: System 40 3200 × 3400, System 55 4000 × 4500, Vision 2200 × 2600, Allusion 3990 × 3000 and at least 750 wide). Decided again when the type, range, colour or size changes (`_oowSig`): an automatic tick is removed when the line comes back within the limits; otherwise a capturer's own tick or untick stays. Narrow, long rollers (System 40 / Double Roller under 600 mm wide, drop ≥ 2.9 × width) only get an amber warning (`biqNarrowLong`, Russel — capturers ticked 64 and left 41). Documented but not followed by any stored order, so not applied: the Double Roller limit and the wood venetian "thick line".
 - **Vertical / Allusion Control** (required in BlindIQ since Aug 2026): a wand is Mono-command; a White or Black track (with or without fascia) gets that colour's Chain & Cord, noted "confirm"; Anodised / Anthracite tracks stay with the capturer (Russel). Decided once per line.
 - **Roller hardware** (System 40/55): White when the order gives none ("White will be supplied if unspecified"); a stated cassette colour decides it when the hardware isn't stated (Silver cassette → Grey). `_hwFromOrder` marks hardware the order states, which is never replaced; TBC stays flagged. The bottom bar and the double-roller cassette follow the hardware when the sheet leaves them out (Mathéo empty / NA cells, the BD order form — `_barToHardware`).
-- **System 40 1.5:1** (Blind Guys "Upgrade Mechanism"): kept only when the blind, or its intermediate partner that asks too, weighs over 4 kg — `biqRollerWeightKg` = the selector's fabric kg/m² (`BIQ_FABRIC_KG`, `BIQ_DESIGNER_KG`) × W × D + bottom bar kg/m × W. Lighter requests stay an amber heads-up; never set unasked (Russel). A 1.5:1 blind's automatic control drop is 80 % (half to even).
+- **System 40 1.5:1** (Blind Guys "Upgrade Mechanism"): kept only when the blind, or its intermediate partner that asks too, weighs over 4 kg — `biqRollerWeightKg` = the fabric list's kg/m² (since Nov 2026; was `BIQ_FABRIC_KG`, `BIQ_DESIGNER_KG`) × W × D + bottom bar kg/m × W. Lighter requests stay an amber heads-up; never set unasked (Russel). A 1.5:1 blind's automatic control drop is 80 % (half to even).
 - **Valance returns**: a face fix without returns gets LH & RH (noted "confirm"; before the end caps are derived from the returns); reveal stays None; a "None" / "No" the order writes is kept (`cleanKeepNone`).
 - **Retro venetians**: Standard slats with no valance colour on the order get "Aluminium: <slat colour>" (noted "confirm"); printed / perforated slats and Foiled trims are left alone. On the BD order form "Retro Blind" is a Retro Venetian and its Val Type cell is the valance colour.
 - **Urban hinged shutters**: panels of 1201–1800 mm without a middle rail (not Tier on Tier) get Rail Size 100mm, noted with what the order said; decided again only when the drop or middle rail changes (`_railSig`). Flexi / Rigid scribe strips are not set on a new Urban shutter (spare part, ruling 23 Sep 2026): noted plus an amber warning.

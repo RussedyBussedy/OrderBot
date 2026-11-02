@@ -1,12 +1,13 @@
 # User interface
 
-OrderBot is a single web page, `index.html`, with three views behind the pills in its header. This page describes what users see in each view and where the code for it lives, how admin mode changes the page, what the page keeps in browser storage, and how to edit `index.html` without breaking it.
+OrderBot is a single web page, `index.html`, with four views behind the pills in its header. This page describes what users see in each view and where the code for it lives, how admin mode changes the page, what the page keeps in browser storage, and how to edit `index.html` without breaking it.
 
 ## The page at a glance
 
 | View | Header pill | Element | Who sees it | Built by |
 |---|---|---|---|---|
 | Orders (default) | `#nav-orders` | `<main>` | Everyone | `index.html` (most of the app), plus `js/biq-converter-ui.js` for the converter section |
+| Roller check | `#nav-roller-check` | `#roller-check-view` | Everyone | `js/roller-selector-ui.js`, loaded on first open; see [Roller check](../roller-check.md) |
 | Drawings | `#nav-drawings` | `#drawings-view` | Everyone | An `<iframe>` showing the Bend & Blind Visualiser from the separate `bd-tools` repository |
 | Cost report | `#nav-cost-report` | `#cost-report-view` | Admin mode only | `js/cost-report-console.js`, see [Cost report console](../cost-report-console.md) |
 
@@ -16,11 +17,12 @@ The header also holds the Blind Designs logo (`bd-logo-white.png`) and the "Orde
 
 View switching is done by a small plain `<script>` at the very end of `index.html`, separate from the app module. Its `show(view)` function:
 
-- toggles the `hidden` class on `<main>`, `#drawings-view` and `#cost-report-view`;
-- sets `view-pill-active` and `aria-pressed` on the three pills;
+- toggles the `hidden` class on `<main>`, `#drawings-view`, `#roller-check-view` and `#cost-report-view`;
+- sets `view-pill-active` and `aria-pressed` on the four pills;
+- the first time Roller check is opened, imports `js/roller-selector-ui.js` and calls `initRollerCheck` (a failed import is logged and retried on the next click);
 - scrolls back to the top.
 
-Because it is a plain script and not part of the module, the pills work even when Firebase sign-in or a module import fails. Two CSS rules in the first `<style>` block (`#drawings-view.hidden` and `#cost-report-view.hidden, #nav-cost-report.hidden`) keep the hidden views hidden even before Tailwind has loaded, so capturers never glimpse the admin view.
+Because it is a plain script and not part of the module, the pills work even when Firebase sign-in or a module import fails. Two CSS rules in the first `<style>` block (`#drawings-view.hidden, #roller-check-view.hidden` and `#cost-report-view.hidden, #nav-cost-report.hidden`) keep the hidden views hidden even before Tailwind has loaded, so capturers never glimpse the admin view.
 
 The current view isn't kept in the URL or in storage: a reload always returns to Orders.
 

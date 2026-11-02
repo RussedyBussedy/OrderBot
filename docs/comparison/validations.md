@@ -22,7 +22,8 @@ flowchart TD
     C --> K["Controls"]
     K --> CH["Chain ratio"]
     CH --> M["validateMotorDependencies, whole order"]
-    M --> V["validateValances, whole order"]
+    M --> RS["validateRollerSystems, whole order"]
+    RS --> V["validateValances, whole order"]
     V --> O["validateOutdoorMotors, whole order"]
     O --> T["applyConfidenceThresholds"]
     T --> R["analyzeReasoningPatterns"]
@@ -34,15 +35,17 @@ flowchart TD
 
 Computed once per line and reused by the chain check, the motor torque check and the blue information strip in the report.
 
-- Needs the fabric table. The fabric is looked up by **Blind IQ's Range**, lower case, against `fabricName`.
+- Needs the fabric list (Fabric properties). The fabric is found from **Blind IQ's Range** by `findFabric` (`js/roller-selector.js`): a name or alias as written (case and a trailing "#" don't matter); Blind IQ's shortened print (12+ characters that start exactly one name or alias, "Perspective White Bac"); a Designer range by the colour's design ("Argent Gold 2050mm @" finds Argent); else one side of " / " (System 55's "5 Screen / Aventus 5%" finds 5 Screen). A stored weight over 5 kg/m² is ignored.
 - The tube is looked up by Blind IQ's blind type: the exact key first, else the longest tube-table key contained in the blind type ("Element Roller Sys 40" finds "Element Roller"), skipping a key whose diameter contradicts a "40" or "55" in the type's name.
-- **Weight** (kg) = width (m) × drop (m) × fabric weight + width (m) × 0.280 (the aluminium bottom bar, in kg per metre). Calculated for roller blinds, and for any blind whose tube is found.
+- **Weight** (kg) = width (m) × drop (m) × fabric weight + width (m) × the bottom bar's kg per metre: 0.36 for SmartRail, 0.20 for a plastic bar, else 0.28 (aluminium), read from the line's options, including options packed into another one ("Hardware Colour = Mech Colour=White | Bottom Bar=White Plastic"). Calculated for roller blinds, and for any blind whose tube is found.
 - **Required torque** (Nm) = weight × 9.81 × tube radius (m), and **with a 20% safety margin** for the comparison with motors. Only when the tube is found.
 - Stored as `blindWeight`, `requiredTorque` and `requiredTorqueSafety` (strings with two decimals).
 
 ### Fabric width, turning and Out of Warranty
 
-When the blind is wider than the fabric's roll (`fabricWidth`), the fabric's `canTurn` decides:
+Roller blinds only (a type with "roller" in its name): the list's widths are roller rolls, which a vertical's louvres or a panel's fabric don't come off. The fabric is found as above, except through one side of " / ": System 55's "X / Y" ranges are other mills' fabrics, often on wider rolls, so their roll width isn't known. A Designer colour's own "NNNNmm" is its roll width. A Roller System 40 / 55 blind may be 35 mm (`ROLL_ALLOWANCE`) wider than its fabric, as in the converter's Out of Warranty rule.
+
+When the blind is wider than the fabric's roll (`fabricWidth`, plus the allowance), the fabric's `canTurn` decides:
 
 | `canTurn` | Drop within the roll width | Drop over the roll width |
 |---|---|---|
@@ -50,7 +53,7 @@ When the blind is wider than the fabric's roll (`fabricWidth`), the fabric's `ca
 | `Yes` | Fine | Error: the blind can't be made |
 | `Out` | Warning: turning is Out of Warranty | Error: the blind can't be made |
 
-Other values of `canTurn` switch the check off for that fabric. The result is `fabricValidation = { type, message }`.
+A `canTurn` other than Yes or Out counts as No. The result is `fabricValidation = { type, message }`.
 
 ### Colour
 
@@ -63,7 +66,7 @@ Four rules, all writing `controlValidation` (type `error`):
 1. **Both controls required.** Blind types in `BLIND_TYPES_REQUIRING_DUAL_CONTROL` need Control 1 **and** Control 2. An empty one becomes a MISMATCH.
 2. **Two motors, or the same control twice.** For any blind type with both controls filled: both containing "motor" is an error ("a motorised blind has one motor and one fixed/intermediate side"), and so are two identical controls. Both cells become MISMATCH.
 3. **A drive is required.** Blind types in `BLIND_TYPES_REQUIRING_CONTROL_VALIDATION` need "chain", "motor" or "dual" in one of their controls. A **coupled** blind is accepted without a drive when the line before or after it is also coupled and carries the chain, motor or dual: two blinds on a coupled bracket run off one drive. A coupled blind without such a neighbour is an error of its own.
-4. **Chain ratio** (`chainValidation`, matching the Roller System Selector). For roller blinds on a chain with a known weight: over 8 kg is an error (too heavy for a chain: System 55 with an Easi-Lift spring, or motorise); over 4 kg is a warning that a heavy-duty 1.5:1 chain is needed, unless "1.5" already appears in the controls or the options.
+4. **Chain ratio** (`chainValidation`, `chainCheck` in `js/roller-selector.js`). For roller blinds on a chain with a known weight. System 40 (and roller types other than System 55): over 8 kg is an error (System 55, or motorise); over 4 kg is a warning that the 1.5:1 control is needed, unless the line has System 40 1.5:1=Yes (also packed into another option, "System = System 40 1.5:1=Yes") or "1.5:1" in a control. Before Nov 2026 any "1.5" anywhere in the options switched the warning off, including Blind IQ's blank "System 40 1.5:1 =". System 55: over 4.5 kg without the Lift Assisting Spring (the option, or a "Chain Spring" control) is blue advice, not an alert; over 11.5 kg is reported by the Roller System 40/55 check below. See [Roller check](../roller-check.md).
 
 ### Motors and their accessories: validateMotorDependencies
 
@@ -111,6 +114,10 @@ Runs only when Pass 1 found an instruction that **all** blinds get valances (`va
 - A **standalone valance line** has valance, pelmet, fascia or cassette wording and no drop, or a drop under 200 mm. Its width counts once per unit of its quantity (capped at 50).
 - Every other blind needs, for each unit of its quantity, an unused standalone valance **10–15 mm wider** than itself (it was wrongly 20–25 mm before). Otherwise it gets an error naming the nearest unused valance width, or a warning when its own width can't be read.
 - The order gets `valanceValidation.global` (an alert with the number of blinds that failed) or `valanceValidation.globalOk` (all passed, with any spare valances counted). Differences in valance type aren't flagged: when the customer didn't choose one, that's the capturer's call.
+
+### Roller System 40 / 55: validateRollerSystems
+
+`validateRollerSystems` from `js/roller-selector.js` runs after the motor checks and before the valances (so the outdoor motor table stays last) and sets `rollerValidation` (`error`, `warning` or `info`) on Roller System 40 / 55 lines: beyond the selling limit (amber, blue when marked Out of Warranty), System 55 over 11.5 kg (red), and motors that don't fit the blinds' tubes (blinds counted by quantity; red when every roller motor on the order is the wrong kind, amber otherwise; only on orders whose motorised lines are all Roller System 40 / 55). Details and the replay over BlindIQ orders are in [Roller check](../roller-check.md#in-the-comparison).
 
 ### Outdoor motors: the Zip X motor table
 
@@ -185,7 +192,7 @@ They surface in three ways:
 
 Both the box and the modal are built from:
 
-- `collectCriticalIssues(data)`: for each line, every MISMATCH or OMISSION on a critical field (with both values), every message from `fabricValidation`, `colourValidation`, `controlValidation`, `torqueValidation`, `motorTableValidation`, `minWidthValidation`, `chainValidation` and `valanceValidation` whose type is `error` or unset (warnings and information are left out), and every string in `motorValidation`. `CRITICAL_FIELD_LABELS` gives the field names shown.
+- `collectCriticalIssues(data)`: for each line, every MISMATCH or OMISSION on a critical field (with both values), every message from `fabricValidation`, `colourValidation`, `controlValidation`, `torqueValidation`, `motorTableValidation`, `minWidthValidation`, `chainValidation`, `rollerValidation` and `valanceValidation` whose type is `error` or unset (warnings and information are left out), and every string in `motorValidation`. `CRITICAL_FIELD_LABELS` gives the field names shown.
 - `collectSundryFails(data)`: failed entries in a sundry's `validationLog`. No current code writes `validationLog`, so in practice this list is empty.
 
 The order-level alerts (motor coverage and the valance instruction) aren't part of this sweep. They appear as banners at the top of the report and make the run summary say "(ACTION REQUIRED)".
@@ -200,7 +207,7 @@ The order-level alerts (motor coverage and the valance instruction) aren't part 
 
 ## Known weak spots
 
-- Name matching against Blind IQ's printed blind types, ranges and sundry names (above). A range that isn't in the fabric table gets no weight, torque or fabric check, and nothing says so in the comparison (the converter does list missing fabrics).
+- Name matching against Blind IQ's printed blind types, ranges and sundry names (above). A range that isn't in the fabric list (by name or alias) gets no weight, torque or fabric check, and nothing says so in the comparison (the converter does list missing fabrics).
 - Widths and drops are read as the first run of digits in Blind IQ's value.
 - Motors are paired with blinds by size and torque order, not by which line each motor is for.
 - The per-line `motorValidation` messages aren't drawn on the line, only in the critical box and modal.

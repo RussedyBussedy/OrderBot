@@ -76,8 +76,8 @@ Runs when the motor table has rows and the comparison has a sundries list, and s
 
 | Bucket | When |
 |---|---|
-| Motor (one per unit) | The description contains a `motorName` from the motor table, and isn't an adapter ("adapter" or "adaptor") |
-| Adapter kit (counted by quantity) | It mentions "adapter" or "adaptor" |
+| Motor (one per unit) | The description contains a `motorName` from the motor table, and isn't an adapter |
+| Adapter kit (counted by quantity) | It mentions an adapter in any of BlindIQ's spellings: "adapter", "adaptor", "adpator" or "adpater" |
 | Controller | It mentions "remote", "switch" or "hub" |
 | Accessory | It mentions "accessory" |
 | Other dependency | Anything else |
@@ -98,9 +98,9 @@ A motor is recognised by its name in the table, not by the word "motor", because
 | No motor-table row for this motor **and** Blind IQ's blind type (exact name, any case) | "Motor Alert: No properties found…"; the other checks are skipped |
 | The motor's `torque` is under `requiredTorqueSafety` | `torqueValidation` |
 | The blind is narrower than the motor's `minWidth` | `minWidthValidation` |
-| No ordered adapter kit contains any of the row's `adapterKit` entries ("adaptor" and "adapter" are treated alike) | "Adapter Alert" |
+| No ordered adapter kit contains any of the row's `adapterKit` entries (the four spellings are treated alike, on both sides) | "Adapter Alert" |
 | None of the blind's controls equals one of the row's `blindControl` entries | "Control Alert: Missing valid control…" |
-| No ordered controller contains any of the row's `controlOptions` | "Controller Alert" |
+| No ordered controller or other dependency contains any of the row's `controlOptions`. Somfy remotes carry the model's name ("Situo 5 RTS Pure", "Ysia 5 ZIGBEE White"), not "remote", so they sort as dependencies; before Nov 2026 only the Controller bucket was searched, and 403 of 492 of these alerts since August 2026 had the motor's own remote on the order | "Controller Alert" |
 | An ordered accessory contains none of the row's `accessories` | "Accessory Alert: Incompatible accessory…" |
 | No other dependency contains any of the row's `otherDependencies` | "Dependency Alert" |
 

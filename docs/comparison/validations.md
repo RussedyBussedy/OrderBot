@@ -100,7 +100,7 @@ A motor is recognised by its name in the table, not by the word "motor", because
 | The blind is narrower than the motor's `minWidth` | `minWidthValidation` |
 | No ordered adapter kit contains any of the row's `adapterKit` entries (the four spellings are treated alike, on both sides) | "Adapter Alert" |
 | None of the blind's controls equals one of the row's `blindControl` entries | "Control Alert: Missing valid control…" |
-| No ordered controller or other dependency contains any of the row's `controlOptions`. Somfy remotes carry the model's name ("Situo 5 RTS Pure", "Ysia 5 ZIGBEE White"), not "remote", so they sort as dependencies; before Nov 2026 only the Controller bucket was searched, and 403 of 492 of these alerts since August 2026 had the motor's own remote on the order | "Controller Alert" |
+| No ordered controller or other dependency contains any of the row's `controlOptions`. Somfy remotes carry the model's name ("Situo 5 RTS Pure", "Ysia 5 ZIGBEE White"), not "remote", so they sort as dependencies; before Nov 2026 only the Controller bucket was searched. Since August 2026, 403 of these 482 alerts (corrected motor table) had the motor's own remote on the order | "Controller Alert" |
 | An ordered accessory contains none of the row's `accessories` | "Accessory Alert: Incompatible accessory…" |
 | No other dependency contains any of the row's `otherDependencies` | "Dependency Alert" |
 

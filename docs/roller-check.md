@@ -104,7 +104,7 @@ Without them, those ranges (about 8,000 lines a year) lose the converter's Out o
 - **BlindIQ adds a roller motor:** add it to `MOTORS` with the tubes it goes in. If its family isn't already one of the patterns in `rollerMotorOf`, add it there too.
 - **No regex lookbehind** (`(?<!…)`) in these modules: Safari before 16.4 can't parse it, and `roller-selector.js` is a static import of the app.
 - **Tests** (regression package, see [Testing](testing.md)):
-  - `new-tests/biq-roller-selector.test.mjs` (29 checks) covers the rules and their wiring into index.html and the converter.
+  - `new-tests/biq-roller-selector.test.mjs` (32 checks) covers the rules and their wiring into index.html and the converter. Three checks cover the motor check: kit spellings, remotes found by name, and no control characters in index.html.
   - `new-tests/_maps.mjs` gives the converter tests the fabric list (`fixtures/fabric_properties_2026-11-02.json`).
   - `tests/biq-converter.test.mjs` and `tests/biq-coupled-control.test.mjs` pass the module's functions into the code they lift from index.html.
 

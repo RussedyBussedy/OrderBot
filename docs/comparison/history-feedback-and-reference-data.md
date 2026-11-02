@@ -159,6 +159,15 @@ One row per motor **and** blind type.
 
 The row editor has the same fields, with `minWidth` shown as "Min W".
 
+**Corrected on 2 Nov 2026** against BlindIQ's live sundries and 12 months of orders:
+- **Names:** Excel fill-series slips. "Maestria Rts 15nm/18" to "/21" became "/17", "Roll Up 28 Rts 1.1/29" to "/33" became "/28", and a "Sonesse 41" kit became 40.
+- **Advisory notes:** removed where they were held as dependencies. Such a note can never be found on an order.
+- **Kits capturers order:** "Sys 40 Adaptor Kit for Sonesse 30/28" for the Sonesse 30/28 and Roll Up motors; the Roll Up rows' own kit is inactive in BlindIQ.
+- **Remotes:** BlindIQ's remotes added where missing (Telis, Situo 5 IO/RTS, the One Touch Dual Wall Remote and Smart Hub). Wired motors need none.
+- **New rows:** 51 rows marked `addedOn: "2026-11-02"`, for One Touch+, Sonesse 40 Zigbee 220V 6 / 9 Nm, Sonesse 28 Zigbee Li-ion, Sonesse 30 on System 55, Double Roller Blind and Element Roller Sys 40.
+
+The table went from 154 rows to 205. Since August 2026, these changes and the motor check's fixes of the same day took motor alerts on stored comparisons from 1,094 lines on 211 orders to 201 on 93. The list of changes and the undo file are in the review package "Roller check 2026-11".
+
 ### Tube properties (orderbot_tube_properties)
 
 | Column | Field | Meaning |

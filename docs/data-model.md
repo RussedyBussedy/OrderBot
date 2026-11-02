@@ -142,8 +142,9 @@ CSV columns, in order: name, weight, width, turn, and optionally aliases (separa
 | `blindType` | string | The blind type this row applies to |
 | `adapterKit`, `accessories`, `otherDependencies`, `blindControl`, `controlOptions` | string | What goes with the motor |
 | `minWidth` | integer or null | The narrowest blind in mm. `null` skips the check. |
+| `addedOn` | string, optional | The date a row was added in bulk ("2026-11-02" for the 51 rows of that day's corrections), so the batch can be undone. The app doesn't read it, and a CSV upload drops it. |
 
-CSV columns: the fields above in that order, with `minWidth` as an optional ninth column. Quoted cells are allowed. `getMotorProperties` returns an array, and a motor that fits several blind types has one row for each.
+CSV columns: the fields above in that order (not `addedOn`), with `minWidth` as an optional ninth column. Quoted cells are allowed. `getMotorProperties` returns an array, and a motor that fits several blind types has one row for each.
 
 **`orderbot_tube_properties`**
 

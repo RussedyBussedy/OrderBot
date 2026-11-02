@@ -31,6 +31,7 @@ This wiki explains how OrderBot works and how to work on it safely. It's written
 | [Converter user interface](converter/user-interface.md) | The converter's screens, admin mapping tools and its use by the comparison |
 | [Data model](data-model.md) | Every Firestore collection and browser storage key |
 | [Backend proxy](backend-proxy.md) | `index.js` on Cloud Run: the only server-side code |
+| [Roller check](roller-check.md) | The Roller System Selector's rules: the Roller check view and the System 40/55 comparison flags |
 | [Cost report console](cost-report-console.md) | The admin view for the Daily Cost Report settings |
 | [AI models](ai-models.md) | Which Gemini models are used where, and how to change them |
 

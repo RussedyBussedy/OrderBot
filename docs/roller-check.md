@@ -64,7 +64,7 @@ Results show the weight, the torque on both tubes, the system, the chain or the 
   - **System 55 weight:** a System 55 blind over 11.5 kg is red.
   - **Too heavy for any System 40 motor:** a motorised System 40 blind needing more torque than the strongest System 40 motor (3 Nm) is amber. This can't happen at today's fabric weights.
   - **Motors on the wrong tube:** motors are order-level sundries, so this is judged only when every motorised line on the order is a Roller System 40 or 55. Blinds are counted by their quantity, like the motors. More System 55-only motors than System 55 blinds means some System 40 blind would get one, and the reverse for System 40-only motors. It's red when every roller motor on the order is the wrong kind, otherwise amber ("confirm which blinds take which motor").
-- **Adapter kits (`validateMotorDependencies`):** BlindIQ's "Adpator" / "Adpater" kits now count as adapter kits. Before, an order with "Sys 55 Motor Adpator Kit for Sonesse 40" got "only 0 adapter kits found".
+- **Adapter kits (`validateMotorDependencies`):** BlindIQ's "Adpator" / "Adpater" kits now count as adapter kits. Before, an order with "Sys 55 Motor Adpator Kit for Sonesse 40" got "only 0 adapter kits found". The kit each motor needs is found in any of the four spellings, on the motor table's side and the order's. That part only works from the hotfix after the merge (2 Nov 2026). The merged version held backspace characters where the pattern's word boundaries belong, so it matched no spelling at all, not even "Adaptor" against "Adapter".
 
 The report shows red errors and amber warnings as alerts. Red ones also go in the critical issues box and the end-of-run popup, which now escape what they show (they quote values the AI read and sundry names). Blue is shown as advice and isn't counted. The converter's check panel takes the same flags, except blue (`biqExtractCheckResults`).
 
@@ -104,7 +104,7 @@ Without them, those ranges (about 8,000 lines a year) lose the converter's Out o
 - **BlindIQ adds a roller motor:** add it to `MOTORS` with the tubes it goes in. If its family isn't already one of the patterns in `rollerMotorOf`, add it there too.
 - **No regex lookbehind** (`(?<!…)`) in these modules: Safari before 16.4 can't parse it, and `roller-selector.js` is a static import of the app.
 - **Tests** (regression package, see [Testing](testing.md)):
-  - `new-tests/biq-roller-selector.test.mjs` (29 checks) covers the rules and their wiring into index.html and the converter.
+  - `new-tests/biq-roller-selector.test.mjs` (32 checks) covers the rules and their wiring into index.html and the converter. Three checks cover the motor check: kit spellings, remotes found by name, and no control characters in index.html.
   - `new-tests/_maps.mjs` gives the converter tests the fabric list (`fixtures/fabric_properties_2026-11-02.json`).
   - `tests/biq-converter.test.mjs` and `tests/biq-coupled-control.test.mjs` pass the module's functions into the code they lift from index.html.
 

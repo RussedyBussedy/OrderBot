@@ -50,8 +50,8 @@
         .bd-btn-ink { background: var(--bd-ink); color: var(--bd-paper); font-weight: 700; border-radius: 10px; }
         .bd-btn-ink:hover { background: #2e2e2b; }
 
-        /* View switcher (header pills: Orders / Drawings / Cost report) */
-        #drawings-view.hidden { display: none; } /* guaranteed even before/without Tailwind */
+        /* View switcher (header pills: Orders / Roller check / Drawings / Cost report) */
+        #drawings-view.hidden, #roller-check-view.hidden { display: none; } /* guaranteed even before/without Tailwind */
         #cost-report-view.hidden, #nav-cost-report.hidden { display: none; } /* same for the admin-only Cost report */
         .view-nav { display: flex; align-items: center; gap: 4px; padding: 4px; border-radius: 12px;
                     background: rgba(244,243,241,.07); border: 1px solid rgba(162,157,132,.35); }
@@ -267,6 +267,7 @@
             </h1>
             <nav id="view-nav" class="view-nav" aria-label="Switch view">
                 <button id="nav-orders" type="button" class="view-pill view-pill-active" aria-pressed="true">Orders</button>
+                <button id="nav-roller-check" type="button" class="view-pill" aria-pressed="false">Roller check</button>
                 <button id="nav-drawings" type="button" class="view-pill" aria-pressed="false">Drawings</button>
                 <button id="nav-cost-report" type="button" class="view-pill hidden" aria-pressed="false">Cost report</button>
             </nav>
@@ -438,6 +439,9 @@
                 If printing misbehaves here, use OPEN FULL SCREEN and print from that tab.</p>
         </section>
 
+        <!-- Roller check: the Roller System Selector (populated by js/roller-selector-ui.js on first open) -->
+        <section id="roller-check-view" class="hidden" aria-label="Roller check"></section>
+
         <!-- Daily Cost Report settings (admin only; populated by js/cost-report-console.js) -->
         <section id="cost-report-view" class="hidden" aria-label="Cost report settings"></section>
     </div>
@@ -544,6 +548,9 @@
         // still hold the previous comparison-checks.js, and a missing named export would stop the whole page loading.
         import * as Checks from './js/comparison-checks.js';
         import { validateOutdoorMotors } from './js/outdoor-motors.js';
+        import { fabricList, findFabric, aliasList, ROLL_ALLOWANCE, notOnRollerRolls, barKg, barOf, chainCheck, has15Of, hasSpringOf, rollerSystemOf, validateRollerSystems } from './js/roller-selector.js';
+        // the Roller check view (opened by the plain view-switch script below) reads the one fabric list through this
+        window.OrderBotRollerDeps = { getFabricProperties: () => getFabricProperties() };
 
         // firebaseConfig, PROXY_API_URL, PROMPT_VERSION imported from ./js/config.js
 
@@ -1548,8 +1555,9 @@ ${feedbackExamples}
                     if (data.motorValidation) hasAlert = true;
                     if (data.valanceValidation && data.valanceValidation.global) hasAlert = true;
                     (data.lineItems || []).forEach(item => {
-                        if (item.fabricValidation || item.colourValidation || item.motorValidation || item.torqueValidation || item.controlValidation || item.minWidthValidation || item.chainValidation || item.valanceValidation) hasAlert = true;
+                        if (item.fabricValidation || item.colourValidation || item.motorValidation || item.torqueValidation || item.controlValidation || item.minWidthValidation || item.valanceValidation) hasAlert = true;
                         if (item.motorTableValidation && item.motorTableValidation.type !== 'info') hasAlert = true;
+                        ['chainValidation', 'rollerValidation'].forEach(k => { if (item[k] && item[k].type !== 'info') hasAlert = true; });
                         Object.values(item).forEach(field => {
                             if (field && (field.result === 'MISMATCH' || field.result === 'OMISSION')) hasMismatch = true;
                         });
@@ -1732,7 +1740,7 @@ ${feedbackExamples}
                     if (f && f.result === 'MISMATCH') problems.push(`${label} MISMATCH (Blind IQ "${f.blindIQValue}" vs customer "${f.customerValue}")`);
                     else if (f && f.result === 'OMISSION') problems.push(`${label} OMISSION (missing from one document)`);
                 });
-                ['fabricValidation', 'colourValidation', 'controlValidation', 'torqueValidation', 'motorTableValidation', 'minWidthValidation', 'chainValidation', 'valanceValidation'].forEach(k => {
+                ['fabricValidation', 'colourValidation', 'controlValidation', 'torqueValidation', 'motorTableValidation', 'minWidthValidation', 'chainValidation', 'rollerValidation', 'valanceValidation'].forEach(k => {
                     const v = item[k];
                     if (v && v.message && (v.type === undefined || v.type === 'error')) problems.push(v.message);
                 });
@@ -1750,6 +1758,8 @@ ${feedbackExamples}
             });
             return fails;
         }
+        // text for the critical box and modal: it quotes values the AI read off the documents and sundry names
+        const escText = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
         function criticalSummaryHtml(data) {
             const issues = collectCriticalIssues(data);
             const fails = collectSundryFails(data);
@@ -1760,8 +1770,8 @@ ${feedbackExamples}
                     CRITICAL FIELD CHECK — ${issues.length ? `${issues.length} line item${issues.length === 1 ? ' needs' : 's need'} attention` : 'sundry errors found'}
                 </div>
                 <ul class="text-sm mt-2 space-y-1" style="color:#7c3322">
-                    ${issues.map(ci => `<li>&bull; <b>Line ${ci.line}${ci.location ? ' — ' + ci.location : ''}</b>: ${ci.problems.join('; ')}</li>`).join('')}
-                    ${fails.map(f => `<li>&bull; ${f}</li>`).join('')}
+                    ${issues.map(ci => `<li>&bull; <b>Line ${ci.line}${ci.location ? ' — ' + escText(ci.location) : ''}</b>: ${ci.problems.map(escText).join('; ')}</li>`).join('')}
+                    ${fails.map(f => `<li>&bull; ${escText(f)}</li>`).join('')}
                 </ul>
             </div>`;
         }
@@ -1771,10 +1781,10 @@ ${feedbackExamples}
             if (!listEl || !modalEl) return;
             listEl.innerHTML = aggregated.map(entry => `
                 <div class="border border-slate-200 rounded-lg p-3">
-                    <div class="font-bold text-slate-800 mb-1">${entry.order}</div>
+                    <div class="font-bold text-slate-800 mb-1">${escText(entry.order)}</div>
                     <ul class="space-y-1" style="color:#7c3322">
-                        ${entry.ci.map(ci => `<li>&bull; <b>Line ${ci.line}${ci.location ? ' — ' + ci.location : ''}</b>: ${ci.problems.join('; ')}</li>`).join('')}
-                        ${entry.cg.map(f => `<li>&bull; ${f}</li>`).join('')}
+                        ${entry.ci.map(ci => `<li>&bull; <b>Line ${ci.line}${ci.location ? ' — ' + escText(ci.location) : ''}</b>: ${ci.problems.map(escText).join('; ')}</li>`).join('')}
+                        ${entry.cg.map(f => `<li>&bull; ${escText(f)}</li>`).join('')}
                     </ul>
                 </div>`).join('');
             openModal(modalEl);
@@ -1914,10 +1924,14 @@ ${feedbackExamples}
                     const alertClass = 'bg-red-100 text-red-800';
                     validationHtml += `<div class="p-2 text-sm font-semibold ${alertClass} flex items-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.21 3.03-1.742 3.03H4.42c-1.532 0-2.492-1.696-1.742-3.03l5.58-9.92zM10 13a1 1 0 110-2 1 1 0 010 2zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" /></svg> ${lineItem.minWidthValidation.message}</div>`;
                 }
-                 if (lineItem.chainValidation) {
-                    const alertClass = lineItem.chainValidation.type === 'error' ? 'bg-red-100 text-red-800' : 'bg-yellow-100 text-yellow-800';
-                    validationHtml += `<div class="p-2 text-sm font-semibold ${alertClass} flex items-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.21 3.03-1.742 3.03H4.42c-1.532 0-2.492-1.696-1.742-3.03l5.58-9.92zM10 13a1 1 0 110-2 1 1 0 010 2zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" /></svg> ${lineItem.chainValidation.message}</div>`;
-                }
+                 // chain (3b) and Roller System 40 / 55 (js/roller-selector.js): red error, yellow warning, blue advice
+                 ['chainValidation', 'rollerValidation'].forEach(k => {
+                    const v = lineItem[k];
+                    if (!v) return;
+                    const alertClass = v.type === 'error' ? 'bg-red-100 text-red-800' : (v.type === 'info' ? 'bg-blue-100 text-blue-800' : 'bg-yellow-100 text-yellow-800');
+                    // escaped: a message can quote a sundry's text as the AI read it off the Blind IQ document
+                    validationHtml += `<div class="p-2 text-sm font-semibold ${alertClass} flex items-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.21 3.03-1.742 3.03H4.42c-1.532 0-2.492-1.696-1.742-3.03l5.58-9.92zM10 13a1 1 0 110-2 1 1 0 010 2zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" /></svg> ${escapeHtml(v.message)}</div>`;
+                 });
                  if (lineItem.valanceValidation) {
                     const alertClass = lineItem.valanceValidation.type === 'error' ? 'bg-red-100 text-red-800' : 'bg-yellow-100 text-yellow-800';
                     validationHtml += `<div class="p-2 text-sm font-semibold ${alertClass} flex items-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.21 3.03-1.742 3.03H4.42c-1.532 0-2.492-1.696-1.742-3.03l5.58-9.92zM10 13a1 1 0 110-2 1 1 0 010 2zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" /></svg> ${lineItem.valanceValidation.message}</div>`;
@@ -2324,7 +2338,7 @@ ${feedbackExamples}
                 dropZone.classList.remove('drag-over');
                 const file = e.dataTransfer.files[0];
                 if (file && file.name.endsWith('.csv')) {
-                    showConfirmModal("This will delete all existing fabric properties and replace them with this file's contents. Are you sure?", () => {
+                    showConfirmModal("This will delete all existing fabric properties, their \"Also known as\" names included, and replace them with this file's contents (aliases come from an optional 5th column). Are you sure?", () => {
                         processFabricFile(file);
                     });
                 }
@@ -2355,7 +2369,7 @@ ${feedbackExamples}
         allDomElements.fabricCsvUpload.addEventListener('change', (event) => {
              const file = event.target.files[0];
              if (file) {
-                 showConfirmModal("This will delete all existing fabric properties and replace them with this file's contents. Are you sure?", () => {
+                 showConfirmModal("This will delete all existing fabric properties, their \"Also known as\" names included, and replace them with this file's contents (aliases come from an optional 5th column). Are you sure?", () => {
                      processFabricFile(file);
                  });
              }
@@ -2384,11 +2398,13 @@ ${feedbackExamples}
                     const canTurn = columns[3];
 
                     if (name && !isNaN(weight) && !isNaN(width) && canTurn) {
+                        // optional 5th column: other spellings, separated by "|"
                         data.push({
                             fabricName: name,
                             fabricWeight: weight,
                             fabricWidth: width,
-                            canTurn: canTurn
+                            canTurn: canTurn,
+                            aliases: aliasList(columns[4] || '')
                         });
                     } else {
                         console.warn('Skipping malformed CSV row:', rowText, 'Parsed as:', columns);
@@ -2438,7 +2454,7 @@ ${feedbackExamples}
         function renderFabricRow(id, data, isNew = false) {
             const listEl = allDomElements.fabricPropertiesList;
             const fabricRow = document.createElement('div');
-            fabricRow.className = 'fabric-row p-2 bg-slate-50 rounded-lg grid grid-cols-[1fr,auto,auto,auto,auto] items-center gap-2';
+            fabricRow.className = 'fabric-row p-2 bg-slate-50 rounded-lg grid grid-cols-[1fr,auto,auto,auto,1fr,auto] items-center gap-2';
             fabricRow.dataset.id = id;
 
             fabricRow.innerHTML = `
@@ -2455,12 +2471,18 @@ ${feedbackExamples}
                     <label class="text-xs text-slate-500">Turn:</label>
                     <input type="text" value="${data.canTurn || ''}" placeholder="Yes/No/Out" class="fabric-turn-input w-20 p-1 border rounded text-sm">
                 </div>
+                <div class="flex items-center gap-1" title="Other spellings that mean this fabric, separated by commas: BlindIQ's range name when it differs (e.g. Didsbury Block), dealer spellings">
+                    <label class="text-xs text-slate-500 whitespace-nowrap">Also known as:</label>
+                    <input type="text" placeholder="e.g. Didsbury Block, Bird Song" class="fabric-aliases-input w-full p-1 border rounded text-sm">
+                </div>
                 <div class="flex gap-2">
                     <button class="save-fabric-btn bg-blue-500 text-white text-xs font-bold py-1 px-3 rounded hover:bg-blue-600">${isNew ? 'Add' : 'Save'}</button>
                     ${isNew ? `<button class="cancel-new-fabric-btn bg-gray-200 text-gray-700 text-xs font-bold py-1 px-3 rounded hover:bg-gray-300">Cancel</button>` : `<button class="delete-fabric-btn text-red-400 hover:text-red-600 font-bold text-lg">&times;</button>`}
                 </div>
             `;
             listEl.appendChild(fabricRow);
+            // set as a property, not in the HTML: other spellings can hold quotes
+            fabricRow.querySelector('.fabric-aliases-input').value = aliasList(data.aliases).join(', ');
 
             // Attach event listeners
             fabricRow.querySelector('.save-fabric-btn').addEventListener('click', async () => {
@@ -2482,8 +2504,14 @@ ${feedbackExamples}
                     fabricName: newName,
                     fabricWeight: newWeight,
                     fabricWidth: newWidth,
-                    canTurn: newTurn
+                    canTurn: newTurn,
+                    aliases: aliasList(fabricRow.querySelector('.fabric-aliases-input').value)
                 };
+                // the weight is kg per m² (a fabric of 450 g/m² is 0.45)
+                if (newWeight > 5) {
+                    showToast("Weight is in kg/m²: 0.45, not 450.", 'warning');
+                    return;
+                }
 
                 try {
                     if (isNew) {
@@ -2526,12 +2554,8 @@ ${feedbackExamples}
             if (!db) return new Map();
             const propertiesRef = collection(db, 'orderbot_fabric_properties');
             const snapshot = await getDocs(propertiesRef);
-            const fabricMap = new Map();
-            snapshot.forEach(doc => {
-                const data = doc.data();
-                fabricMap.set(data.fabricName.toLowerCase().trim(), data);
-            });
-            return fabricMap;
+            // keyed by every name and alias, lower case (fabricList in js/roller-selector.js)
+            return fabricList(snapshot.docs.map(d => d.data()));
         }
 
         function applyConfidenceThresholds(data) {
@@ -2599,10 +2623,14 @@ ${feedbackExamples}
                     // check, and the preview display. WEIGHT needs only fabric (area + 0.28 kg/m Alu
                     // bottom bar); REQUIRED TORQUE additionally needs the tube. Stored for roller
                     // blinds and for any blind whose tube resolves (so motor checks work on all types).
-                    if (fabricProperties && fabricProperties.size > 0) {
+                    // The fabric comes from OrderBot's one fabric list (Fabric properties: names and aliases, System 55's
+                    // "5 Screen / Aventus 5%", Designer fabrics by colour; findFabric in js/roller-selector.js); the
+                    // bottom bar is the line's own (SmartRail 0.36, plastic 0.20, else aluminium 0.28 kg/m).
+                    {
                         const bt = item.blindType?.blindIQValue?.toLowerCase().trim() || '';
                         const isRoller = bt.includes('roller');
-                        const wtFabric = fabricProperties.get(item.range?.blindIQValue?.toLowerCase().trim());
+                        const found = findFabric(fabricProperties, item.range?.blindIQValue, item.colour?.blindIQValue);
+                        const wtFabric = found && found.kg ? { fabricWeight: found.kg } : null;
                         const wMatch = (item.width?.blindIQValue || '').match(/\d+/);
                         const dMatch = (item.drop?.blindIQValue || '').match(/\d+/);
                         const wMm = wMatch ? parseInt(wMatch[0], 10) : NaN;
@@ -2626,7 +2654,7 @@ ${feedbackExamples}
                             }
                         }
                         if (wtFabric && !isNaN(wMm) && !isNaN(dMm) && (isRoller || (wtTube && wtTube.tubeDiameter))) {
-                            const totalWeight = (wMm / 1000) * (dMm / 1000) * wtFabric.fabricWeight + (wMm / 1000) * 0.280;
+                            const totalWeight = (wMm / 1000) * (dMm / 1000) * wtFabric.fabricWeight + (wMm / 1000) * barKg(barOf(item));
                             item.blindWeight = totalWeight.toFixed(2);
                             if (wtTube && wtTube.tubeDiameter) {
                                 const baseTorque = totalWeight * 9.81 * ((wtTube.tubeDiameter / 1000) / 2);
@@ -2637,7 +2665,11 @@ ${feedbackExamples}
                     }
 
                     // --- 1. Fabric Width & Drop Validation ---
-                    if (fabricProperties && fabricProperties.size > 0) {
+                    // Not for verticals, panels or outdoor blinds: their fabric doesn't come off the list's roller rolls
+                    // (notOnRollerRolls). Found as in section 0, but never through one side of " / ": System 55's
+                    // "5 Screen / Aventus 5%" ranges are other mills' fabrics, often on wider rolls. A Roller System
+                    // 40 / 55 blind may be ROLL_ALLOWANCE (35 mm) wider than its fabric, as in the converter.
+                    if (fabricProperties && fabricProperties.size > 0 && !notOnRollerRolls(item.blindType?.blindIQValue)) {
                         const fabricName = item.range?.blindIQValue?.toLowerCase().trim();
                         const widthString = item.width?.blindIQValue || '';
                         const widthMatch = widthString.match(/\d+/);
@@ -2647,11 +2679,12 @@ ${feedbackExamples}
                         const blindDrop = dropMatch ? parseInt(dropMatch[0], 10) : NaN;
 
                         if (fabricName && !isNaN(blindWidth) && !isNaN(blindDrop)) {
-                            const properties = fabricProperties.get(fabricName);
-                            if (properties) {
-                                const fabricWidth = properties.fabricWidth;
-                                const canTurn = properties.canTurn.toLowerCase();
-                                if (blindWidth > fabricWidth) {
+                            const properties = findFabric(fabricProperties, item.range?.blindIQValue, item.colour?.blindIQValue);
+                            if (properties && properties.roll && properties.match !== 'part') {
+                                const fabricWidth = properties.roll;
+                                const canTurn = properties.turn;
+                                const allowance = rollerSystemOf(item.blindType?.blindIQValue) ? ROLL_ALLOWANCE : 0;
+                                if (blindWidth > fabricWidth + allowance) {
                                     if (canTurn === 'no') {
                                         item.fabricValidation = { type: 'error', message: `Fabric Alert: Width (${blindWidth}mm) exceeds max fabric width (${fabricWidth}mm). Fabric cannot be turned.` };
                                     } else if (canTurn === 'yes' || canTurn === 'out') {
@@ -2739,20 +2772,20 @@ ${feedbackExamples}
                         }
                     }
 
-                    // --- 3b. Chain control ratio (Roller System Selector parity) ---
-                    // Roller blinds on a manual/chain control: total blind weight (computed once in
-                    // section 0) drives the chain ratio. 4–8kg needs a heavy-duty 1.5:1 chain; >8kg
-                    // is too heavy for a chain (System 55 + Easi-Lift, or motorise); <=4kg = 1:1.
+                    // --- 3b. Chain control (Roller System Selector, js/roller-selector.js chainCheck) ---
+                    // Weight from section 0. System 40: 1.5:1 from 4 kg (amber when "System 40 1.5:1" isn't Yes),
+                    // over 8 kg red (System 55). System 55: over 11.5 kg red (validateRollerSystems names it);
+                    // the Lift Assisting Spring over 4.5 kg is advice only, shown blue, never an alert.
+                    // Other roller types (double rollers, roller types without 40 / 55 in the name) keep the System 40
+                    // thresholds as before. The spring may also be a sundry ("Sys 55 Chain Control Kit with Lift Assisting
+                    // Spring"): any on the order counts for its System 55 chain lines.
                     const isChainControl = combinedControlValue.includes('chain');
                     const isRollerBlind = !!(blindType && blindType.includes('roller'));
                     if (isChainControl && isRollerBlind && item.blindWeight != null) {
-                        const chainWeight = parseFloat(item.blindWeight);
-                        const already15 = combinedControlValue.includes('1.5') || JSON.stringify(item.specifications || '').includes('1.5');
-                        if (chainWeight > 8) {
-                            item.chainValidation = { type: 'error', message: `Chain Alert: Blind weight (${chainWeight.toFixed(1)}kg) exceeds 8kg — too heavy for a chain. Use System 55 with an Easi-Lift spring, or motorise.` };
-                        } else if (chainWeight > 4 && !already15) {
-                            item.chainValidation = { type: 'warning', message: `Chain Alert: Blind weight (${chainWeight.toFixed(1)}kg) is in the 4–8kg range — a heavy-duty 1.5:1 chain is required (standard 1:1 is not sufficient).` };
-                        }
+                        const sys = rollerSystemOf(item.blindType?.blindIQValue) || 40;
+                        const springSundry = (comparisonData.sundries || []).some(sd => /lift\s*assist/i.test((sd && sd.item && sd.item.blindIQValue) || ''));
+                        const chain = chainCheck(sys, parseFloat(item.blindWeight), { has15: has15Of(item), hasSpring: hasSpringOf(item) || springSundry });
+                        if (chain && chain.level !== 'ok' && !(sys === 55 && chain.level === 'error')) item.chainValidation = { type: chain.level, message: chain.message };
                     }
                 });
             }
@@ -2761,6 +2794,10 @@ ${feedbackExamples}
             if (motorProperties && motorProperties.length > 0 && comparisonData.sundries && tubeProperties) {
                  validateMotorDependencies(comparisonData, motorProperties, tubeProperties, fabricProperties);
             }
+
+            // --- 4b. Roller System 40 / 55: selling limits, System 55's 11.5 kg, which tube the motors fit ---
+            // (Roller System Selector, js/roller-selector.js; Russel, Nov 2026)
+            validateRollerSystems(comparisonData);
 
             // --- 5. Valance Validation (order says all blinds must have a valance) ---
             validateValances(comparisonData);
@@ -2889,7 +2926,8 @@ ${feedbackExamples}
                 // Sundries like "Motors Somfy Rts ZIQ20230 Sys 40 Adaptor Kit for Sonesse 30/28"
                 // contain both "motors" (the type column label) and "adaptor" — that's an adapter
                 // kit, not a separate motor unit. BD documents use the British spelling "adaptor".
-                const looksLikeAdapter = desc.includes('adapter') || desc.includes('adaptor');
+                // BlindIQ also spells them "Adpator" / "Adpater" ("Sys 55 Motor Adpator Kit for Sonesse 40")
+                const looksLikeAdapter = /ad[ao]?p[a-z]*t[eo]r/.test(desc);
 
                 // A name that matches an entry in the Motor Properties table IS a motor — many
                 // catalogue motor names never contain the word "motor" ("Somfy Sonesse 28 Wire
@@ -3046,7 +3084,7 @@ ${feedbackExamples}
                 const checkListItem = (orderedItems, requiredItemsString) => {
                     // Normalise British "adaptor" spelling onto "adapter" so config-side and
                     // sundry-side strings compare correctly regardless of which spelling is used.
-                    const normalise = s => s.toLowerCase().replace(/adaptor/g, 'adapter');
+                    const normalise = s => s.toLowerCase().replace(/ad[ao]?p[a-z]*t[eo]r/g, 'adapter');
                     const requiredItems = (requiredItemsString || '').split(',').map(s => normalise(s.trim())).filter(s => s);
                     if (requiredItems.length === 0) return { pass: true };
                     const foundItem = [...orderedItems].find(ordered => {
@@ -3560,6 +3598,9 @@ ${feedbackExamples}
             var btnOrders = document.getElementById('nav-orders');
             var btnDrawings = document.getElementById('nav-drawings');
             var btnCost = document.getElementById('nav-cost-report');
+            var roller = document.getElementById('roller-check-view');
+            var btnRoller = document.getElementById('nav-roller-check');
+            var rollerLoaded = false;
             if (!mainEl || !drawings || !frame || !btnOrders || !btnDrawings) return;
             fullscreen.href = visualiserSrc();
             function setPill(btn, on) {
@@ -3569,17 +3610,25 @@ ${feedbackExamples}
             }
             function show(view) {
                 if (view === 'drawings' && !frame.getAttribute('src')) frame.src = visualiserSrc(); // lazy-load on first open
+                if (view === 'roller-check' && !rollerLoaded) { // loaded on first open; a failure can't stop OrderBot
+                    rollerLoaded = true;
+                    import('./js/roller-selector-ui.js').then(function (m) { return m.initRollerCheck(window.OrderBotRollerDeps || {}); })
+                        .catch(function (e) { rollerLoaded = false; console.error('Roller check not loaded', e); });
+                }
                 mainEl.classList.toggle('hidden', view !== 'orders');
                 drawings.classList.toggle('hidden', view !== 'drawings');
+                if (roller) roller.classList.toggle('hidden', view !== 'roller-check');
                 if (costReport) costReport.classList.toggle('hidden', view !== 'cost-report');
                 setPill(btnOrders, view === 'orders');
                 setPill(btnDrawings, view === 'drawings');
+                setPill(btnRoller, view === 'roller-check');
                 setPill(btnCost, view === 'cost-report');
                 window.scrollTo(0, 0);
             }
             btnOrders.addEventListener('click', function () { show('orders'); });
             btnDrawings.addEventListener('click', function () { show('drawings'); });
             if (btnCost) btnCost.addEventListener('click', function () { show('cost-report'); });
+            if (btnRoller) btnRoller.addEventListener('click', function () { show('roller-check'); });
         }
         if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
         else init();

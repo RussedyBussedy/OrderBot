@@ -8,6 +8,9 @@
 // All exports are named (repo convention). No default exports. No CommonJS.
 // =============================================================================
 
+// OrderBot's one fabric list (mappings.fabricList) is read through the Roller System Selector's lookup
+import { findFabric } from './roller-selector.js';
+
 // ---------- tiny helpers ----------
 export const biqNorm = s => String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
 export const biqLc = s => biqNorm(s).toLowerCase();
@@ -4798,8 +4801,9 @@ export function biqExtractCheckResults(comparisonData) {
     const out = [];
     (comparisonData.lineItems || []).forEach(li => {
         const flags = [];
-        ['fabricValidation', 'colourValidation', 'controlValidation', 'chainValidation', 'torqueValidation', 'minWidthValidation'].forEach(k => {
-            if (li[k]) flags.push({ kind: k, type: li[k].type || 'error', message: li[k].message });
+        // 'info' (the Roller System Selector's advice, e.g. the Lift Assisting Spring) is not a flag here
+        ['fabricValidation', 'colourValidation', 'controlValidation', 'chainValidation', 'rollerValidation', 'torqueValidation', 'minWidthValidation'].forEach(k => {
+            if (li[k] && li[k].type !== 'info') flags.push({ kind: k, type: li[k].type || 'error', message: li[k].message });
         });
         if (Array.isArray(li.motorValidation)) li.motorValidation.forEach(m => flags.push({ kind: 'motorValidation', type: 'error', message: m }));
         out.push({ index: li._converterIndex, blindWeight: li.blindWeight, requiredTorque: li.requiredTorque, requiredTorqueSafety: li.requiredTorqueSafety, flags });
@@ -5740,25 +5744,14 @@ export function biqPerfectFitFix(mappings, it) {
     if (!it.variants.some(v => /^remove\s*universa/i.test(biqNorm(v[0])) && /^yes$/i.test(biqNorm(v[1])))) { biqSetVar(it.variants, key.k, 'Yes'); it._optDefaulted = true; }
 }
 // ---------- Out of Warranty (Blind Designs' Sales Resource documents, Oct 2026) ----------
-// Roller fabrics: roll width in mm (Blind Price List July 2026) and whether the Roller System
-// Selector V2.1 lets the fabric be TURNED (railroaded) when the blind is wider than the roll —
-// 'yes' within warranty, 'out' only out of warranty ("TURNED - OUT OF WARRANTY", a yellow row "to be
-// flagged to the client"), 'no' not at all (Do Not Turn: "EXCEEDS MAX WIDTH"). Designer ranges are
-// Do Not Turn with the roll width in the colour name ("Argent Gold 2050mm @"). Ex-Lite and Carnival
-// Blockout have two selector rows that disagree (review queue #24) and are left out. A System 40
-// blind may be 35 mm wider than its fabric (review queue #26). Capturers marked 42 of the 43 stored
-// System 40/55 lines that this catches; the ones it leaves (roll + 35 mm, turnable screens) never.
-const BIQ_ROLL_FABRICS = {
-    '5 screen': [3000, 'yes'], '3 screen': [3000, 'yes'], '10 screen': [3000, 'yes'], 'sheerweave 4500': [3200, 'yes'],
-    'sheerweave 4500 fr': [3200, 'yes'], 'perspective white back 3%': [3000, 'yes'], 'perspective bo': [3000, 'yes'],
-    'duo screen': [3200, 'out'], 'blockout': [3000, 'out'], 'linen block': [3000, 'out'], 'pop filter': [2000, 'out'],
-    'urban block': [3000, 'out'], 'urban filter': [3000, 'out'], 'duo block': [3000, 'out'], 'edge block': [3000, 'out'],
-    'sheerweave 4901': [3200, 'out'], 'oxford filter': [2050, 'out'], 'moscow fr': [3200, 'out'], 'java': [2100, 'out'],
-    'carnival': [3000, 'out'], 'daybreak': [3000, 'out'],
-    'surface block': [3000, 'no'], 'texfilter': [3000, 'no'], 'texblock': [3000, 'no'], 'filter': [2800, 'no'],
-    'hampton': [2800, 'no'], 'didsbury block': [3000, 'no'], 'monterey': [2800, 'no'], 'montego': [3000, 'no'],
-    'chatsworth': [2150, 'no'], 'voile': [3000, 'no'], 'dune': [2150, 'no'], 'petal': [2000, 'no'], 'sunset': [3000, 'no']
-};
+// Roller fabrics: the roll width and whether the Roller System Selector lets the fabric be TURNED
+// (railroaded) when the blind is wider than the roll: 'yes' within warranty, 'out' only out of warranty
+// ("TURNED - OUT OF WARRANTY", "to be flagged to the client"), 'no' not at all (Do Not Turn). Since
+// 2 Nov 2026 they come from OrderBot's one fabric list (Fabric properties), which the UI puts on the
+// mappings as mappings.fabricList (findFabric in js/roller-selector.js); without it these checks are
+// silent. Designer ranges are Do Not Turn, the roll width in the colour name ("Argent Gold 2050mm @").
+// A System 40 blind may be 35 mm wider than its fabric (review queue #26). Capturers marked 42 of the 43
+// stored System 40/55 lines this caught with the Oct 2026 table.
 // Selling limits (finished width x drop; Allusion also a minimum width) beyond which a blind is off
 // the price list — "ask the factory" — and is ordered Out of Warranty: System 40 3200 x 3400 (ruling
 // 4.1), System 55 4000 x 4500 (ruling 4.3), Vision 2200 x 2600, Allusion 3990 x 3000 and 750 mm
@@ -5780,8 +5773,10 @@ export function biqWarrantyReason(mappings, it) {
         const rr = biqResolveRange(mappings, it.blindType, it.range);
         const rname = biqNorm(rr.known ? (mappings.rangeNames || {})[String(rr.id)] || it.range : it.range);
         let roll = 0, turn = '';
-        if (/^designer fab/i.test(rname)) { const m = String(it.colour || '').match(/(\d{4})\s*mm/i); if (m) { roll = +m[1]; turn = 'no'; } }
-        else { const f = BIQ_ROLL_FABRICS[biqLc(rname.split(' / ')[0])]; if (f) [roll, turn] = f; }
+        if (/^designer fab/i.test(rname)) { const m = String(it.colour || '').match(/(?:^|\D)(\d{4})\s*mm/i); if (m) { roll = +m[1]; turn = 'no'; } }
+        // a System 55 "X / Y" range reads X's roll ('part' match), as the built-in table did (rname.split(' / ')[0])
+        // until Nov 2026; the comparison doesn't, since those mills' rolls may be wider (open with Russel)
+        else { const f = findFabric(mappings.fabricList, rname, it.colour); if (f && f.roll) { roll = f.roll; turn = f.turn; } }
         if (roll && w - 35 > roll && (turn === 'out' || turn === 'no'))
             return w + ' mm is wider than the ' + roll + ' mm ' + rname + ' roll' + (turn === 'out'
                 ? ', so the fabric is turned — out of warranty (Roller System Selector): flag it to the client'
@@ -5789,34 +5784,17 @@ export function biqWarrantyReason(mappings, it) {
     }
     return '';
 }
-// Roller blind weight as the Roller System Selector V2.1 works it out: fabric kg/m² (its Fabric Data
-// sheet) x width x drop, plus the bottom bar per metre of width (aluminium / oval 0.28, SmartRail
-// 0.36, plastic 0.20). The selector puts the standard 1:1 chain to 4 kg and the 1.5:1 ratio control
-// at 4–8 kg (TR-2026-004). Designer fabrics by design name. null when the fabric isn't in the table.
-const BIQ_FABRIC_KG = {
-    '5 screen': .569, '3 screen': .645, '10 screen': .514, 'duo screen': .471, 'blockout': .4, 'linen block': .4,
-    'surface block': .46, 'texfilter': .25, 'texblock': .41, 'pop filter': .264, 'filter': .28, 'urban block': .41,
-    'duo block': .38, 'edge block': .345, 'urban filter': .31, 'hampton': .24, 'sheerweave 4500': .488,
-    'sheerweave 4500 fr': .488, 'didsbury block': .37, 'oxford filter': .205, 'monterey': .24, 'montego': .11,
-    'chatsworth': .23, 'moscow fr': .465, 'voile': .127, 'ex lite': .423, 'perspective white back 3%': .45,
-    'dune': .23, 'petal': .24, 'perspective bo': .66, 'java': .217
-};
-const BIQ_DESIGNER_KG = {
-    'tropical palm bo': .447, 'tropical palm': .29, 'brighton stripe': .24, 'cherry blossom': .23, 'cotton flower': .23,
-    'wild garden': .23, 'pop bo': .451, 'zen bo': .447, 'bamboo': .226, 'thistle': .23, 'ziggy': .24, 'lily': .269,
-    'florence': .447, 'como': .2723, 'flores': .269, 'daisy': .447, 'acacia': .447, 'windsor': .23, 'willow': .23,
-    'damask': .23, 'matrix': .426, 'collina': .217, 'magnolia': .381, 'argent': .23, 'crush': .23
-};
+// Roller blind weight as the Roller System Selector works it out: fabric kg/m² x width x drop, plus the
+// bottom bar per metre of width (aluminium / oval 0.28, SmartRail 0.36, plastic 0.20). The selector puts
+// the standard 1:1 chain to 4 kg and the 1.5:1 ratio control at 4–8 kg (TR-2026-004). The fabric comes
+// from mappings.fabricList (OrderBot's fabric list, Designer fabrics by design name); null without it.
 export function biqRollerWeightKg(mappings, it) {
     const w = parseFloat(it.width) / 1000, d = parseFloat(it.drop) / 1000;
     if (!(w > 0) || !(d > 0)) return null;
     const rr = biqResolveRange(mappings, it.blindType, it.range);
     const rname = biqLc(rr.known ? (mappings.rangeNames || {})[String(rr.id)] || it.range : it.range);
-    let kg = null;
-    if (/^designer fab/.test(rname)) {
-        const c = biqLc(it.colour), k = Object.keys(BIQ_DESIGNER_KG).find(x => c.startsWith(x));
-        if (k) kg = BIQ_DESIGNER_KG[k];
-    } else kg = BIQ_FABRIC_KG[rname.split(' / ')[0].trim()] || null;
+    const f = findFabric(mappings.fabricList, rname, it.colour);
+    const kg = f ? f.kg : null;
     if (!kg) return null;
     const bar = biqLc((it.variants.find(v => /^bottom\s*bar$/i.test(biqNorm(v[0]))) || [])[1] || '');
     return kg * w * d + (/smartrail/.test(bar) ? .36 : /plastic/.test(bar) ? .2 : .28) * w;
@@ -5887,11 +5865,11 @@ export function biqApplyOptionDefaults(mappings, order) {
         const spec = biqVariantSpec(mappings, it.blindType, it.range);
         if (!spec) return;
         const noteOnce = t => { if (!biqLc(it.notes).includes(biqLc(t))) it.notes = (it.notes ? it.notes + ' | ' : '') + t; };
-        // Out of Warranty, decided again whenever the product, fabric or size changes; while they don't,
-        // a capturer's own tick or untick stays.
+        // Out of Warranty, decided again whenever the product, fabric or size changes, or the fabric list
+        // (mappings.fabricList) arrives or changes; while they don't, a capturer's own tick or untick stays.
         {
             const oo = spec.find(o => /^out\s*of\s*warranty$/i.test(biqNorm(o.k)));
-            const sig = [it.blindType, it.range, it.colour, it.width, it.drop].map(biqLc).join('|');
+            const sig = [it.blindType, it.range, it.colour, it.width, it.drop].map(biqLc).join('|') + '|f' + ((mappings.fabricList && mappings.fabricList.size) || 0);
             if (oo && it._oowSig !== sig) {
                 it._oowSig = sig;
                 const why = biqWarrantyReason(mappings, it);

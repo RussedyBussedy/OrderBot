@@ -10,9 +10,11 @@
 // torque is at least that. The torque is worked out on the tube the motor goes in, so a System 40-sized blind
 // that needs a System 55 motor is checked at the 55 mm radius (V2.1 kept the 40 mm one).
 // Sizes: System 40 to 3200 × 3400 mm, System 55 to 4000 × 4500 mm and 11.5 kg (the selling limits in
-// biq-converter.js's BIQ_SELL_LIMITS). Chain: System 40 1:1 to 4 kg, 1.5:1 from 4 to 8 kg (amber when missing,
-// Russel 2 Nov 2026, although only 602 of 1,460 such blinds ordered Nov 2025 – Oct 2026 had it), over 8 kg
-// System 55; on System 55 the Lift Assisting Spring is recommended over 4.5 kg, never flagged (11 of 85 had it).
+// biq-converter.js's BIQ_SELL_LIMITS). Chain: System 40 1:1 to 4 kg, 1.5:1 from 4 to 8 kg, over 8 kg System 55.
+// A Roller System 40 of 4–8 kg without the 1.5:1 is red: the capturer must spec it (Russel, 5 Nov 2026; amber from
+// 2 Nov, when 624 of 1,515 such BlindIQ lines of Nov 2025 – Oct 2026 had it: 37% at 4–5 kg, 62% at 5–6, 22 of 23
+// over 6). Roller types whose sheet has no 1.5:1 option (double rollers, Perfect Fit) keep the amber warning.
+// On System 55 the Lift Assisting Spring is recommended over 4.5 kg, never flagged (11 of 85 had it).
 //
 // Used by the "Roller check" view (js/roller-selector-ui.js), by runPostAIValidations (index.html) and by the
 // converter (js/biq-converter.js): findFabric for the weight and roll, chainCheck for the chain,
@@ -182,14 +184,18 @@ export function rollerMotorOf(text) {
 }
 
 // The chain for a manual blind. { level: 'ok' | 'info' | 'warning' | 'error', advice, message }
-export function chainCheck(system, kg, { has15 = false, hasSpring = false } = {}) {
+// can15: the blind's sheet offers the 1.5:1 control (a Roller System 40). A missing 1.5:1 is then red; on a roller
+// type without the option (double rollers, Perfect Fit), which only borrows System 40's thresholds, it stays amber.
+// Off unless the caller says so: for the few minutes GitHub Pages lets a browser keep the previous index.html,
+// that page calls this without it and gets the amber of before, never a red a double roller can't clear.
+export function chainCheck(system, kg, { has15 = false, hasSpring = false, can15 = false } = {}) {
     if (!(kg > 0)) return null;
     const w = kg.toFixed(1) + ' kg';
     if (system === 40) {
         if (kg > CHAIN.sys40Max) return { level: 'error', advice: 'System 55 chain', message: `Chain Alert: ${w} is too heavy for a System 40 chain (over ${CHAIN.sys40Max} kg) — System 55 (with the Lift Assisting Spring), or motorise.` };
         if (kg > CHAIN.ratio15From) return has15
             ? { level: 'ok', advice: '1.5:1 chain', message: `${w}: the 1.5:1 control is on the order, as the selector needs from ${CHAIN.ratio15From} kg.` }
-            : { level: 'warning', advice: '1.5:1 chain', message: `Chain Alert: ${w} is over ${CHAIN.ratio15From} kg — the Roller System Selector needs the 1.5:1 control (System 40 1.5:1=Yes); the standard 1:1 chain is not enough.` };
+            : { level: can15 ? 'error' : 'warning', advice: '1.5:1 chain', message: `Chain Alert: ${w} is over ${CHAIN.ratio15From} kg — the Roller System Selector needs the 1.5:1 control (System 40 1.5:1=Yes); the standard 1:1 chain is not enough.` };
         return { level: 'ok', advice: 'Standard 1:1 chain', message: `${w}: standard 1:1 chain.` };
     }
     if (system === 55) {
@@ -249,7 +255,7 @@ export function selectRollerSystem(input) {
         let sys = forced || (fits40 && !(kg > CHAIN.sys40Max) ? 40 : 55);
         if (!forced && !fits40 && fits55) add('info', `${width} × ${drop} mm is over System 40's ${LIMITS[40].width} × ${LIMITS[40].drop} mm: System 55.`);
         res.system = sys;
-        res.chain = chainCheck(sys, kg, input);
+        res.chain = chainCheck(sys, kg, { ...input, can15: true });   // a Roller System 40 / 55: the sheet has the 1.5:1
         if (res.chain && res.chain.level !== 'ok') add(res.chain.level, res.chain.message);
         if (!forced && sys === 55 && fits40 && kg > CHAIN.sys40Max) add('info', `Over ${CHAIN.sys40Max} kg on a chain: System 55.`);
         if (sys === 55 && kg > LIMITS[55].kg && !(res.chain && res.chain.level === 'error')) add('error', `${kg.toFixed(1)} kg is over System 55's ${LIMITS[55].kg} kg limit.`);

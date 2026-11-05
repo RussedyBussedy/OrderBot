@@ -12,7 +12,7 @@ The spreadsheet it comes from is `Sales Resource / Calculation Tools / Roller Bl
 | Torque | weight × 9.81 × tube radius (System 40 0.020 m, System 55 0.0275 m), + 20 %; a motor fits when its torque is at least that | Selector |
 | Sizes | System 40 to 3200 × 3400 mm; System 55 to 4000 × 4500 mm and 11.5 kg. Beyond them: Out of Warranty, ask the factory | Selector, price list (also `BIQ_SELL_LIMITS` in the converter) |
 | Fabric width | wider than the roll + 35 mm: turned if the fabric may be turned and the drop fits the roll; turning "out" fabrics is Out of Warranty | Selector's Fabric Data; the 35 mm is review queue #26, as in the converter |
-| Chain, System 40 | 1:1 to 4 kg; 1.5:1 from 4 to 8 kg; over 8 kg System 55 | Selector; amber, not red (Russel, 2 Nov 2026) |
+| Chain, System 40 | 1:1 to 4 kg; 1.5:1 from 4 to 8 kg; over 8 kg System 55 | Selector. A missing 1.5:1 is red on a Roller System 40 (Russel, 5 Nov 2026; amber from 2 Nov) |
 | Chain, System 55 | Lift Assisting Spring recommended over 4.5 kg | Selector; advice only (Russel, 2 Nov 2026) |
 | Motors | BlindIQ's live roller motors, each with the tubes it goes in | BlindIQ, Nov 2026 (see below) |
 
@@ -56,9 +56,9 @@ Results show the weight, the torque on both tubes, the system, the chain or the 
 - **Weight (section 0):** the fabric from the one list (any `match`). The bottom bar is the line's own (SmartRail, plastic, else aluminium); before, it was always aluminium. Options packed into another one ("Hardware Colour = Mech Colour=White | Bottom Bar=White Plastic") are read too (`optionPairs`).
 - **Fabric width (section 1):** not for verticals, panels or outdoor blinds (`notOnRollerRolls`): their fabric doesn't come off the list's roller rolls. A `part` match has no known roll, and a Roller System 40 / 55 blind gets the 35 mm allowance.
 - **Chain (section 3b, `chainValidation`):** `chainCheck`.
-  - System 40 is amber from 4 kg without the 1.5:1 control and red over 8 kg. The 1.5:1 counts as its own "System 40 1.5:1=Yes", packed into another option, or in a control. Before Nov 2026 any "1.5" in the options switched the warning off, including Blind IQ's blank "System 40 1.5:1 =".
+  - A Roller System 40 is red from 4 kg without the 1.5:1 control, because the capturer must spec it (Russel, 5 Nov 2026; it was amber from 2 Nov). Over 8 kg is red too (System 55). The 1.5:1 counts as its own "System 40 1.5:1=Yes", packed into another option, or in a control. Before Nov 2026 any "1.5" in the options switched the warning off, including Blind IQ's blank "System 40 1.5:1 =".
   - On System 55 the spring advice is blue and isn't an alert. The spring counts as the option, a "Chain Spring" control, or a lift-assisting spring sundry on the order. Over 11.5 kg is reported by the System 40/55 check; a chain blind over 8 kg on System 55 is no longer red.
-  - Double rollers and other roller types without 40 / 55 in their name keep the System 40 thresholds.
+  - Double rollers, Perfect Fit and other roller types without 40 / 55 in their name keep the System 40 thresholds. A missing 1.5:1 stays amber on them: their sheets have no 1.5:1 option (`chainCheck`'s `can15`).
 - **System 40/55 (section 4b, before the valances, `rollerValidation`):** `validateRollerSystems`. Red, amber or blue, worst first, all messages joined:
   - **Selling limit:** a blind beyond System 40's or 55's size limit is amber, or blue when the line is marked Out of Warranty.
   - **System 55 weight:** a System 55 blind over 11.5 kg is red.
@@ -88,6 +88,7 @@ All 19,170 comparisons in `orderbot_comparisons` (Aug 2025 – Nov 2026) were ru
   - The motor rule fires on 2 of 1,269 qualifying orders, both amber (BDO649605, BDO649530: a Sonesse 28 on all-System 55 orders).
   - Selling limits: 338 System 40 and 106 System 55 lines were beyond them, 171 and 75 of those marked Out of Warranty; most of the rest are two project orders (BDO669153, BDO669417: 105 System 40 lines at 3545 mm).
   - 602 of the 1,460 System 40 chain blinds of 4–8 kg had the 1.5:1, so its amber warning stays common (Russel kept it at 4 kg).
+  - Recounted on 5 Nov 2026 with the live fabric list, when Russel made the missing 1.5:1 red: 624 of 1,515 such lines had it (37 % at 4–5 kg, 62 % at 5–6 kg, 22 of 23 over 6 kg). So about 890 lines a year would have been red. The table above is the amber version of 2 Nov.
 
 ## Deploying it
 
@@ -105,6 +106,7 @@ Without them, those ranges (about 8,000 lines a year) lose the converter's Out o
 - **No regex lookbehind** (`(?<!…)`) in these modules: Safari before 16.4 can't parse it, and `roller-selector.js` is a static import of the app.
 - **Tests** (regression package, see [Testing](testing.md)):
   - `new-tests/biq-roller-selector.test.mjs` (32 checks) covers the rules and their wiring into index.html and the converter. Three checks cover the motor check: kit spellings, remotes found by name, and no control characters in index.html.
+  - `new-tests/biq-chain-15.test.mjs` (28 checks, review package "Chain 1.5 red 2026-11") covers the red 1.5:1: `chainCheck`, section 3b, the critical issues, the converter's flags and this view.
   - `new-tests/_maps.mjs` gives the converter tests the fabric list (`fixtures/fabric_properties_2026-11-02.json`).
   - `tests/biq-converter.test.mjs` and `tests/biq-coupled-control.test.mjs` pass the module's functions into the code they lift from index.html.
 

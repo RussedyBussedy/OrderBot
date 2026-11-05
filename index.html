@@ -2773,18 +2773,20 @@ ${feedbackExamples}
                     }
 
                     // --- 3b. Chain control (Roller System Selector, js/roller-selector.js chainCheck) ---
-                    // Weight from section 0. System 40: 1.5:1 from 4 kg (amber when "System 40 1.5:1" isn't Yes),
-                    // over 8 kg red (System 55). System 55: over 11.5 kg red (validateRollerSystems names it);
-                    // the Lift Assisting Spring over 4.5 kg is advice only, shown blue, never an alert.
-                    // Other roller types (double rollers, roller types without 40 / 55 in the name) keep the System 40
-                    // thresholds as before. The spring may also be a sundry ("Sys 55 Chain Control Kit with Lift Assisting
-                    // Spring"): any on the order counts for its System 55 chain lines.
+                    // Weight from section 0. Roller System 40: 1.5:1 from 4 kg, red when "System 40 1.5:1" isn't Yes
+                    // (Russel, 5 Nov 2026: the capturer must spec it; amber before), over 8 kg red (System 55).
+                    // System 55: over 11.5 kg red (validateRollerSystems names it); the Lift Assisting Spring over
+                    // 4.5 kg is advice only, shown blue, never an alert. Other roller types (double rollers, Perfect Fit,
+                    // roller types without 40 / 55 in the name) keep the System 40 thresholds as before, and a missing
+                    // 1.5:1 stays amber there: their sheets have no 1.5:1 option (can15). The spring may also be a sundry
+                    // ("Sys 55 Chain Control Kit with Lift Assisting Spring"): any on the order counts for its System 55
+                    // chain lines.
                     const isChainControl = combinedControlValue.includes('chain');
                     const isRollerBlind = !!(blindType && blindType.includes('roller'));
                     if (isChainControl && isRollerBlind && item.blindWeight != null) {
-                        const sys = rollerSystemOf(item.blindType?.blindIQValue) || 40;
+                        const named = rollerSystemOf(item.blindType?.blindIQValue), sys = named || 40;
                         const springSundry = (comparisonData.sundries || []).some(sd => /lift\s*assist/i.test((sd && sd.item && sd.item.blindIQValue) || ''));
-                        const chain = chainCheck(sys, parseFloat(item.blindWeight), { has15: has15Of(item), hasSpring: hasSpringOf(item) || springSundry });
+                        const chain = chainCheck(sys, parseFloat(item.blindWeight), { has15: has15Of(item), hasSpring: hasSpringOf(item) || springSundry, can15: named === 40 });
                         if (chain && chain.level !== 'ok' && !(sys === 55 && chain.level === 'error')) item.chainValidation = { type: chain.level, message: chain.message };
                     }
                 });

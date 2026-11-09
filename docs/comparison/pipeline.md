@@ -202,7 +202,7 @@ The checks add these annotations, all saved with the result:
 
 One collapsible entry per pair. The header shows the BDO number, a badge with the model (`modelUsed`; records without one show "GEMINI-2.5-PRO") and a status:
 
-- **MISMATCH** (red) when any line field or option is a MISMATCH or OMISSION, or any validation raised an alert: a line validation, a Zip X motor table result that isn't information, the order-level motor or valance alert, or a failed sundry check. Alerts add "(ACTION REQUIRED)".
+- **MISMATCH** (red) when any line field or option is a MISMATCH or OMISSION, or any validation raised an alert: a line validation, a Zip X motor table result that isn't information, the order-level motor or valance alert, or a failed sundry check. Alerts add "(ACTION REQUIRED)". The blue remote note (`data.remoteNote`) doesn't count.
 - **LOW CONFIDENCE** (orange) otherwise, when any field or option that isn't NOT_SPECIFIED is under 90% confidence.
 - **MATCH** (green) otherwise.
 

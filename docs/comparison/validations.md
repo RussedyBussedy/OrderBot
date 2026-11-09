@@ -100,11 +100,22 @@ A motor is recognised by its name in the table, not by the word "motor", because
 | The blind is narrower than the motor's `minWidth` | `minWidthValidation` |
 | No ordered adapter kit contains any of the row's `adapterKit` entries (the four spellings are treated alike, on both sides) | "Adapter Alert" |
 | None of the blind's controls equals one of the row's `blindControl` entries | "Control Alert: Missing valid control…" |
-| No ordered controller or other dependency contains any of the row's `controlOptions`. Somfy remotes carry the model's name ("Situo 5 RTS Pure", "Ysia 5 ZIGBEE White"), not "remote", so they sort as dependencies; before Nov 2026 only the Controller bucket was searched. Since August 2026, 403 of these 482 alerts (corrected motor table) had the motor's own remote on the order | "Controller Alert" |
+| No ordered controller or other dependency contains any of the row's `controlOptions`. Somfy remotes carry the model's name ("Situo 5 RTS Pure", "Ysia 5 ZIGBEE White"), not "remote", so they sort as dependencies; before Nov 2026 only the Controller bucket was searched. Since August 2026, 403 of these 482 alerts (corrected motor table) had the motor's own remote on the order | "Controller Alert", only when the order has some remote (see below) |
 | An ordered accessory contains none of the row's `accessories` | "Accessory Alert: Incompatible accessory…" |
 | No other dependency contains any of the row's `otherDependencies` | "Dependency Alert" |
 
 An empty list in the table means that check passes. The alerts are collected as strings in the line's `motorValidation` array.
+
+**An order with no remote at all gets one note** (Russel, 9 November 2026). The customer may already have remotes.
+- **What counts as a remote:** a Controller sundry, or a sundry that carries any remote name in the motor table (any row's `controlOptions`).
+- **With none on the order:** the lines that would have had a Controller Alert don't get one. Instead the order gets `data.remoteNote`, for example "Remote note: this order has no remote, switch or hub for its 3 motorised lines (they take e.g. Situo 5 RTS Pure). Check the customer already has one."
+- **Where it shows:** once, as a blue banner above the lines.
+- **It isn't an alert.** It isn't in `data.motorValidation`, it doesn't add "(ACTION REQUIRED)", and it isn't in the critical box.
+- **A remote of another family still alerts on the line.** For example, a Zigbee Ysia or an io Situo with an RTS motor (BDO675414).
+- **Replayed since August 2026** (621 orders with motor lines, motor table as corrected on 2 November):
+  - Controller Alerts fall from 103 to 4;
+  - 38 orders get the note instead;
+  - no other alert changes.
 
 ### Valances: validateValances
 
@@ -195,7 +206,7 @@ Both the box and the modal are built from:
 - `collectCriticalIssues(data)`: for each line, every MISMATCH or OMISSION on a critical field (with both values), every message from `fabricValidation`, `colourValidation`, `controlValidation`, `torqueValidation`, `motorTableValidation`, `minWidthValidation`, `chainValidation`, `rollerValidation` and `valanceValidation` whose type is `error` or unset (warnings and information are left out), and every string in `motorValidation`. `CRITICAL_FIELD_LABELS` gives the field names shown.
 - `collectSundryFails(data)`: failed entries in a sundry's `validationLog`. No current code writes `validationLog`, so in practice this list is empty.
 
-The order-level alerts (motor coverage and the valance instruction) aren't part of this sweep. They appear as banners at the top of the report and make the run summary say "(ACTION REQUIRED)".
+The order-level alerts (motor coverage and the valance instruction) aren't part of this sweep. They appear as banners at the top of the report and make the run summary say "(ACTION REQUIRED)". The blue remote note (an order with motors but no remote) is a banner too, but it isn't an alert.
 
 ## Changing a validation safely
 

@@ -4808,7 +4808,8 @@ export function biqExtractCheckResults(comparisonData) {
         if (Array.isArray(li.motorValidation)) li.motorValidation.forEach(m => flags.push({ kind: 'motorValidation', type: 'error', message: m }));
         out.push({ index: li._converterIndex, blindWeight: li.blindWeight, requiredTorque: li.requiredTorque, requiredTorqueSafety: li.requiredTorqueSafety, flags });
     });
-    return { items: out, global: comparisonData.motorValidation ? comparisonData.motorValidation.global : null };
+    // remoteNote: an order with motors and no remote at all (a note, not a flag)
+    return { items: out, global: comparisonData.motorValidation ? comparisonData.motorValidation.global : null, note: comparisonData.remoteNote || null };
 }
 
 // =============================================================================

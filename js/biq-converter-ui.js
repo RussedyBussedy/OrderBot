@@ -675,6 +675,7 @@ function renderChecks() {
     if (!checkResults) { el.innerHTML = '<span class="text-slate-400 text-sm">Not run yet — click "Run torque & spec checks".</span>'; return; }
     let html = '';
     if (checkResults.global) html += `<div class="text-red-700 font-semibold text-sm mb-1">⚠ ${escH(checkResults.global)}</div>`;
+    if (checkResults.note) html += `<div class="text-slate-600 text-sm mb-1">ℹ ${escH(checkResults.note)}</div>`;
     const flagged = checkResults.items.filter(i => i.flags.length);
     const weights = checkResults.items.filter(i => i.blindWeight != null);
     html += `<div class="text-sm text-slate-600">${flagged.length ? flagged.length + ' item(s) flagged — see red rows in the grid.' : '✔ No torque / fabric / control / motor alerts.'}`;

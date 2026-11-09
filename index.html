@@ -1868,6 +1868,10 @@ ${feedbackExamples}
             } else if (data.valanceValidation && data.valanceValidation.globalOk) {
                 globalValidationHtml += `<div class="mb-4 p-2 text-sm font-semibold bg-green-100 text-green-800 rounded-lg flex items-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" /></svg> ${data.valanceValidation.globalOk}</div>`;
             }
+            // one blue note for an order with no remote at all, not an alert (validateMotorDependencies)
+            if (data.remoteNote) {
+                globalValidationHtml += `<div class="mb-4 p-2 text-sm font-semibold bg-blue-100 text-blue-800 rounded-lg flex items-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" /></svg> ${escapeHtml(data.remoteNote)}</div>`;
+            }
 
             const cn = data.customerOrderNumber || { customerValue: 'N/A', blindIQValue: 'N/A', result: 'OMISSION' };
             const orderNumberRow = `
@@ -2954,6 +2958,12 @@ ${feedbackExamples}
                 }
             });
 
+            // Is there any remote, switch or hub on the order at all? A sundry that says so, or one carrying a
+            // controller name the motor table knows (Somfy's are named for the model: "Situo 5 RTS Pure").
+            const knownControllers = [...new Set(motorProperties.flatMap(p => (p.controlOptions || '').toLowerCase().split(',').map(s => s.trim()).filter(s => s)))];
+            const orderHasController = orderedControllers.size > 0
+                || [...orderedDependencies].some(d => knownControllers.some(c => d.toLowerCase().includes(c)));
+
             // Hardware coverage check (replaces the old global "motors == motorised blinds" rule).
             // Rules:
             //  - adapter_kit_count must be >= motorised_blind_count (always required)
@@ -3044,6 +3054,7 @@ ${feedbackExamples}
                 }
             });
 
+            const noRemoteLines = [];
             orderedMotors.forEach(motorObj => {
                 const blind = motorObj.assignedBlind;
                 if (!blind) return;
@@ -3110,7 +3121,10 @@ ${feedbackExamples}
                 // so they land with the other dependencies: look for the motor's own controllers there too.
                 const controllerCheck = checkListItem(new Set([...orderedControllers, ...orderedDependencies]), motorProp.controlOptions);
                 if (!controllerCheck.pass) {
-                    blind.motorValidation.push(`Controller Alert: No compatible controller (e.g., ${motorProp.controlOptions}) found in sundries.`);
+                    // An order with no remote at all gets one note instead (Russel, 9 Nov 2026): the customer may
+                    // already have remotes. A remote of another family still alerts on the line.
+                    if (orderHasController) blind.motorValidation.push(`Controller Alert: No compatible controller (e.g., ${motorProp.controlOptions}) found in sundries.`);
+                    else noRemoteLines.push(motorProp);
                 }
                 
                 const accessories = (motorProp.accessories || '').toLowerCase().split(',').map(s => s.trim()).filter(s => s);
@@ -3128,6 +3142,15 @@ ${feedbackExamples}
 
                 if (blind.motorValidation.length === 0) delete blind.motorValidation;
             });
+
+            // Not data.motorValidation: anything there counts as an alert in the summary
+            if (noRemoteLines.length) {
+                const n = noRemoteLines.length;
+                const examples = [...new Set(noRemoteLines.map(p => (p.controlOptions || '').split(',')[0].trim()).filter(s => s))].slice(0, 3);
+                const what = n === 1 ? 'its motorised line' : `its ${n} motorised lines`;
+                const eg = examples.length ? ` (${n === 1 ? 'it takes' : 'they take'} e.g. ${examples.join(', ')})` : '';
+                data.remoteNote = `Remote note: this order has no remote, switch or hub for ${what}${eg}. Check the customer already has one.`;
+            }
         }
         
         // --- MOTOR PROPERTIES ---

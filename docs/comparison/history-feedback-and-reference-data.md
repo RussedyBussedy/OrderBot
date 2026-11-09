@@ -154,7 +154,7 @@ One row per motor **and** blind type.
 | 5 | `accessories` | Comma-separated: the compatible accessories |
 | 6 | `otherDependencies` | Comma-separated: an ordered sundry must contain one of these |
 | 7 | `blindControl` | Comma-separated: the control values this motor accepts (compared with each of the blind's controls, lower case) |
-| 8 | `controlOptions` | Comma-separated: an ordered sundry that isn't a motor or an adapter kit must contain one of these (a remote, switch or hub, by its own name: "Situo 5 RTS Pure") |
+| 8 | `controlOptions` | Comma-separated: an ordered sundry that isn't a motor or an adapter kit must contain one of these (a remote, switch or hub, by its own name: "Situo 5 RTS Pure"). Every row's names together also decide whether an order has a remote at all; an order with none gets one note instead of an alert per line |
 | 9 (optional) | `minWidth` | The narrowest blind in mm this motor fits; leave it out or blank to skip that check |
 
 The row editor has the same fields, with `minWidth` shown as "Min W".

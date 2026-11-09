@@ -2657,10 +2657,15 @@ ${feedbackExamples}
                                 if (best) wtTube = tubeProperties.get(best);
                             }
                         }
+                        // An outdoor blind on a crank or a spring has no motor to size, so no required torque (Paul,
+                        // 8 Nov 2026: roller criteria on an outdoor blind). A motorised one keeps it until
+                        // validateOutdoorMotors (section 6) puts the Zip X motor table in its place.
+                        const ctlWords = ((item.control1?.blindIQValue || '') + ' ' + (item.control2?.blindIQValue || '')).toLowerCase();
+                        const noMotorToSize = /\boutdoor\b/.test(bt) && !ctlWords.includes('motor');
                         if (wtFabric && !isNaN(wMm) && !isNaN(dMm) && (isRoller || (wtTube && wtTube.tubeDiameter))) {
                             const totalWeight = (wMm / 1000) * (dMm / 1000) * wtFabric.fabricWeight + (wMm / 1000) * barKg(barOf(item));
                             item.blindWeight = totalWeight.toFixed(2);
-                            if (wtTube && wtTube.tubeDiameter) {
+                            if (wtTube && wtTube.tubeDiameter && !noMotorToSize) {
                                 const baseTorque = totalWeight * 9.81 * ((wtTube.tubeDiameter / 1000) / 2);
                                 item.requiredTorque = baseTorque.toFixed(2);
                                 item.requiredTorqueSafety = (baseTorque * 1.2).toFixed(2);
@@ -2746,9 +2751,17 @@ ${feedbackExamples}
                         }
                     }
 
-                    // General Blind Types that must contain specific keywords
+                    // General Blind Types that must contain specific keywords: a drive, the control that moves the blind.
+                    // The drives are the ones BlindIQ's ranges offer. Outdoor blinds (Free Hang, Zip X, Channel X, Wire X)
+                    // have only Crank, Motor and Spring (Free Hang also Pin and Intermediate): no chain and no dual, which
+                    // are roller blind controls. Paul and Venne, 8 Nov 2026: every crank Free Hang was flagged "must have a
+                    // 'chain', 'motor', or 'dual' control"; in BlindIQ, 1,837 of the 2,411 outdoor lines ordered from
+                    // Nov 2025 to Nov 2026 are on a crank or a spring.
                     if (blindTypeForControlCheck && BLIND_TYPES_REQUIRING_CONTROL_VALIDATION.includes(blindTypeForControlCheck)) {
-                        let hasValidControl = combinedControlValue.includes('chain') || combinedControlValue.includes('motor') || combinedControlValue.includes('dual');
+                        const outdoorType = /\boutdoor\b/.test(blindTypeForControlCheck);
+                        const drives = outdoorType ? ['crank', 'motor', 'spring'] : ['chain', 'motor', 'dual'];
+                        const hasDrive = v => drives.some(d => v.includes(d));
+                        let hasValidControl = hasDrive(combinedControlValue);
 
                         // COUPLED pair: two blinds joined by a coupled bracket run off ONE shared
                         // drive. The partner line legitimately has no drive of its own (e.g.
@@ -2762,7 +2775,7 @@ ${feedbackExamples}
                                 + ((it && it.control2 && it.control2.blindIQValue) || '')).toLowerCase();
                             for (const nb of [allItems[itemIdx - 1], allItems[itemIdx + 1]]) {
                                 const nv = ctlOf(nb);
-                                if (nv.includes('coupled') && (nv.includes('chain') || nv.includes('motor') || nv.includes('dual'))) {
+                                if (nv.includes('coupled') && hasDrive(nv)) {
                                     hasValidControl = true; break;
                                 }
                             }
@@ -2772,7 +2785,9 @@ ${feedbackExamples}
                         }
 
                         if (!hasValidControl && !item.controlValidation) {
-                            item.controlValidation = { type: 'error', message: `Control Alert: Invalid configuration. Each blind must have a 'chain', 'motor', or 'dual' control.` };
+                            item.controlValidation = { type: 'error', message: outdoorType
+                                ? `Control Alert: Invalid configuration. Each outdoor blind must have a 'crank', 'motor' or 'spring' control.`
+                                : `Control Alert: Invalid configuration. Each blind must have a 'chain', 'motor', or 'dual' control.` };
                         }
                     }
 

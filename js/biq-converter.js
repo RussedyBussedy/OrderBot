@@ -3974,7 +3974,7 @@ export function biqOrderPreviewHtml(mappings, order) {
 </tr>` + (opts || note ? `<tr class="opts"><td></td><td colspan="11">${opts ? opts : ''}${note ? (opts ? '<br>' : '') + '<i>Note: ' + H(note) + '</i>' : ''}</td></tr>` : '');
     }).join('\n');
     const sunRows = (order.sundries || []).map(s => `<tr>
-  <td>${H(s.code)}</td><td>${H(s.qty)}</td><td class="num">${H(s.type)}</td><td class="num">${s.sundry ? H(s.sundry) : '<span class="bad">—</span>'}</td><td>${H(s.notes)}</td>
+  <td>${H(s.code)}</td><td>${H(s.qty)}</td><td class="num">${H(s.type)}</td><td class="num">${biqSundryHasPart(s) ? H(s.sundry) : '<span class="bad">— not imported (no part; in the order notes)</span>'}</td><td>${H(s.notes)}</td>
 </tr>`).join('\n');
     const meta = [
         ['Order No', biqOrderNumberForBiq(order.orderNumber)], ['Order Date', order.orderDate], ['Required Date', order.requiredDate],
@@ -4541,9 +4541,12 @@ export function biqCollectProblems(mappings, order) {
     });
     order.sundries.forEach((s, i) => {
         const w = 'Sundry ' + (s.code || i + 1) + ': ';
-        if (!/^\d+$/.test(biqNorm(s.type))) probs.push({ t: w + 'SundryType_Link must be a number.' });
-        if (!/^\d+$/.test(biqNorm(s.sundry))) probs.push({ t: w + 'Sundry_Link must be a number.' });
-        else {
+        if (!biqSundryHasPart(s)) {
+            const nm = biqNorm(s.notes) || biqNorm(s._src);
+            probs.push({ t: w + (nm ? '"' + nm + '" has' : 'has') + ' no BlindIQ part, so it is left out of the import and listed in the order notes'
+                + ' (BlindIQ can\'t print an order with a sundry line that has no part). Pick the part with 🔍, or delete the line.' });
+        } else {
+            if (!/^\d+$/.test(biqNorm(s.type))) probs.push({ t: w + 'SundryType_Link must be a number.' });
             const nm = (mappings.sundryNames || {})[biqNorm(s.sundry)] || s.notes || s.sundry;
             const t13 = String((mappings.sundryTypes || {})['components motor'] || 13);
             if (+(mappings.sundryInactive || {})[biqNorm(s.sundry)] === 1) probs.push({ t: w + '"' + nm + '" is INACTIVE in BlindIQ — pick the current part.' });
@@ -4662,10 +4665,31 @@ export function biqBdpoNoteIsInfo(mappings, it, f) {
     // TBD's copy of an option BlindIQ holds with the same value
     return held.some(([key, x]) => biqSq(key) === biqSq(k) && biqSq(x) === biqSq(v));
 }
+// ---------- A sundry line without a BlindIQ part stays out of the import (Nov 2026) ----------
+// BlindIQ's importer takes a sundry line whose SundryType and Sundry links are empty and stores both as -1, and
+// printing an order that holds such a line then fails: "Conversion from type 'DBNull' to type 'String' is not
+// valid" (BDO675469, Mathéo's Roman headrails, Paul and Venne, 9 Nov 2026). Gift's BDO673422 ("Chain Tidys") and
+// BDO673682 ("Pelmet Joiner") were cancelled and captured again, and the copies made of them carried the line too.
+// BlindIQ's own screens never save a sundry line without a part. Since the XML always downloads (29 Aug 2026),
+// 43 imports carried 67 such lines: the capturers deleted 59, picked a part on 6 and cancelled the other 2 orders.
+// So a line with no part is left out of the XML and the order notes BlindIQ gets list it, for the capturer to add
+// in BlindIQ. The order keeps the line, flagged until a part is picked (biqCollectProblems).
+export const biqSundryHasPart = s => /^\d+$/.test(biqNorm(s && s.sundry)) && +biqNorm(s.sundry) > 0;
+export const biqExportedSundries = order => ((order && order.sundries) || []).filter(biqSundryHasPart);
+export function biqSundriesLeftOutNote(order) {
+    const parts = ((order && order.sundries) || []).filter(s => !biqSundryHasPart(s)).map(s => {
+        const name = biqNorm(s.notes) || biqNorm(s._src);
+        return name ? (+s.qty > 0 ? String(+s.qty) + ' x ' : '') + name : '';
+    }).filter(Boolean);
+    return parts.length ? 'Sundries not imported (no BlindIQ part found) — add in BlindIQ: ' + parts.join('; ') : '';
+}
 export function biqExportOrderNotes(order) {
     if (!order) return '';
-    if (order.source !== 'bdpo') return order.notes;
-    return String(order.notes || '').split(' | ').map(biqNorm).filter(f => f && !BIQ_BDPO_ORDER_INFO.test(f)).join(' | ');
+    const notes = order.source !== 'bdpo' ? order.notes
+        : String(order.notes || '').split(' | ').map(biqNorm).filter(f => f && !BIQ_BDPO_ORDER_INFO.test(f)).join(' | ');
+    const left = biqSundriesLeftOutNote(order);
+    if (!left) return notes;                                        // every order with its parts found goes exactly as before
+    return biqNorm(notes) ? notes + ' | ' + left : left;
 }
 // A part the converter moved onto a sundry line is not sent to BlindIQ again as a note on the blind's line
 // (Sharon, 30 Oct 2026: capturers delete those notes). The parser lists the notes it wrote for such parts in
@@ -4733,7 +4757,7 @@ export function biqGenerateXML(mappings, order) {
         x += tag('COI_Order_Notes', biqExportItemNotes(mappings, order, it));
         x += '</CustomerOrderItems>';
     });
-    order.sundries.forEach(s => {
+    biqExportedSundries(order).forEach(s => {                      // a line with no BlindIQ part: in the order notes instead
         x += '<CustomerOrderSundries' + XSI + '>';
         x += tag('COS_ItemCode', s.code);
         x += tag('COS_Qty', (+s.qty || 0).toFixed(3));
@@ -4746,8 +4770,10 @@ export function biqGenerateXML(mappings, order) {
     x += '</BlindIQExport_CO>';
     return x;
 }
-// Scan generated XML for numeric fields BlindIQ's importer will CLng(): every
-// *_Link and CustomerOrderID node must contain digits. Returns offending tags.
+// Scan generated XML for *_Link and CustomerOrderID nodes that aren't integers. Returns offending tags.
+// Nothing in the app calls it since the XML always downloads (29 Aug 2026). BlindIQ's importer turns an
+// empty link into -1 rather than failing; a sundry line with part -1 then stops the order printing, so
+// biqGenerateXML leaves such lines out (biqExportedSundries).
 export function biqImportSafetyScan(xml) {
     const bad = [];
     const re = /<([A-Za-z0-9_]*_Link|CustomerOrderID)( xsi:nil="true")?\s*\/>|<([A-Za-z0-9_]*_Link|CustomerOrderID)>([^<]*)<\/\3>/g;

@@ -4585,7 +4585,10 @@ export function biqCollectProblems(mappings, order) {
         const w = 'Sundry ' + (s.code || i + 1) + ': ';
         if (!biqSundryHasPart(s)) {
             const nm = biqNorm(s.notes) || biqNorm(s._src);
-            probs.push({ t: w + (nm ? '"' + nm + '" has' : 'has') + ' no BlindIQ part, so it is left out of the import and listed in the order notes'
+            const ask = s._ask && (s._ask.options || []).length ? s._ask : null;      // the order didn't settle it (biqResolveOpenSundries)
+            if (ask) probs.push({ t: w + (nm ? '"' + nm + '": ' : '') + ask.q + ' — ' + biqSundryAskOptions(ask) + '? Pick it with 🔍.'
+                + ' Until then it is left out of the import and listed in the order notes.' });
+            else probs.push({ t: w + (nm ? '"' + nm + '" has' : 'has') + ' no BlindIQ part, so it is left out of the import and listed in the order notes'
                 + ' (BlindIQ can\'t print an order with a sundry line that has no part). Pick the part with 🔍, or delete the line.' });
         } else {
             if (!/^\d+$/.test(biqNorm(s.type))) probs.push({ t: w + 'SundryType_Link must be a number.' });
@@ -7081,6 +7084,384 @@ export function biqLearnFormat(mappings, profiles, order) {
 // BlindIQ mappings are the source of truth: once a field resolves to an ID, replace the
 // dealer's wording with BlindIQ's canonical name. Unresolved fields are left as-is so the
 // capturer still sees what was on the order. Idempotent.
+// ---------- Sundry lines the first reading didn't match: shorthand, extra words, the order's motors (Nov 2026) ----------
+// Paul's BDO675469 and Gift's BDO673422 / BDO673682 (9 Nov 2026) wouldn't print because of sundry lines with no BlindIQ
+// part. The 67 such lines on the 43 imports of 1 Sep – 9 Nov 2026, lined up with what the capturers stored: 51 got a
+// part, and four things had kept the converter from finding it.
+//   - Dealer shorthand: "WF" (Wire Free), "ZB" (Zigbee), "OT" (One Touch); biqTbdExpand only ran on TBD's purchase orders.
+//   - Words BlindIQ's names don't have: "/20rpm", "(max 4m)", "(700mm Min 9m2)", "- 25m2", "Somfy", "Li-ion" on a motor
+//     BlindIQ names without it; and BlindIQ's names are cut at 50 characters ("… ZIGBEE 1.1nm/20rpm Li-i").
+//   - Adaptor kits, which BlindIQ stocks per motor family and colour (and outdoor ones per product): capturers took the
+//     family of the order's motors and the hardware colour of the motorised blinds (Beige blinds, Beige kit; Grey
+//     hardware, Light Grey kit; a Zip X order's RTS Maestria, the RTS System X kit).
+//   - A bare "Remote" or "Charger": the family's usual part.
+// This pass runs at the end of the pipeline (biqCanonicalize), so the blinds' hardware and controls are final, on every
+// line still without a part, once per wording; a line that resolved is never touched. Where the order doesn't settle it,
+// the line asks the capturer (s._ask, shown with the problem) instead of guessing: a One Touch Dual motor that doesn't
+// say battery or 220V (Russel, 9 Nov 2026: "needs a question"), a remote where the family has no one usual part, kits for
+// motorised blinds of different colours or motors of two families, or a wording that fits two to four parts.
+const BIQ_SUNDRY_FAMILIES = { 'motors somfy rts': 'rts', 'motors somfy zigbee': 'zigbee', 'motors one touch dual': 'otdual',
+    'motors one touch +': 'otplus', 'motors somfy io': 'io', 'motors motion': 'motion', 'motors shawsmart': 'shawsmart' };
+const BIQ_FAMILY_NAMES = { rts: 'Somfy RTS', zigbee: 'Somfy Zigbee', otdual: 'One Touch Dual', otplus: 'One Touch +', io: 'Somfy io', motion: 'Motion', shawsmart: 'ShawSmart' };
+// A bare "Remote" / "Charger": a family's one part when it is on 80 %+ of the family's 2026 orders with such a part,
+// else its choices for the capturer (SVR01, orders 1 Jan – 9 Nov 2026, not cancelled).
+const BIQ_FAMILY_PARTS = {
+    rts: { remote: [3221], charger: [3219] },             // Situo 5 RTS Pure 718 of 843; Wall Charger for Wire Free 380 of 414
+    io: { remote: [5462] },                               // Situo 5 IO Pure 131 of 135
+    zigbee: { remote: [5488, 5487], charger: [5473] },    // Ysia 5 on 41, Ysia 1 on 15: asked; Zigbee USB-C charger 82 of 88
+    otdual: { remote: [5323, 5324, 5326, 5322, 5325], charger: [5321] },  // 6 ch 221, 16 ch 185, 16 ch Black 95, 1 ch 83, 16 ch Grey 50: asked
+    otplus: { remote: [3797, 3798, 4263], charger: [2985] },             // 6 ch White on 67 of 98: asked; Lithium charger 77 of 81
+    motion: { remote: [2747] },
+    shawsmart: { remote: [5620], charger: [5622] },
+};
+// Roller adaptor kits by BlindIQ's own names: family, roller system, and the colour at the end (none on the RTS System
+// 55 and Motion kits; One Touch + kits go by the motor's torque).
+const BIQ_KIT_NAMES = [
+    { fam: 'rts', sys: '40', re: /^sys 40 adaptor kit for sonesse 30\/28 (.+)$/ },
+    { fam: 'zigbee', sys: '40', re: /^sys 40 motor adapter kit for sonesse 30\/28 (.+)$/ },
+    { fam: 'otdual', sys: '40', re: /^sys 40 adapter kit one touch dual (.+)$/ },
+    { fam: 'otdual', sys: '55', re: /^sys 55 adapter kit one touch dual 6nm (.+)$/ },
+    { fam: 'zigbee', sys: '55', re: /^sys 55 motor adpater kit for sonesse 40 (.+)$/ },
+    { fam: 'rts', sys: '55', motor: 'sonesse 40', re: /^sys 55 motor adpator kit for sonesse 40()$/ },
+    { fam: 'rts', sys: '55', motor: 'sonesse 30', re: /^sys 55 adaptor kit for sonesse 30 wire free()$/ },
+    { fam: 'motion', sys: '40', re: /^sys 40 adapter kit for motion 25()$/ },
+    { fam: 'motion', sys: '55', re: /^sys 55 adapter kit for motion 40()$/ },
+    { fam: 'otplus', sys: '40', torque: true, re: /^sys 40 adaptor kit for one touch \+ (\d+(?:\.\d+)?)\s*nm$/ },
+];
+// A hardware colour as the kits name it; "TBC" and the like are no colour (PO072611585K's hardware was "TBC").
+const biqHwColour = c => { const x = biqLc(biqNorm(c)); return !x || biqUnsure(x) ? '' : /^(l(ight)?\s*grey|grey|gray|silver)$/.test(x) ? 'light grey' : /^(anthrac|charcoal)/.test(x) ? 'anthracite' : x; };
+// The dealer's wording made comparable with BlindIQ's names.
+export function biqSundryWording(t) {
+    return biqNorm(biqTbdExpand(String(t == null ? '' : t))
+        .replace(/\bOT\b/g, 'One Touch')                             // Mathéo: "OT Dual USB-C Charger", "OT Smart Hub"
+        .replace(/^\s*TBD\s+/i, '')                                  // Mathéo's "TBD Somfy Sonesse 40 RTS 3/30"
+        .replace(/\s+—\s+blind\s+\S+\s*$/i, ' ')                    // "… — Blind a": which blind the part is for
+        .replace(/\([^)]*\)/g, ' ').replace(/\/\s*\d+\s*rpm\b/ig, ' ')
+        .replace(/\b\d+(?:\.\d+)?\s*m(?:2|²)(?![a-z0-9])/ig, ' ')   // the area a motor lifts: "Maestria RTS 25/17 - 25m2"
+        .replace(/\bsys(tem)?\s*40\s*&\s*sys(tem)?\s*55\b/ig, ' ').replace(/\s+-\s+/g, ' ')
+        .replace(/^[^a-z0-9]+/i, '').replace(/[.\s]+$/, '')
+        .replace(/\b(one touch(?: dual)? motor)\s+(\d+(?:\.\d+)?)(?![\d.a-z]|\s*nm)/i, '$1 $2nm'));   // "One Touch Motor 2.0": the torque (not "… Motor 220V")
+}
+const biqSundryCanon = s => biqLc(s).replace(/\bone touch\s*\+/g, 'one touch plus').replace(/\btellis\b/g, 'telis').replace(/\bli-?i(on)?\b|\blithium(\s+ion)?\b/g, 'lithium').replace(/(\d)\s*\/\s*(\d)/g, '$1/$2').replace(/(\d)\.0\s*nm\b/g, '$1nm')
+    .replace(/(\d)\s+nm\b/g, '$1nm').replace(/\b(adp?at[oe]r|adapt[oe]r|adpator|adpater)\b/g, 'adaptor').replace(/\bsystem\b/g, 'sys');
+const BIQ_SUNDRY_VARIANT_WORDS = ['matter', 'thread', 'short', 'no battery', 'variation'];
+const biqTorque = n => { const m = biqLc(n).match(/(\d+(?:\.\d+)?)\s*nm\b/); return m ? +m[1] : null; };
+const biqPowerOf = n => /\b220\s*v\b|\bmains\b/i.test(n) ? 'mains' : /\bno\s+battery\b/i.test(n) ? '' : /\bli-?i(on)?\b|\blithium\b|\bbattery\b/i.test(n) ? 'battery' : '';
+// The orderable motor parts (biqMotorSundryView: active, in the seven motor types), read once per pass: each part's
+// type, family, name and comparable forms, its stock code, and every mapping key that names it.
+function biqMotorCatalogue(mappings) {
+    const view = biqMotorSundryView(mappings).sundries || {};
+    const typeName = {}; Object.entries(mappings.sundryTypes || {}).forEach(([n, id]) => { typeName[String(id)] = n; });
+    const names = mappings.sundryNames || {}, parts = {}, keys = [], alike = {};
+    Object.entries(view).forEach(([k, e]) => {
+        if (!e || e.sundry == null) return;
+        const id = String(e.sundry);
+        if (!parts[id]) {
+            const name = names[id] || '';
+            parts[id] = { id, type: String(e.type), fam: BIQ_SUNDRY_FAMILIES[biqLc(typeName[String(e.type)] || '')] || '', name, lc: biqLc(biqNorm(name)),
+                canon: biqSundryCanon(name), named: biqSundryCanon(biqSundryWording(name)).trim(), code: '' };
+            if (parts[id].lc) (alike[parts[id].lc] = alike[parts[id].lc] || []).push(id);
+        }
+        if (/^ziq\d+$/i.test(k) && !parts[id].code) parts[id].code = k.toUpperCase();
+        keys.push({ k: biqSundryCanon(k), id });
+    });
+    return { parts, keys, alike, typeName, ids: Object.keys(parts) };
+}
+const biqCatPart = (ctx, id) => { const p = ctx.cat.parts[String(id)]; return { sundry: String(id), type: p ? p.type : '', name: p ? p.name : String(id) }; };
+const biqFamOfPart = (ctx, id) => (ctx.cat.parts[String(id)] || {}).fam || '';
+// What the order's motors and motorised blinds say: families, the motor parts' names, and the motorised blinds'
+// hardware colours, roller system and product.
+function biqSundryContext(mappings, order, cat) {
+    const fams = new Set(), motorFams = new Set(), motorNames = [], motorsByFam = {};
+    (order.sundries || []).forEach(s => {
+        if (!biqSundryHasPart(s)) return;
+        const f = BIQ_SUNDRY_FAMILIES[biqLc(cat.typeName[biqNorm(s.type)] || '')];
+        if (!f) return;
+        const n = biqLc((mappings.sundryNames || {})[biqNorm(s.sundry)] || s.notes);
+        fams.add(f);
+        if (biqIsMotorUnit(n)) { motorFams.add(f); motorNames.push(n); (motorsByFam[f] = motorsByFam[f] || []).push(n); }   // a motor, not its remote, hub or kit
+    });
+    // the families named by motor lines that have no part yet ("Somfy Maestria RTS (30m2)": RTS, the torque not given)
+    const wordFams = new Set();
+    (order.sundries || []).forEach(s => {
+        if (biqSundryHasPart(s)) return;
+        const w = biqLc(biqSundryWording(biqNorm(s._src) || String(s.notes || '').split(' — ')[0]));
+        const f = biqIsMotorUnit(w) ? biqFamNamed(w) : '';
+        if (f) wordFams.add(f);
+    });
+    const motorised = (order.items || []).filter(it => /motor|\bdual\b/i.test((it.control1 || '') + ' ' + (it.control2 || '')));
+    if (!fams.size && motorised.some(it => /\bdual\b/i.test((it.control1 || '') + ' ' + (it.control2 || '')))) { fams.add('otdual'); motorFams.add('otdual'); }
+    // A double roller's hardware is its cassette: on double-roller orders since Nov 2025 the kit was the cassette's
+    // colour on 23 of 28 (Silver = Light Grey; the other 5 White).
+    const opt = (it, re) => ((it.variants || []).find(v => re.test(biqNorm(v[0]))) || [])[1];
+    const hwOf = it => biqHwColour(opt(it, /^(mech(anism)?|hardware|h\/?\s*ware)\s*colou?r$/i) || (/double roller/i.test(it.blindType) ? opt(it, /^cassette\s*colou?r$/i) : ''));
+    const sysOf = it => /system\s*55|sys\s*55/i.test(it.blindType) ? '55' : /\b40\b/.test(it.blindType) ? '40' : '';
+    return { cat, fams: [...fams], motorFams: [...motorFams], motorNames, motorsByFam, wordFams: [...wordFams], motorised: motorised.map(it => ({ hw: hwOf(it), sys: sysOf(it), kind: biqKitProduct(it.blindType) })) };
+}
+// The motor family a wording names.
+const biqFamNamed = w => /\bzigbee\b/.test(w) ? 'zigbee' : /one touch dual/.test(w) ? 'otdual' : /one touch\s*(\+|plus)/.test(w) ? 'otplus'
+    : /\bmotion\b/.test(w) ? 'motion' : /\bshaw/.test(w) ? 'shawsmart' : /\bio\b/.test(w) ? 'io' : /\brts\b/.test(w) ? 'rts' : '';
+// What an adaptor kit is for, by the blind type (single-type orders since Nov 2025): the System 40 / 55 kits on rollers,
+// double rollers and Vision blinds; the outdoor Free Hang kit (99 of 100 Free Hang orders) or System X kit (Zip X 96 of
+// 96, Channel X 13 of 13, Wire X 15 of 19). Roman, venetian, cellular and RomaShade kits are left to the capturer.
+const biqKitProduct = bt => { const b = biqLc(biqNorm(bt)); return !b ? '' : /^(z\s+)?(element\s+)?roller\s+(system|sys)\s*(40|55)$|^double roller|^vision blind$/.test(b) ? 'roller'
+    : /^outdoor free hang$/.test(b) ? 'free hang' : /^outdoor (zip|channel|wire) x$/.test(b) ? 'system x' : 'other'; };
+// The orderable motor parts whose name is the wording, compared as the dealer's is.
+function biqPartsNamed(ctx, wording) {
+    const want = biqSundryCanon(biqSundryWording(wording)).trim();
+    return want ? ctx.cat.ids.filter(id => ctx.cat.parts[id].named === want) : [];
+}
+// A question's options; where two have the same name (BlindIQ names its Tahoma Switch Pro and outdoor kits alike in
+// each family) each says its family, else its stock code.
+function biqAskParts(ctx, ids) {
+    const parts = [...new Set(ids.map(String))].map(id => biqCatPart(ctx, id));
+    const same = (a, b) => biqLc(biqNorm(a.name)) === biqLc(biqNorm(b.name));
+    return parts.map(p => {
+        const twins = parts.filter(o => o !== p && same(o, p));
+        if (!twins.length) return p;
+        const fam = biqFamOfPart(ctx, p.sundry);
+        const tag = fam && !twins.some(o => biqFamOfPart(ctx, o.sundry) === fam) ? BIQ_FAMILY_NAMES[fam] : (ctx.cat.parts[p.sundry] || {}).code || '';
+        return tag ? Object.assign(p, { label: biqNorm(p.name) + ' (' + tag + ')' }) : p;
+    });
+}
+// Every word of the wording in the part's name, on comparable forms, within the motor sundry types; then the tie-breaks.
+function biqMatchMotorPart(ctx, wording) {
+    const { parts, keys, alike } = ctx.cat;
+    const stop = new Set(['for', 'the', 'and', 'with', 'x']);
+    const toks = biqSundryCanon(wording).split(/[^a-z0-9.:+]+/).filter(t => (t.length > 1 || /^[a-z0-9]$/.test(t)) && !stop.has(t));
+    if (!toks.length) return { ids: [] };
+    // a figure is a figure of its own: "2nm" isn't in "1.2nm", "30" isn't in "300", "3" isn't in "40/30/28" but is in
+    // "3nm/30" ("Sonesse 40 RTS 3/30"); a single letter is a word of its own (a side, L or R)
+    const esc = t => t.replace(/[.+]/g, '\\$&');
+    const tests = toks.map(t => {
+        if (t.length > 1 && !/^\d/.test(t)) return k => k.includes(t);
+        const re = /^\d/.test(t) ? new RegExp('(^|[^0-9.])' + esc(t) + (/\d$/.test(t) ? '(?![0-9])' : '')) : new RegExp('(^|[^a-z0-9.])' + esc(t) + '($|[^a-z0-9.])');
+        return k => re.test(k);
+    });
+    let ids = [...new Set(keys.filter(x => tests.every(f => f(x.k))).map(x => x.id))];
+    // parts BlindIQ names alike (a Tahoma Switch Pro in each family) are all candidates; the mappings key the name to one
+    ids = [...new Set(ids.flatMap(id => (parts[id].lc && alike[parts[id].lc]) || [id]))];
+    const w = biqLc(wording);
+    if (ids.length > 1) { const f = ids.filter(id => !BIQ_SUNDRY_VARIANT_WORDS.some(v => parts[id].lc.includes(v) && !w.includes(v))); if (f.length) ids = f; }
+    if (ids.length > 1 && ctx.fams.length === 1) { const f = ids.filter(id => parts[id].fam === ctx.fams[0]); if (f.length) ids = f; }
+    if (ids.length > 1) {                                           // the plainest part: its words are in every other one's
+        const sets = ids.map(id => ({ id, s: new Set(parts[id].canon.split(/[^a-z0-9.:+]+/).filter(Boolean)) }));
+        const min = sets.filter(a => sets.every(b => b === a || [...a.s].every(t => b.s.has(t))));
+        if (min.length === 1 && !biqPowerOf(parts[min[0].id].name)) ids = [min[0].id];
+    }
+    return { ids };
+}
+// The wording, then without words BlindIQ's names don't carry: a lead-in ("Motor Sonesse 30 …", "Remote control - Situo 5
+// …") or "Somfy" (only its Zigbee names have it); then without the lithium word for a motor BlindIQ names without it
+// ("Roll Up Basic 28 … RTS 0.7nm").
+function biqMatchWording(ctx, w) {
+    const bare = biqNorm(w.replace(/^(motors?|remote\s+control)\s+/i, '').replace(/\bsomfy\b/ig, ' '));
+    const noLith = biqNorm(bare.replace(/\blithium(\s+ion)?\b|\bli-?ion\b/ig, ' '));
+    let m = { ids: [] };
+    for (const t of [...new Set([w, bare, noLith])]) {
+        if (t) m = biqMatchMotorPart(ctx, t);
+        if (m.ids.length) break;
+    }
+    return m;
+}
+// A motor whose wording doesn't say battery or 220V, when BlindIQ has both for it: a question (Russel, 9 Nov 2026).
+function biqPowerQuestion(ctx, ids, wording) {
+    if (biqPowerOf(wording) || /\bwire\s*free\b|\brechargeable\b|\bhard\s*wired\b/i.test(wording)) return null;
+    const P = ctx.cat.parts, name = id => (P[id] || {}).name || '';
+    let pool = ids;
+    if (ids.length === 1) {                                        // a single match that has a twin with the other power
+        const id = ids[0], p = biqPowerOf(name(id)), tq = biqTorque(name(id));
+        if (!p || tq == null) return null;
+        const core = n => biqSundryCanon(n).replace(/\blithium\b|\b220\s*v\b|\b\d+(\.\d+)?nm\b/g, ' ').replace(/\s+/g, ' ').trim();
+        const twins = ctx.cat.ids.filter(o => o !== id && P[o].type === (P[id] || {}).type && biqPowerOf(name(o)) && biqPowerOf(name(o)) !== p
+            && biqTorque(name(o)) === tq && core(name(o)) === core(name(id)));
+        if (!twins.length) return null;
+        pool = [id, ...twins];
+    }
+    const powers = new Set(pool.map(id => biqPowerOf(name(id))));
+    if (!(powers.has('battery') && powers.has('mains')) || pool.length > 6) return null;
+    return { q: 'battery or 220V', options: biqAskParts(ctx, pool) };
+}
+// The adaptor kit for a wording, from the product, family and roller system it names or the order's, in the motorised
+// blinds' hardware colour. Returns { part, tail } or { ask } or null.
+function biqPickKit(ctx, wording, famHint) {
+    const w = biqLc(wording), P = ctx.cat.parts;
+    // BlindIQ's own name for a kit is that kit, unless the order's motors are of another family (Blind Guys writes
+    // "Motor Adaptor Kit", BlindIQ's word for the Zigbee kits, for the RTS ones too).
+    const exact = biqPartsNamed(ctx, wording);
+    if (exact.length === 1 && (!ctx.motorFams.length || ctx.motorFams.includes(biqFamOfPart(ctx, exact[0])))) return { part: biqCatPart(ctx, exact[0]), tail: '' };
+    // What the kit is for: the product the wording names, else the motorised blinds' (all of one kind), else a roller.
+    const kinds = [...new Set(ctx.motorised.map(m => m.kind).filter(Boolean))];
+    const product = /\b(outdoor|maestria|free\s*hang|(zip|channel|wire|system)\s*x)\b/.test(w) ? 'outdoor'
+        : /\b(roma\s*shade|roman|wood|retro|venetian|cellular)\b/.test(w) ? 'other' : /\bsys(tem)?\s*(40|55)\b/.test(w) ? 'roller'
+        : !kinds.length || kinds.every(k => k === 'roller') ? 'roller' : kinds.every(k => k === 'free hang' || k === 'system x') ? 'outdoor' : '';
+    if (product === 'outdoor') return biqPickOutdoorKit(ctx, w, famHint);
+    if (product !== 'roller') return null;
+    // The family it names, else the order's motors', else Somfy RTS: Mathéo writes "ZB" on every Zigbee part, and all its
+    // other kits were RTS kits in BlindIQ. "One Touch" alone is the order's One Touch family. An order whose motors are only
+    // of families without these kits is left alone; one with motors of two such families asks.
+    const kitFams = ctx.motorFams.filter(f => BIQ_KIT_NAMES.some(k => k.fam === f));
+    const named = /\bzigbee\b/.test(w) ? 'zigbee' : /one touch dual|\bdual\b/.test(w) ? 'otdual' : /one touch\s*(\+|plus)/.test(w) ? 'otplus'
+        : /\bmotion\b/.test(w) ? 'motion' : /\brts\b/.test(w) ? 'rts' : '';
+    const ot = kitFams.filter(f => /^ot/.test(f));
+    const wordKit = ctx.wordFams.filter(f => BIQ_KIT_NAMES.some(k => k.fam === f));
+    const fam = named || famHint || (/one touch/.test(w) ? (ot.length === 1 ? ot[0] : '')
+        : kitFams.length === 1 ? kitFams[0] : kitFams.length ? 'ask' : ctx.motorFams.length ? '' : wordKit.length === 1 ? wordKit[0] : 'rts');
+    if (fam === 'ask') {
+        const opts = kitFams.map(f => biqPickKit(ctx, wording, f)).filter(k => k && k.part).map(k => k.part.sundry);
+        return opts.length > 1 ? { ask: { q: 'which adaptor kit: the order has ' + kitFams.map(f => BIQ_FAMILY_NAMES[f]).join(' and ') + ' motors', options: biqAskParts(ctx, opts) } } : null;
+    }
+    // the system it names, else the motorised blinds', else System 40 (a 6nm One Touch Dual motor takes the System 55 kit)
+    const sysSet = [...new Set(ctx.motorised.map(m => m.sys).filter(Boolean))];
+    const sys = /\b55\b/.test(w) ? '55' : /\b40\b/.test(w) ? '40' : sysSet.length === 1 ? sysSet[0] : sysSet.length ? '' : /\b6\s*nm\b/.test(w) ? '55' : '40';
+    if (!fam || !sys) return null;
+    let kits = [];
+    BIQ_KIT_NAMES.filter(k => k.fam === fam && k.sys === sys).forEach(k => ctx.cat.ids.forEach(id => {
+        const m = P[id].lc.match(k.re);
+        if (m) kits.push({ id, colour: k.torque ? '' : biqHwColour(m[1]), torque: k.torque ? +m[1] : null, motor: k.motor || '' });
+    }));
+    if (!kits.length) return null;
+    if (kits.some(k => k.torque != null)) {                         // One Touch +: the kit of the motor's torque
+        const tq = biqTorque(w) != null ? [biqTorque(w)] : [...new Set((ctx.motorsByFam[fam] || []).map(biqTorque).filter(t => t != null))];
+        const hit = tq.length === 1 && kits.find(k => k.torque === tq[0]);
+        return hit ? { part: biqCatPart(ctx, hit.id), tail: '' } : { ask: { q: 'which One Touch + adaptor kit', options: biqAskParts(ctx, kits.map(k => k.id)) } };
+    }
+    if (kits.some(k => k.motor)) {                                  // RTS System 55: the Sonesse 40 kit or the Sonesse 30 Wire Free one
+        const motor = /\b220\s*v\b|sonesse\s*40/.test(w) ? 'sonesse 40' : /sonesse\s*30|wire\s*free/.test(w) ? 'sonesse 30'
+            : ctx.motorNames.some(n => /sonesse\s*40/.test(n)) && !ctx.motorNames.some(n => /sonesse\s*30/.test(n)) ? 'sonesse 40'
+            : ctx.motorNames.some(n => /sonesse\s*30/.test(n)) && !ctx.motorNames.some(n => /sonesse\s*40/.test(n)) ? 'sonesse 30' : '';
+        if (!motor) return { ask: { q: 'which System 55 adaptor kit', options: biqAskParts(ctx, kits.map(k => k.id)) } };
+        kits = kits.filter(k => k.motor === motor);
+    }
+    // the motorised blinds of the kit's system, else all of them (a blind read as System 40 that the kit calls 55)
+    const colours = list => [...new Set(list.map(m => m.hw).filter(Boolean))];
+    const ofSys = colours(ctx.motorised.filter(m => !m.sys || m.sys === sys));
+    const hws = ofSys.length ? ofSys : colours(ctx.motorised);
+    // a colour the wording names, in BlindIQ's spellings too ("Anthracte", "Anthrac", "L Grey")
+    const namedColour = /\bwhite\b/.test(w) ? 'white' : /\bblack\b/.test(w) ? 'black' : /\bbeige\b/.test(w) ? 'beige'
+        : /\banthra[a-z]*\b/.test(w) ? 'anthracite' : /\b(l(ight)?\s*gr[ae]y|gr[ae]y|silver)\b/.test(w) ? 'light grey' : '';
+    const want = namedColour || (hws.length === 1 ? hws[0] : '');
+    if (kits.length === 1) {                                        // one kit (the RTS System 55 and Motion ones have no colour)
+        const k = kits[0];
+        const tail = !k.colour ? (hws.length === 1 ? biqTitleCase(hws[0]) + ', the motorised blinds\' hardware' : '')
+            : want && k.colour !== want ? 'no ' + biqTitleCase(want) + ' kit in BlindIQ: confirm' : '';
+        return { part: biqCatPart(ctx, k.id), tail };
+    }
+    if (!want && hws.length > 1) {
+        const opts = kits.filter(k => hws.includes(k.colour));
+        if (opts.length > 1) return { ask: { q: 'which colour: the motorised blinds are ' + hws.map(biqTitleCase).join(' and '), options: biqAskParts(ctx, opts.map(k => k.id)) } };
+    }
+    const hit = want && kits.find(k => k.colour === want);
+    if (hit) return { part: biqCatPart(ctx, hit.id), tail: namedColour ? '' : biqTitleCase(want) + ', the motorised blinds\' hardware', kitColour: want };
+    const white = kits.find(k => k.colour === 'white');
+    if (!white) return null;
+    return { part: biqCatPart(ctx, white.id), tail: want ? 'no ' + biqTitleCase(want) + ' kit in BlindIQ, White: confirm' : 'WHITE assumed (no colour on order)', kitColour: 'white' };
+}
+// The outdoor kit: BlindIQ's "Outdoor Motor Adaptor Kit Free Hang" / "… System X", one per motor family (Somfy RTS,
+// Somfy io, ShawSmart). The product from the wording or the motorised outdoor blinds; the family from the wording, else
+// the order's motors (2026 orders: RTS Maestrias took the RTS kit on 62 of 63, io ones the io kit on 81 of 83, ShawSmart
+// 35 of 35), else the motor lines' wording, else Somfy RTS, noted (51 of the 56 orders without a motor on them).
+function biqPickOutdoorKit(ctx, w, famHint) {
+    const kinds = [...new Set(ctx.motorised.map(m => m.kind).filter(k => k === 'free hang' || k === 'system x'))];
+    const product = /free\s*hang/.test(w) ? 'free hang' : /\b(zip|channel|wire|system)\s*x\b/.test(w) ? 'system x' : kinds.length === 1 ? kinds[0] : '';
+    const ok = ['rts', 'io', 'shawsmart'];
+    const named = /\bio\b/.test(w) ? 'io' : /\brts\b/.test(w) ? 'rts' : /\bshaw/.test(w) ? 'shawsmart' : '';
+    const motorFams = ctx.motorFams.filter(f => ok.includes(f)), wordFams = ctx.wordFams.filter(f => ok.includes(f));
+    const fams = named ? [named] : famHint && ok.includes(famHint) ? [famHint] : motorFams.length ? motorFams : wordFams.length ? wordFams : ['rts'];
+    const guessed = fams.length === 1 && fams[0] === 'rts' && !named && famHint !== 'rts' && !motorFams.length && !wordFams.length;
+    const kits = ctx.cat.ids.map(id => {
+        const m = ctx.cat.parts[id].lc.match(/^outdoor motor adaptor kit (free hang|system x)$/);
+        return m ? { id, product: m[1], fam: ctx.cat.parts[id].fam } : null;
+    }).filter(k => k && fams.includes(k.fam) && (!product || k.product === product));
+    const tail = [product && !/free\s*hang|\b(zip|channel|wire|system)\s*x\b/.test(w) ? (product === 'free hang' ? 'Free Hang' : 'System X') + ', the motorised blinds\' type' : '',
+        guessed ? 'no motor on the order, the usual Somfy RTS kit: confirm' : ''].filter(Boolean).join('; ');
+    if (kits.length === 1) return { part: biqCatPart(ctx, kits[0].id), tail };
+    if (kits.length > 1 && kits.length <= 6) return { ask: { q: 'which ' + (product === 'free hang' ? 'Free Hang ' : product === 'system x' ? 'System X ' : 'outdoor ') + 'motor kit', options: biqAskParts(ctx, kits.map(k => k.id)) } };
+    return null;
+}
+// "A, B or C" for a question's options.
+export const biqSundryAskOptions = ask => { const n = (ask.options || []).map(o => o.label || o.name); return n.length > 1 ? n.slice(0, -1).join(', ') + ' or ' + n[n.length - 1] : (n[0] || ''); };
+// "<motor> + adaptor kit": the motor named by the word or its model ("Sonesse 30 Wire Free RTS 2nm + adaptor").
+const BIQ_PLUS_KIT_RE = /^(.*?(?:\bmotor\b|\bsonesse\b|\broll\s*up\b|\bone touch\b|\bmaestria\b|\d(?:\.\d+)?\s*nm\b).*?)\s*\+\s*(?:an?\s+)?(?:motor\s+)?(?:adaptor|adapter|adpator|adpater)(?:\s*kits?)?[.\s]*$/i;
+// An adaptor kit: "… adaptor kit …", or a kit for a motor family and roller system (TBD: "Somfy RTS Sys 40 Kit").
+const biqIsKitWording = w => /\bkits?\b/i.test(w) && !/magnetic|charger|\busb\b|remote/i.test(w)
+    && (/adapt|adpat|adpot/i.test(w) || /\bsys(tem)?\s*(40|55)\b/i.test(w) && /\b(somfy|rts|zigbee|io|one touch|dual|sonesse|motor|wire free)\b/i.test(w));
+const biqGenericWording = w => /^(remotes?|remote\s+controls?|handsets?|remote\s+for\b.*)$/i.test(w) ? 'remote'
+    : /^((wall\s+)?chargers?|chargers?\s+for\s+(the\s+)?motors?)$/i.test(w) ? 'charger' : '';
+export function biqResolveOpenSundries(mappings, order) {
+    if (!order || !(order.sundries || []).length || !mappings.sundryNames) return;
+    // Kits this pass picked by the blinds' hardware colour (they follow a later change of it while they are still the
+    // converter's), and lines still without a part, each wording tried once (a capturer who clears a part isn't overridden).
+    const rawOf = s => biqNorm(s._src) || biqNorm(String(s.notes || '').split(' — ')[0]);
+    const follow = order.sundries.filter(s => s._kitAuto && biqSundryHasPart(s) && biqNorm(s.sundry) === s._kitAuto.id);
+    const todo = order.sundries.filter(s => !biqSundryHasPart(s) && rawOf(s) && s._openTried !== biqLc(rawOf(s)));
+    if (!follow.length && !todo.length) return;
+    const cat = biqMotorCatalogue(mappings);
+    if (!cat.ids.length) return;                                    // no catalogue yet: tried when it arrives
+    todo.forEach(s => { s._raw = rawOf(s); s._openTried = biqLc(s._raw); });
+    const set = (s, part, tail, by) => {
+        s.type = part.type; s.sundry = part.sundry; delete s._ask;
+        if (!biqNorm(s._src)) s._src = biqNorm(String(s.notes || '').split(' — ')[0]);
+        s.notes = part.name + (tail ? ' — ' + tail : '');
+        s._matchedBy = by;
+    };
+    let ctx = biqSundryContext(mappings, order, cat);
+    follow.forEach(s => {
+        const k = biqPickKit(ctx, s._kitAuto.wording, s._kitAuto.fam);
+        if (k && k.part && k.part.sundry !== s._kitAuto.id) { set(s, k.part, k.tail, 'kit'); s._kitAuto = Object.assign({}, s._kitAuto, { id: k.part.sundry }); }
+    });
+    if (!todo.length) return;
+    // 1. Motors and other named parts, by their wording (shorthand and extra words out, the order's family), so the
+    //    kits and bare remotes below can go by the order's motors.
+    todo.forEach(s => {
+        const w = biqSundryWording(s._raw);
+        if (BIQ_PLUS_KIT_RE.test(s._raw) || biqIsKitWording(w) || biqGenericWording(w)) return;
+        const m = biqMatchWording(ctx, w);
+        const q = biqPowerQuestion(ctx, m.ids, w);
+        if (q) s._ask = q;
+        else if (m.ids.length === 1) set(s, biqCatPart(ctx, m.ids[0]), '', 'wording');
+        else if (m.ids.length >= 2 && m.ids.length <= 4) s._ask = { q: 'which part', options: biqAskParts(ctx, m.ids) };
+    });
+    ctx = biqSundryContext(mappings, order, cat);
+    // 2. What goes by the order's motors and blinds: "<motor> + adaptor kit", adaptor kits, a bare remote or charger.
+    todo.forEach(s => {
+        if (biqSundryHasPart(s) || s._ask) return;
+        const raw = s._raw, w = biqSundryWording(raw);
+        const plus = raw.match(BIQ_PLUS_KIT_RE);
+        if (plus) {
+            // the motor without a lead-in like "Sliding Door - "
+            const motorW = biqSundryWording(plus[1].replace(/^[^-–]*\s[-–]\s(?=.*\bmotor\b)/i, ''));
+            const mm = biqMatchWording(ctx, motorW);
+            const q = biqPowerQuestion(ctx, mm.ids, motorW);
+            if (mm.ids.length === 1 || q) {
+                const famSet = [...new Set((q ? q.options.map(o => o.sundry) : mm.ids).map(id => biqFamOfPart(ctx, id)))];
+                const fam = famSet.length === 1 ? famSet[0] : '';            // the kit's family, when every candidate motor has it
+                const kit = { code: '', qty: s.qty, type: '', sundry: '', notes: raw + ' (adaptor kit)', _src: raw + ' (adaptor kit)', _openTried: biqLc(raw + ' (adaptor kit)') };
+                order.sundries.splice(order.sundries.indexOf(s) + 1, 0, kit);
+                if (q) { s._ask = q; s.notes = biqNorm(plus[1]); } else set(s, biqCatPart(ctx, mm.ids[0]), '', 'motor');
+                const k = biqPickKit(ctx, 'kit ' + motorW, fam);
+                if (k && k.part) { set(kit, k.part, k.tail, 'kit'); if (k.kitColour) kit._kitAuto = { id: k.part.sundry, wording: 'kit ' + motorW, fam }; }
+                else if (k && k.ask) kit._ask = k.ask;
+            }
+            return;
+        }
+        if (biqIsKitWording(w)) {
+            const k = biqPickKit(ctx, w);
+            if (k && k.part) { set(s, k.part, k.tail, 'kit'); if (k.kitColour) s._kitAuto = { id: k.part.sundry, wording: w }; }
+            else if (k && k.ask) s._ask = k.ask;
+            return;
+        }
+        const generic = biqGenericWording(w);
+        if (!generic || ctx.fams.length !== 1) return;
+        const fam = ctx.fams[0];
+        // RTS motors on mains need no charger: only when the order's RTS motors are known and none is wire-free
+        if (generic === 'charger' && fam === 'rts' && ctx.motorNames.length && !ctx.motorNames.some(n => /wire\s*free|roll\s*up/.test(n))) return;
+        const ids = ((BIQ_FAMILY_PARTS[fam] || {})[generic] || []).filter(id => cat.parts[String(id)]);
+        if (ids.length === 1) set(s, biqCatPart(ctx, ids[0]), 'the usual ' + BIQ_FAMILY_NAMES[fam] + ' ' + generic + ', confirm', 'family');
+        else if (ids.length > 1) s._ask = { q: 'which ' + BIQ_FAMILY_NAMES[fam] + ' ' + generic, options: biqAskParts(ctx, ids) };
+    });
+    todo.forEach(s => { delete s._raw; });
+}
 export function biqCanonicalize(mappings, order) {
     const N = mappings;
     (order ? order.items : []).forEach(it => {
@@ -7091,6 +7472,8 @@ export function biqCanonicalize(mappings, order) {
         const r2 = biqResolve(N, 'control2', it.control2); if (r2.known && r2.id != null && N.controlNames && N.controlNames[r2.id]) it.control2 = N.controlNames[r2.id];
         const rf = biqResolve(N, 'fixes', it.fix); if (rf.known && rf.id != null && N.fixNames && N.fixNames[rf.id]) it.fix = N.fixNames[rf.id];
     });
+    // Sundry lines still without a part: shorthand, extra words and the order's own motors and blinds (above).
+    biqResolveOpenSundries(N, order);
     // Sundries: once the ids resolve, the notes box carries the TRUE BlindIQ catalogue name —
     // never the customer's wording (Russel 2026-08-07). The original wording is preserved in
     // _src (shown under the box in the UI). Annotation tails (" — WHITE assumed…") survive;

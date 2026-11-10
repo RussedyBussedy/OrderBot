@@ -1620,7 +1620,8 @@ export function biqParseMatheoItems(textItems) {
     m = fullText.match(/Name\s*:\s*([A-Za-zÀ-ž'\- ]+?)\s+Tel/i); if (m) meta.customerName = biqNorm(m[1]);
     // Product title. The Designer roller, venetian, Zip X and valance sheets are Mathéo layouts too
     // (12 designer, 9 venetian, 7 valance and 5 Zip X orders since June arrived with no blind type).
-    m = fullText.match(/BD\s+(Designer Roller Blind|Roller Blind|Outdoor Free Hang|Outdoor Zip X|Urban Shutter|Vision|Venetian|Wood|Cellular|Double Roller|Allusion|Valances?)[A-Za-z ]*/i); if (m) meta.product = biqNorm(m[0]);
+    // "BD Roman Blind (Price Check)": 16 sheets from March to November 2026 arrived with no blind type.
+    m = fullText.match(/BD\s+(Designer Roller Blind|Roller Blind|Roman Blind|Outdoor Free Hang|Outdoor Zip X|Urban Shutter|Vision|Venetian|Wood|Cellular|Double Roller|Allusion|Valances?)[A-Za-z ]*/i); if (m) meta.product = biqNorm(m[0]);
     // header row: tolerate split words ("Locatio"+"n") — match on '#' + Location/Price prefixes
     const hl = lines.find(l => { const t = l.parts.map(p => p.s.trim()); return t.includes('#') && t.some(s => /^locatio/i.test(s)) && t.some(s => /^price/i.test(s)); });
     if (!hl) return null;
@@ -1751,9 +1752,10 @@ export function biqNormalizeMatheo(mappings, p) {
     const tp = biqLc(p.meta.product || '');
     const titleType = /zip\s*x/.test(tp) ? 'Outdoor Zip X' : /outdoor/.test(tp) ? 'Outdoor Free Hang' : /urban shutter|shutter/.test(tp) ? 'Urban Hinged Shutter'
         : /allusion/.test(tp) ? 'Allusion Blind' : /vision/.test(tp) ? 'Element Vision' : /venetian/.test(tp) ? 'Wood Venetian' : /wood/.test(tp) ? 'Element Wood'
-            : /cellular/.test(tp) ? 'Cellular Skylight Lantern' : /valance/.test(tp) ? 'Valance'
+            : /cellular/.test(tp) ? 'Cellular Skylight Lantern' : /valance/.test(tp) ? 'Valance' : /roman/.test(tp) ? 'Roman Panel'
             : /double roller/.test(tp) ? 'Double Roller Blinds' : /roller/.test(tp) ? 'Element Roller Sys 40' : '';
     const designer = /designer/.test(tp);
+    const roman = titleType === 'Roman Panel';
     p.rows.forEach(raw => {
         // The "#" cell can also hold a remark printed beside the number ("3 Blind 3 & 4 To have one
         // cassette"): the number is the item code, the words go to the notes.
@@ -1797,6 +1799,14 @@ export function biqNormalizeMatheo(mappings, p) {
             }
         }
         it.range = rng; it.colour = raw['Colour'] || '';
+        // Mathéo's Roman sheet ("BD Roman Blind (Price Check)", 16 sheets Mar–Nov 2026): a row with a fabric is a
+        // Roman Panel on that fabric's range ("Bd Edge Block" + "Pumice", BDO653676); a row whose Material and Colour
+        // say NA is the headrail only, BlindIQ's Roman Headrail range, which takes no colour (14 of the 16 sheets,
+        // every line stored as Roman Headrail). The "Headrail Kit 1000" listed under such a row is that headrail.
+        if (roman) {
+            it.colour = cleanVal(raw['Colour']);
+            if (!cleanVal(raw['Material'])) { it.range = 'Roman Headrail'; it.colour = ''; it._romanHeadrail = true; }
+        }
         // Allusion fabrics are named without their vane width ("Bd Allusion Natural", "Vista"); BlindIQ's ranges
         // are "Natural 107mm", "Vista 107mm"… 107 mm is the standard spacing ("107 mm spacing only, 90 mm on
         // request") and all 20 stored Allusions are on a 107mm range. A line that says 90 mm takes the 90mm range.
@@ -1817,14 +1827,26 @@ export function biqNormalizeMatheo(mappings, p) {
                 it.range = cand; it.colour = col;
             }
         }
-        it.fix = raw['Fix'] || '';
+        it.fix = roman ? cleanVal(raw['Fix']) : (raw['Fix'] || '');         // the Roman sheet prints NA for no fix
+        if (roman) it._askFix = true;                                       // an empty fix is asked for (biqCollectProblems)
         // Narrow cells wrap mid-word ("RH Inte" / "rmediate", "RH Interm" / "ediate"): rejoin the
         // control words before reading them (42 + 34 intermediate lines since June read as pin / chain).
         const ctlText = biqNorm(raw['Controls'] || raw['Control'] || '').replace(BIQ_MATHEO_CTL_WORDS, w => w.replace(/\s+/g, ''));
         const ctl = biqLc(ctlText);
         const rhS = /\brh\b|\bright\b/.test(ctl), lhS = /\blh\b|\bleft\b/.test(ctl);
+        // Roman blinds are a side-value type in BlindIQ: Control 1 is the side (Left / Right) and Control 2 the
+        // mechanism, Chain (the Roman Headrail's only one), or Eye Cordlock / Motor on a fabric range. Roman Headrails
+        // captured by hand are stored that way (Right + Chain on 784 lines since July 2025, Left + Chain on 330);
+        // the roller pair this sheet used to get ("Lh Chain / Rh Pin", BDO672291, BDO675469) isn't on Roman's lists.
+        // No side on the sheet ("NA") leaves Control 1 to the capturer.
+        if (roman) {
+            it._askSide = true;                                                 // an empty side is asked for (biqCollectProblems)
+            it.control1 = rhS && !lhS ? 'Right' : lhS && !rhS ? 'Left' : '';
+            it.control2 = /\bmotor/.test(ctl) ? 'Motor' : /cord\s*lock|\beye\b/.test(ctl) ? 'Eye Cordlock'
+                : (/chain/.test(ctl) || it._romanHeadrail) ? 'Chain' : '';
+        }
         // Allusion Monocommand (Russel 2026-08-31): BlindIQ drive is Wand Lh And Rh. Stack stays on control2.
-        if (titleType === 'Allusion Blind' && /mono\s*command/.test(ctl)) {
+        else if (titleType === 'Allusion Blind' && /mono\s*command/.test(ctl)) {
             it.control1 = 'Wand Lh And Rh';
         }
         // Allusion cord blinds: "RH Cord" -> Cord Right (as stored on every Allusion cord line)
@@ -1922,6 +1944,12 @@ export function biqNormalizeMatheo(mappings, p) {
         }
         { const rt = cleanVal(raw['Roll Type']), sp = biqVariantSpec(mappings, it.blindType, it.range);
           if (rt && (!sp || sp.some(o => /^roll\s*type$/i.test(o.k)))) biqSetVar(it.variants, 'Roll Type', rt); }   // Zip X has none
+        // The Roman sheet's Stack Choice column is the fabric Roman Panel's own option (Minimum / Medium / Maximum).
+        if (roman) {
+            const st = cleanVal(raw['Stack Choice']), so = (biqVariantSpec(mappings, it.blindType, it.range) || []).find(o => /^stack\s*choice$/i.test(o.k));
+            const sv = st && so && (so.values || []).find(x => biqLc(x) === biqLc(st));
+            if (sv) biqSetVar(it.variants, so.k, sv);
+        }
         // A double roller's sheet has no Steel Ball Chain or Chain Tidy: its chain goes to the notes (below).
         if (!/double roller/i.test(it.blindType)) {
             if (/steel/i.test(raw['Chain'] || '')) biqSetVar(it.variants, 'Steel Ball Chain', 'Yes');
@@ -2108,13 +2136,21 @@ export function biqNormalizeMatheo(mappings, p) {
         // 2026 (Sharon, 30 Oct). Wire side guides keep their note, option or not: Roller System
         // 40's option only holds Yes, so the floor / sill fix would be lost, and a sheet without
         // the option leaves them a blank sundry line (BlindIQ has no such part).
+        // A part that is one of the line's own Yes/No options ("Steel Ball Chain" on the Roman sheet, "Chain Tidy")
+        // is that option, and a Roman Headrail row's "Headrail Kit 1000" is the line itself (BlindIQ prices the
+        // headrail from its size): neither becomes a sundry line, which BlindIQ has no part for (BDO675469, 9 Nov
+        // 2026: three such lines stopped the order printing). Mathéo writes an undecided part as "TBD …".
         (raw._accessories || []).forEach(a => {
             const acc = (a && a.name) || String(a || ''); if (!acc) return;
             const qty = (a && a.qty) || '1';
             const spec = biqVariantSpec(mappings, it.blindType, it.range) || [];
             const wsg = spec.find(s => /wire\s*side\s*guide/i.test(s.k));
             const guides = /wire\s*side\s*guide/i.test(acc), note = 'Accessory: ' + acc;
+            const name = biqNorm(acc.replace(/^tb[acd]\s+/i, '')), canon = s => biqLc(s).replace(/[^a-z0-9]/g, '');
+            const own = !guides && spec.find(s => canon(s.k) === canon(name) && !/bracket/i.test(s.k) && (s.values || []).some(x => /^yes$/i.test(x)));
             if (guides && wsg) biqSetVar(it.variants, wsg.k, 'Yes');
+            else if (own) { biqSetVar(it.variants, own.k, own.values.find(x => /^yes$/i.test(x))); (it._partNotes = it._partNotes || []).push(note); }
+            else if (it._romanHeadrail && /^headrail\s*kit\b/i.test(name)) (it._partNotes = it._partNotes || []).push(note);
             else {
                 biqAddMotorSundry(mappings, o, acc, qty, BIQ_MOTORISH_RE.test(acc));
                 if (!guides) (it._partNotes = it._partNotes || []).push(note);
@@ -4491,10 +4527,16 @@ export function biqCollectProblems(mappings, order) {
         }
         if (!biqResolve(mappings, 'fixes', it.fix).known && biqLc(it.fix)) probs.push({ t: w + 'fix "' + it.fix + '" not mapped.', cat: 'fixes', name: it.fix });
         // A TBD purchase order line with no fix at all (Fix column and Cassette Fix both empty) would import as "no
-        // fix" without a word; ask for it when the range takes a fix (Task430905 A, an Outdoor Free Hang).
-        if (order.source === 'bdpo' && !biqLc(it.fix)) {
+        // fix" without a word; ask for it when the range takes a fix (Task430905 A, an Outdoor Free Hang). Mathéo's
+        // Roman sheet prints "NA" for it (13 of its 39 lines; the capturers keyed Reveal on 11, Face on 1): it._askFix.
+        if ((order.source === 'bdpo' || it._askFix) && !biqLc(it.fix)) {
             const rfx = biqRangeFixIds(mappings, it.blindType, it.range);
             if (rfx && rfx.length) probs.push({ t: w + 'fix is empty on the order — key it (' + rfx.map(id => (mappings.fixNames || {})[String(id)] || ('#' + id)).join(' / ') + ').' });
+        }
+        // The same sheet's Controls "NA" leaves a Roman blind's side unknown (3 of the 39 lines).
+        if (it._askSide && !biqLc(it.control1)) {
+            const sides = biqAllowedControlNames(mappings, it.blindType, 'c1', it.range);
+            if (sides && sides.length) probs.push({ t: w + 'control side is empty on the order — key Control 1 (' + sides.join(' / ') + ').' });
         }
         // BlindIQ's own range->fix links (Relate_Range_Fixes): since June 0.48% of imported blinds
         // are stored with a fix their range doesn't offer (two thirds of them curtains), against
@@ -4692,8 +4734,9 @@ export function biqExportOrderNotes(order) {
     return biqNorm(notes) ? notes + ' | ' + left : left;
 }
 // A part the converter moved onto a sundry line is not sent to BlindIQ again as a note on the blind's line
-// (Sharon, 30 Oct 2026: capturers delete those notes). The parser lists the notes it wrote for such parts in
-// it._partNotes (Mathéo's "Accessory: …" rows); the order keeps them. Compared word for word, like _bdpoGen.
+// (Sharon, 30 Oct 2026: capturers delete those notes), nor is one that became the line's own option or the line
+// itself (the Roman sheet's "Steel Ball Chain" and "Headrail Kit 1000"). The parser lists the notes it wrote for
+// such parts in it._partNotes (Mathéo's "Accessory: …" rows); the order keeps them. Compared word for word, like _bdpoGen.
 const biqIsPartNote = (it, f) => (it._partNotes || []).some(g => biqLc(g) === biqLc(f));
 export function biqExportItemNotes(mappings, order, it) {
     if (!order) return it.notes;
@@ -5885,6 +5928,51 @@ function biqVenetianValSize(mappings, it, spec, noteOnce) {
     it._valSizeDecided = true;                                      // other wording stays with the capturer
     return k;
 }
+// Roman Headrail, the Roman Panel's headrail-only range: its sheet asks for Mech Colour and No Drums, both required
+// and with no default, and Mathéo's "BD Roman Blind (Price Check)" sheet prints neither. They are filled the way
+// capturers fill them: White hardware (1,175 of the 1,285 Roman Headrails stored with a colour since July 2025, and
+// every converted Mathéo one) and the drums by width, 2 up to 800 mm and one more per 400 mm up to 2,600 mm (all 35
+// converted Mathéo headrail lines; 81 % of the 1,595 Roman Headrails stored up to 2,000 mm, capturers splitting at
+// the boundaries). Wider headrails are left to the capturer; the generic default must never write "No" there.
+// Mech Colour is decided once per line; a drums count set here follows a later change of the width.
+// Returns the No Drums key on a Roman Headrail (null otherwise), for the generic default to leave alone.
+const BIQ_ROMAN_DRUMS = [[800, 2], [1200, 3], [1600, 4], [2000, 5], [2600, 6]];
+export function biqRomanDrums(width) {
+    const w = parseInt(String(width || '').replace(/\D/g, ''), 10);
+    const hit = w > 0 ? BIQ_ROMAN_DRUMS.find(([max]) => w <= max) : null;
+    return hit ? String(hit[1]) : '';
+}
+const BIQ_DRUMS_KEY = /^no\.?\s*(of\s*)?drums$/i;
+function biqRomanHeadrailDefaults(mappings, it, spec, noteOnce) {
+    // Only the Roman Headrail's own sheet has No Drums. Roman Panel's union template has it too, and a fabric range
+    // with no sheet of its own (Soltis 86, Windsor…) or one not yet known falls back to that template.
+    const dr = spec.find(o => BIQ_DRUMS_KEY.test(biqNorm(o.k)));
+    if (!dr) return null;
+    const bt = biqResolve(mappings, 'blindTypes', it.blindType), rr = biqResolveRange(mappings, it.blindType, it.range);
+    const mid = bt.known && rr.known ? (mappings.variantSheetIndex || {})[bt.id + '|' + rr.id] : null;
+    const own = mid != null ? (mappings.variantTemplateSheets || {})[String(mid)] : null;
+    if (!own || !own.some(o => BIQ_DRUMS_KEY.test(biqNorm(o.k)))) return null;
+    const mo = spec.find(o => /^mech(anism)?\s*colou?r$/i.test(biqNorm(o.k)));
+    if (mo && !it._romanMechDecided) {
+        const row = it.variants.find(v => biqLc(v[0]) === biqLc(mo.k));
+        const white = (mo.values || []).find(x => /^white$/i.test(x));
+        if (white && (!row || !biqNorm(row[1]))) { biqSetVar(it.variants, mo.k, white); noteOnce('Mech Colour not on the order — White (Blind Designs\' standard)'); }
+        it._romanMechDecided = true;
+    }
+    const row = it.variants.find(v => biqLc(v[0]) === biqLc(dr.k));
+    const cur = row ? biqNorm(row[1]) : '';
+    const want = biqRomanDrums(it.width);
+    if (it._drumsAuto && cur === it._drumsAuto) {                  // still ours: follow the width
+        if (want !== cur) { biqSetVar(it.variants, dr.k, want); it._drumsAuto = want; }
+        return dr.k;
+    }
+    if (it._drumsDecided) return dr.k;
+    if (cur) { it._drumsDecided = true; return dr.k; }             // a count on the order stays
+    if (!want) return dr.k;                                         // decided once a width within the rule is known
+    biqSetVar(it.variants, dr.k, want); it._drumsAuto = want; it._drumsDecided = true; it._optDefaulted = true;
+    noteOnce('No Drums not on the order — from the width (2 up to 800 mm, one more per 400 mm): confirm');
+    return dr.k;
+}
 export function biqApplyOptionDefaults(mappings, order) {
     (order ? order.items : []).forEach(it => {
         biqPerfectFitFix(mappings, it);
@@ -5924,6 +6012,7 @@ export function biqApplyOptionDefaults(mappings, order) {
         // writes "Std" is the blind width + 15 mm (biqVenetianValSize). The generic default below must not
         // turn that free-text option into "No".
         const venValKey = biqVenetianValSize(mappings, it, spec, noteOnce);
+        const drumsKey = biqRomanHeadrailDefaults(mappings, it, spec, noteOnce);
         // A vertical blind's Track Colour, when the order gives none, is White: all 13 converted
         // verticals since June that arrived without one were stored White (as are 3 in 4 of 2026's
         // verticals). Noted; decided once per line, so a capturer's own choice stays.
@@ -6170,6 +6259,7 @@ export function biqApplyOptionDefaults(mappings, order) {
             }
             if (f && biqNorm(f[1])) return;            // already set
             if (venValKey && biqLc(o.k) === biqLc(venValKey)) return;   // venetian valance width: biqVenetianValSize decides
+            if (drumsKey && biqLc(o.k) === biqLc(drumsKey)) return;    // a Roman Headrail's drums: a count (biqRomanHeadrailDefaults), never "No"
             const vals = (o.values || []).map(biqLc);
             const isToggle = vals.length > 0 && vals.every(v => v === 'yes' || v === 'no');
             const isColour = /colou?r/i.test(o.k);     // colour is order-specific — never silently default it

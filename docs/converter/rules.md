@@ -126,6 +126,15 @@ BlindIQ has two control fields, and how they are used depends on the product:
 | Retro venetians with Standard slats and no valance colour get "Aluminium: <slat colour>" and type Aluminium, noted "confirm". Printed or perforated slats and Foiled trims are left alone. | `biqApplyOptionDefaults` | Retro product page; all 27 stored lines of orders that didn't state one. |
 | Venetian operation (Split / Grouped): see [Controls and drives](#controls-and-drives). | | |
 
+## Roman blinds
+
+| Rule | Where | Ruling or evidence |
+|---|---|---|
+| A Roman Headrail (Roman Panel range 268, the headrail without fabric) with no Mech Colour gets White, noted "Mech Colour not on the order — White (Blind Designs' standard)". A colour the order gives stays. Decided once per line. | `biqRomanHeadrailDefaults` in `biqApplyOptionDefaults` | Mech Colour White on 1,175 of the 1,285 Roman Headrails stored with a colour since July 2025, and on every converted Mathéo one. |
+| Its No Drums, when the order gives none: 2 up to 800 mm wide, then one more per 400 mm (3 to 1,200, 4 to 1,600, 5 to 2,000, 6 to 2,600), noted "… from the width … confirm". Wider headrails are left to the capturer (red: the option is required). A count from the order or the capturer stays; a count set here follows a later width change (`_drumsAuto`). The generic "required free text → No" default leaves No Drums alone on a Roman Headrail. | `biqRomanDrums`, `biqRomanHeadrailDefaults` | Matches all 35 converted Mathéo headrail lines and 81 % of the 1,595 Roman Headrails stored up to 2,000 mm (capturers split at 800 / 1,200 / 1,600 mm). Above 2,000 mm capturers vary (6 for most up to 2,600). Before, the generic default wrote "No Drums=No". |
+| Only the Roman Headrail's own option sheet counts: a fabric range with no sheet of its own (Soltis 86, Designer Fab D, Soltis 99, Banbury, 10 Screen, Windsor) uses Roman Panel's union template, which also lists No Drums, and is left alone. | `biqRomanHeadrailDefaults` | Catalogue refresh 2026-10-09: only sheet 120 (2\|268) has No Drums. |
+| Mathéo's Roman sheet: see [Dealer formats](dealer-formats.md#mathéo-order-sheet). Controls are Left / Right plus Chain (Roman is a side-value type, [Controls and drives](#controls-and-drives)). | `biqNormalizeMatheo` | — |
+
 ## Double rollers
 
 BlindIQ's double roller (type 28) is one blind with two fabric options, Blockout Fabric and View Fabric. Its three ranges (611, 734, 917) carry no colours; they are the price groups of the blockout fabric. Controls are Lh / Rh Double Chain, Double Motor, Double Chain/Motor, Double Dual and Pin. Before October 2026 none of the 86 converted double rollers came through right.

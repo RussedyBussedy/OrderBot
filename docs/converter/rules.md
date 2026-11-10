@@ -216,6 +216,7 @@ The Somfy motor size for Zip X and the other System X blinds is a comparison che
 | Resolved sundries carry BlindIQ's own name in the notes; the dealer's wording stays in `_src`. Duplicate parts are summed. | `biqAddMotorSundry`, `biqCanonicalize` | — |
 | TBD shorthand: 1TD → One Touch Dual, ZB → Zigbee, M&T → Matter, WF → Wire Free. "Not BD Supply" hardware is a note only, never a line. | `biqTbdExpand`, `biqNormalizeBdPo` | — |
 | A motor itself is told apart from its accessories by name. | `biqIsMotorUnit` (`BIQ_MOTOR_UNIT_RE`, `BIQ_MOTOR_PART_RE`) | Checked against all 158 active sundries of the motor types. |
+| A sundry line with no BlindIQ part stays on the order, flagged, but isn't written to the XML: the order notes BlindIQ gets list it ("Sundries not imported (no BlindIQ part found) — add in BlindIQ: 3 x …"). | `biqSundryHasPart`, `biqExportedSundries`, `biqExportOrderNotes` ([XML export](xml-export.md#sundry-lines-without-a-part)) | 9 Nov 2026: BlindIQ stores the empty links as -1 and an order holding such a line won't print (BDO675469; Gift's BDO673422 and BDO673682 cancelled). 67 such lines on 43 imports since 29 Aug 2026; the capturers deleted 59. |
 
 ## Customers, delivery and packing
 

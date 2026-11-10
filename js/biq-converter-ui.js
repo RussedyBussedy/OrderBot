@@ -482,6 +482,7 @@ function refresh() {
     biqApplyFormatProfile(MAPS, FORMATS, order);   // fill unresolved fields from this customer's learned format
     biqCanonicalize(MAPS, order);
     renderCustomerTag();
+    renderOrderNotesSent();
     renderItems();
     renderProblems();
     renderChecks();
@@ -491,6 +492,13 @@ function refresh() {
 }
 let refTimer = null;
 function scheduleRefresh() { clearTimeout(refTimer); refTimer = setTimeout(refresh, 350); }
+// Under the order notes box: what BlindIQ gets when it differs (sundry lines without a part are listed there;
+// a Finish Logic PO leaves out "Captured by …").
+function renderOrderNotesSent() {
+    const el = $('biq-h-notes-sent'); if (!el) return;
+    const sent = exportOrderNotes(order);
+    el.textContent = biqNorm(sent) === biqNorm(order.notes) ? '' : 'BlindIQ gets: ' + (biqNorm(sent) || 'no note');
+}
 
 function renderCustomerTag() {
     const r = biqResolveCustomer(MAPS, order.customer);
@@ -614,6 +622,9 @@ function renderItems() {
                 : `<div class="text-xs text-slate-500 mt-0.5"><span class="biq-ai biq-ai-sug" title="AI suggestion — mapping is handled by Paul & Russel (✉ Send to mapping).">AI? ${escH(sugName)} (${pct}%)</span></div>`;
         } else if (src && biqLc(src) !== biqLc(baseNote))
             sub = `<div class="text-xs text-slate-400 mt-0.5">customer wrote: &quot;${escH(src)}&quot;</div>`;
+        // A line without a BlindIQ part isn't sent: BlindIQ can't print an order with one (biqExportedSundries).
+        if (!sundryHasPart(s))
+            sub += `<div class="text-xs text-red-700 font-semibold mt-0.5">Not imported: no BlindIQ part. It goes in the order notes for the capturer to add in BlindIQ. Pick the part with 🔍, or delete the line.</div>`;
         sh += `<tr${a && a.mode === 'auto' ? ' class="biq-ai-row"' : ''}><td><input class="biq-in" value="${escH(s.code)}" data-biq-sundry="${i}" data-biq-field="code"></td>`
             + `<td><input class="biq-in" value="${escH(s.qty)}" data-biq-sundry="${i}" data-biq-field="qty"></td>`
             + `<td><input class="biq-in" value="${escH(s.type)}" data-biq-sundry="${i}" data-biq-field="type" placeholder="e.g. 8"></td>`
@@ -694,6 +705,9 @@ function renderChecks() {
 // looked up at run time so a browser still holding the previous biq-converter.js shows the notes as before.
 const exportOrderNotes = o => (BiqConv.biqExportOrderNotes ? BiqConv.biqExportOrderNotes(o) : o.notes);
 const exportItemNotes = (o, it) => (BiqConv.biqExportItemNotes ? BiqConv.biqExportItemNotes(MAPS, o, it) : it.notes);
+// A sundry line the XML carries: one with a BlindIQ part (biqSundryHasPart; the fallback for a browser still holding the
+// previous biq-converter.js is the old rule, a number in the part box).
+const sundryHasPart = s => (BiqConv.biqSundryHasPart ? BiqConv.biqSundryHasPart(s) : /^\d+$/.test(biqNorm(s.sundry)));
 function renderPreview() {
     const custR = biqResolveCustomer(MAPS, order.customer);
     const cust = { known: custR.known };
@@ -732,7 +746,10 @@ function renderPreview() {
     h += '</table>';
     if (order.sundries.length) {
         h += `<div class="bg-slate-100 px-3 py-1 font-bold text-slate-700">Sundries (${order.sundries.length})</div><table class="w-full">`;
-        order.sundries.forEach(s => { h += `<tr class="border-t border-slate-100"><td class="px-2 py-1 font-bold">${escH(s.code)}</td><td class="px-1">${(+s.qty || 0).toFixed(3)}</td><td class="px-1">type ${escH(s.type)}</td><td class="px-1">sundry ${escH(s.sundry)}</td><td class="px-1">${escH(s.notes)}</td></tr>`; });
+        order.sundries.forEach(s => {
+            const sent = sundryHasPart(s);
+            h += `<tr class="border-t border-slate-100${sent ? '' : ' text-red-700'}"><td class="px-2 py-1 font-bold">${escH(s.code)}</td><td class="px-1">${(+s.qty || 0).toFixed(3)}</td><td class="px-1">type ${escH(s.type)}</td><td class="px-1">${sent ? 'sundry ' + escH(s.sundry) : '<b>not imported</b> (no part; in the order notes)'}</td><td class="px-1">${escH(s.notes)}</td></tr>`;
+        });
         h += '</table>';
     }
     h += '</div>';
@@ -1305,7 +1322,7 @@ function injectMarkup() {
           <div class="col-span-2"><label class="font-semibold text-slate-500">End client / job</label><input id="biq-h-client" class="biq-in biq-h w-full"></div>
           <div><label class="font-semibold text-slate-500">BlindIQ Order ID</label><input id="biq-h-orderid" class="biq-in biq-h w-full" value="0" title="BlindIQ assigns the real ID on import"></div>
           <div class="col-span-2 md:col-span-3"><label class="font-semibold text-slate-500">Delivery address</label><textarea id="biq-h-address" rows="2" class="biq-in biq-h w-full"></textarea></div>
-          <div class="col-span-2 md:col-span-4"><label class="font-semibold text-slate-500">Order notes</label><input id="biq-h-notes" class="biq-in biq-h w-full"></div>
+          <div class="col-span-2 md:col-span-4"><label class="font-semibold text-slate-500">Order notes</label><input id="biq-h-notes" class="biq-in biq-h w-full"><div id="biq-h-notes-sent" class="text-slate-500" style="font-size:11px"></div></div>
         </div>
 
         <div class="flex items-center justify-between mt-3 mb-1">

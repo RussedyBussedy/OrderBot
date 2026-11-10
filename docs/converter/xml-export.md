@@ -68,7 +68,7 @@ Sampletown
 </BlindIQExport_CO>
 ```
 
-There is one `CustomerOrders` header, then one `CustomerOrderItems` per blind line and one `CustomerOrderSundries` per sundry line, in the order's own order. Each of the three carries the `xmlns:xsi` declaration. The dealer wrote "PO 12345-A", exported without the space and dash. The line's "Steel Ball Chain = No" isn't in the options because it is the sheet default.
+There is one `CustomerOrders` header, then one `CustomerOrderItems` per blind line and one `CustomerOrderSundries` per sundry line that has a BlindIQ part, in the order's own order ([Sundry lines without a part](#sundry-lines-without-a-part)). Each of the three carries the `xmlns:xsi` declaration. The dealer wrote "PO 12345-A", exported without the space and dash. The line's "Steel Ball Chain = No" isn't in the options because it is the sheet default.
 
 ## Element reference
 
@@ -84,7 +84,7 @@ There is one `CustomerOrders` header, then one `CustomerOrderItems` per blind li
 | `CO_DeliveryMethod_Link` | `biqResolve(mappings, 'deliveryMethods', …)` | empty |
 | `CO_PackingType_Link` | `biqResolve(mappings, 'packingTypes', …)`, only when a packing type is set and known | empty, never a made-up ID |
 | `CO_Delivery_Address` | `order.address`, line endings normalised, escaped, followed by a line break | `<CO_Delivery_Address />` |
-| `CO_Notes` | `biqExportOrderNotes(order)` | empty |
+| `CO_Notes` | `biqExportOrderNotes(order)`: the order's notes (a Finish Logic PO leaves some out, below), then the sundry lines left out for want of a part ([below](#sundry-lines-without-a-part)) | empty |
 | `CO_CustomerOperator_Link` | the customer entry's `operator` | `-1` when the customer is known but has no operator; empty when the customer is unknown |
 
 ### `CustomerOrderItems` (one per line)
@@ -107,15 +107,27 @@ There is one `CustomerOrders` header, then one `CustomerOrderItems` per blind li
 
 A link is written whenever the name resolves, even when the problems list objects to it: a colour the range doesn't offer, a range that belongs to another blind type, or a retired item. Stopping those is the problems list's job.
 
-### `CustomerOrderSundries` (one per sundry)
+### `CustomerOrderSundries` (one per sundry line with a BlindIQ part)
 
 | Element | Filled from |
 |---|---|
 | `COS_ItemCode` | `code`, assigned by `biqAssignSundryCodes` when empty ([Sundry codes](#sundry-codes)) |
 | `COS_Qty` | `qty` to three decimals (`1.000`) |
 | `COS_Supplier_Link` | always `1` |
-| `COS_SundryType_Link`, `COS_Sundry_Link` | `type` and `sundry`, the BlindIQ sundry type and sundry IDs (empty when unresolved) |
+| `COS_SundryType_Link`, `COS_Sundry_Link` | `type` and `sundry`, the BlindIQ sundry type and sundry IDs. A line is written only when `sundry` is a BlindIQ ID (`biqExportedSundries`); an empty type still goes, as an empty element |
 | `COS_Sundry_Notes` | `biqExportSundryNotes(mappings, order, s)`: BlindIQ's name for a resolved sundry, else the dealer's wording |
+
+### Sundry lines without a part
+
+A sundry line whose `sundry` isn't a BlindIQ ID (`biqSundryHasPart` is false: empty, `0`, `-1` or a word) isn't written. `biqExportOrderNotes` adds it to `CO_Notes` instead, after the order's own notes: "Sundries not imported (no BlindIQ part found) — add in BlindIQ: 3 x Headrail Kit 1000; 5 x Steel Ball Chain" (the quantity and the line's notes, else the dealer's wording in `_src`; a line with neither is just left out). The order keeps the line, and `biqCollectProblems` flags it: `Sundry 6: "Headrail Kit 1000" has no BlindIQ part, so it is left out of the import and listed in the order notes (BlindIQ can't print an order with a sundry line that has no part). Pick the part with 🔍, or delete the line.` Once a part is picked, the line goes into the XML and leaves the notes.
+
+Why (9 November 2026):
+
+- BlindIQ's importer accepts a sundry line with empty `COS_SundryType_Link` and `COS_Sundry_Link` and stores both as `-1`. Printing an order that holds such a line then fails: "Unhandled exception … Conversion from type 'DBNull' to type 'String' is not valid".
+- BDO675469 (Mathéo PO112612689, three such lines) wouldn't print until Venne deleted them. Gift cancelled and re-captured two Blinds All Of Them orders over the same kind of line, BDO673422 ("Chain Tidys") and BDO673682 ("Pelmet Joiner"); the copies made of them (BDO673522, BDO673741) carried the line too and were cancelled as well.
+- BDO674677 printed with a sundry type of `-1` once the capturer picked part 3566, so the part is what BlindIQ needs.
+- BlindIQ's own screens never save a sundry line without a part: in 2026 the only ones in the database are converter imports and copies of them.
+- Before 29 August 2026 the download refused a file with any empty link (`biqImportSafetyScan`); from then until this change, 43 imports carried 67 lines without a part. The capturers deleted 59, picked a part on 6, and cancelled the other two orders.
 
 ## Options: what reaches `COI_VariantOptions`
 
@@ -177,7 +189,7 @@ The order itself keeps every note. The editor shows "BlindIQ gets: …" under a 
 A part a dealer lists under a blind (a motor, remote, adaptor kit, charger, hub, touch-up paint…) becomes a sundry line of its own. The parser records the note it wrote for that part in `it._partNotes`, and `biqExportItemNotes` leaves those fragments out of `COI_Order_Notes` for every source (compared word for word, ignoring case). The order keeps the note, so the editor, the One Touch Dual rule (`biqApplyOneTouchDual`) and the comparison's converter reading still see which blind the part is for. The editor shows "BlindIQ gets: …" beside the line.
 
 - Mathéo's accessory rows ("Accessory: <name>") are the only notes recorded this way. On the 14 Mathéo orders imported from 25 August to 28 October 2026 the XML carried 52 of them, and none is on the stored orders. Sharon asked for them to go (30 October 2026).
-- The part itself is always on the order, as its sundry line. Until a BlindIQ part is picked for it, that line is blank and flagged and carries the dealer's wording in `COS_Sundry_Notes`. Once a part is picked (by the converter, the AI's match or the capturer), BlindIQ shows that part's name; the dealer's wording stays under the sundry line in the editor (`_src`), as on Finish Logic orders.
+- The part itself is always on the order, as its sundry line. Until a BlindIQ part is picked for it, that line is flagged, and BlindIQ gets it in the order notes rather than as a line ([Sundry lines without a part](#sundry-lines-without-a-part)). Once a part is picked (by the converter, the AI's match or the capturer), it is a sundry line in the XML and BlindIQ shows that part's name; the dealer's wording stays under the sundry line in the editor (`_src`), as on Finish Logic orders.
 - Wire side guides keep their note. They become the blind's Wire Side Guides option, which on Roller System 40 only holds Yes (the floor or sill fix would be lost), or, on a sheet without that option, a blank sundry line.
 - A note typed into the notes box goes, unless it repeats the converter's accessory note word for word. The converter's note stays out even after the capturer deletes the part's sundry line.
 - `biqMergeDoubleRollerRows` (BD order form, AI path) carries a merged row's `_partNotes` to the blind above, with its notes.
@@ -193,7 +205,7 @@ A part a dealer lists under a blind (a motor, remote, adaptor kit, charger, hub,
 - it needs a number for the packing type;
 - it drops sundry lines without a code.
 
-`biqImportSafetyScan(xml)` lists every `*_Link` or `CustomerOrderID` element that isn't an integer, but nothing in this repository calls it. Unverified: how the importer treats an empty link. The scan's comment implies it fails, while the converter's help text tells capturers to import a file with unknowns and finish them in BlindIQ.
+`biqImportSafetyScan(xml)` lists every `*_Link` or `CustomerOrderID` element that isn't an integer, but nothing in this repository calls it since the download stopped blocking (29 August 2026). How the importer treats an empty link, seen on the converted orders of September–November 2026: it imports the line and stores the link as `-1` for the capturer to finish in BlindIQ. A sundry line stored with part `-1` stops the order printing, so such lines aren't written ([Sundry lines without a part](#sundry-lines-without-a-part)).
 
 **The server automation.** Per the comment on `biqCollectWarnings` and `CLAUDE.md`, it treats every entry of `biqCollectProblems` as blocking and ignores warnings. That is why an advisory must never be added to `biqCollectProblems`.
 
@@ -210,7 +222,7 @@ Unverified from this repository: a code review on 12 October 2026 found that it 
 ## Companion outputs
 
 - **`biqPrettyXML(xml)`** puts each element on its own line, with a blank line before each item and sundry, for display.
-- **`biqOrderPreviewHtml(mappings, order)`** builds a standalone HTML page modelled on BlindIQ's own Online Purchase Order: From and To blocks, an order panel, the blinds table with each line's options, and the sundries. Unresolved names print in red. The editor opens it in a new window and calls `print()`, so the capturer can save it as a PDF. It uses `biqEmittedVariants` and `biqExportItemNotes`, so it shows what the XML holds.
+- **`biqOrderPreviewHtml(mappings, order)`** builds a standalone HTML page modelled on BlindIQ's own Online Purchase Order: From and To blocks, an order panel, the blinds table with each line's options, and the sundries. Unresolved names print in red, and a sundry line without a part says "not imported (no part; in the order notes)". The editor opens it in a new window and calls `print()`, so the capturer can save it as a PDF. It uses `biqEmittedVariants`, `biqExportItemNotes` and `biqExportOrderNotes`, so it shows what the XML holds.
 - **The in-app import preview** (`renderPreview` in the UI module) shows the same, inside the editor.
 
 ## Changing the XML safely
@@ -226,6 +238,7 @@ Unverified from this repository: a code review on 12 October 2026 found that it 
 - `esc` doesn't remove control characters. The 12 October 2026 code review reports that BlindIQ then rejects the file.
 - Sundry codes stop at "z": every sundry after the 26th letter gets "z" again.
 - `biqImportSafetyScan` exists but isn't called.
+- A blind line with an empty link (blind type, range, colour, control) still imports as `-1` for the capturer to finish. That prints once the capturer has picked the values; whether BlindIQ prints with a `-1` left on a blind line hasn't been checked.
 - The file has no XML declaration. It imports today; noted in case the importer changes.
 
 ## Related pages

@@ -112,10 +112,10 @@ The text of a recognised file goes into `lastSourceText`, and `setOrder` stores 
 | Area | What it shows | Code |
 |---|---|---|
 | Source badge | Where the order came from (`sourceDesc`) | `renderHeader` |
-| Header | Customer (the dealer), order number, order and required dates (with a "+14 days" button), delivery method, packing type, end client, BlindIQ order ID (0 means BlindIQ assigns one), address and notes. Tags for the customer, delivery method and packing type. | `renderHeader`, `readHeader`, `renderCustomerTag` |
+| Header | Customer (the dealer), order number, order and required dates (with a "+14 days" button), delivery method, packing type, end client, BlindIQ order ID (0 means BlindIQ assigns one), address and notes. Tags for the customer, delivery method and packing type. Under the order notes, "BlindIQ gets: …" when the exported notes differ (sundry lines without a part are listed there; a Finish Logic PO leaves out "Captured by …"). | `renderHeader`, `readHeader`, `renderCustomerTag`, `renderOrderNotesSent` |
 | Blind items | One row per line: code, qty, location, blind type, range, colour, width, drop, fix, Control L, Control R and control drop. A tag under each catalogue field, and an "opts" button with a red count of options that won't import. | `renderItems`, `prodTag`, `aiChip` |
 | Options panel | The line's option keys and values, with suggested values, "+ option", "Copy options to other lines", "Bracket w/ next", the item notes, and "BlindIQ gets: …" when the exported note differs | `renderItems`, `openCopyOptions`, `exportItemNotes` |
-| Sundries | Code, qty, type ID, sundry ID and notes, with the customer's own wording under the notes and a 🔍 search | `renderItems` |
+| Sundries | Code, qty, type ID, sundry ID and notes, with the customer's own wording under the notes and a 🔍 search. A line without a BlindIQ part gets a red "Not imported: no BlindIQ part …" under it: the XML leaves it out and lists it in the order notes ([XML export](xml-export.md#sundry-lines-without-a-part)) | `renderItems`, `sundryHasPart` |
 | Problems | A red list from `biqCollectProblems`, with "split it now" and "map it now" links, or a green banner saying the XML is ready to import | `renderProblems` |
 | Warnings | An amber "BlindIQ heads-up" list from `biqCollectWarnings`. It never blocks anything. | `renderProblems` |
 | Checks | "✨ AI match names" and "Run torque & spec checks" | `aiDiscern`, `runChecks`, `renderChecks` |
@@ -136,7 +136,7 @@ Every change runs the whole pipeline again. Field edits call `refresh()` straigh
 5. `biqNormalizeControlSides`, `biqInferControls`, `biqApplyControlMatrix`
 6. `biqApplyFormatProfile`, which fills fields that don't resolve from the customer's learned profile in `FORMATS`
 7. `biqCanonicalize`
-8. Render: `renderCustomerTag`, `renderItems`, `renderProblems`, `renderChecks`, `renderPreview`, and the XML (`biqPrettyXML(biqGenerateXML(MAPS, order))`, written with `textContent`)
+8. Render: `renderCustomerTag`, `renderOrderNotesSent`, `renderItems`, `renderProblems`, `renderChecks`, `renderPreview`, and the XML (`biqPrettyXML(biqGenerateXML(MAPS, order))`, written with `textContent`)
 
 `biqRunRulePipeline(o)` is the same list without the header and rendering steps. The comparison uses it (see [What the comparison uses](#what-the-comparison-uses)). The rules themselves are in [rules.md](rules.md).
 

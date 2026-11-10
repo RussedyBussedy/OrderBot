@@ -121,14 +121,14 @@ The order model holds names, never IDs. Names are resolved against the mappings 
 | Option sheet of a line | `biqVariantSpec(mappings, blindType, range)` |
 | Sundries | `biqResolveSundry`, `biqFuzzySundry`, `biqAddMotorSundry` |
 
-A name that doesn't resolve stays as the dealer wrote it, is flagged, and goes into the XML as an empty link: the converter never invents an ID. Once a name resolves, `biqCanonicalize` replaces it with BlindIQ's own spelling. Details, including how BlindIQ's catalogue gets into the mappings, are in [Mappings and catalogue](mappings-and-catalogue.md).
+A name that doesn't resolve stays as the dealer wrote it, is flagged, and goes into the XML as an empty link: the converter never invents an ID. A sundry line is the exception: without a BlindIQ part it isn't written at all, and BlindIQ gets it in the order notes, because BlindIQ can't print an order that holds one ([XML export](xml-export.md#sundry-lines-without-a-part)). Once a name resolves, `biqCanonicalize` replaces it with BlindIQ's own spelling. Details, including how BlindIQ's catalogue gets into the mappings, are in [Mappings and catalogue](mappings-and-catalogue.md).
 
 ## Stage 5: problems and warnings
 
 | | `biqCollectProblems(mappings, order)` | `biqCollectWarnings(mappings, order)` |
 |---|---|---|
 | Shown as | Red list: "things to fix before this order is import-ready" | Amber "BlindIQ heads-ups" |
-| Meaning | The XML would be wrong or incomplete. For example: an unmapped name, a retired type, range or colour, a range that belongs to another blind type, a colour or fix the range doesn't offer, a control the type and range don't allow, a required option missing, an option value that will not import (`biqDroppedVariants`), an unpaired bracket, a valance still waiting for its own line, a missing or invalid width, drop or quantity, a size BlindIQ says can't be made, an empty customer, order number, delivery method or packing type, a sundry without IDs or one that is inactive or a factory component | Worth a look but not wrong. For example: BlindIQ's advisory size limits, a mapping whose ID isn't a BlindIQ record (ignored), a retired colour moved to its Discontinued twin, a converter-chosen intermediate partner, an Upgrade Mechanism request not applied, a narrow, long roller, double roller fabric, roll type and motor decisions |
+| Meaning | The XML would be wrong or incomplete. For example: an unmapped name, a retired type, range or colour, a range that belongs to another blind type, a colour or fix the range doesn't offer, a control the type and range don't allow, a required option missing, an option value that will not import (`biqDroppedVariants`), an unpaired bracket, a valance still waiting for its own line, a missing or invalid width, drop or quantity, a size BlindIQ says can't be made, an empty customer, order number, delivery method or packing type, a sundry line without a BlindIQ part (left out of the XML and listed in the order notes) or one that is inactive or a factory component | Worth a look but not wrong. For example: BlindIQ's advisory size limits, a mapping whose ID isn't a BlindIQ record (ignored), a retired colour moved to its Discontinued twin, a converter-chosen intermediate partner, an Upgrade Mechanism request not applied, a narrow, long roller, double roller fabric, roll type and motor decisions |
 | Each entry | `{ t }` text, plus `cat` / `name` (a "map it now" link) or `split` (a "split it now" link) | `{ t, sev: 'warn' }` |
 | Blocks the download? | No | No |
 | Blocks the server automation? | Yes, per the code comment on `biqCollectWarnings` and `CLAUDE.md` | No |
@@ -137,7 +137,7 @@ The browser never blocks the download: `downloadXML` always writes the file, and
 
 ## Stage 6: the XML
 
-`biqGenerateXML(mappings, order)` writes a `BlindIQExport_CO` document: one `CustomerOrders` header, one `CustomerOrderItems` element per line and one `CustomerOrderSundries` element per sundry. Options go through `biqEmittedVariants`, and TBD purchase orders have their notes filtered. See [XML export](xml-export.md).
+`biqGenerateXML(mappings, order)` writes a `BlindIQExport_CO` document: one `CustomerOrders` header, one `CustomerOrderItems` element per line and one `CustomerOrderSundries` element per sundry line with a BlindIQ part (the rest are listed in `CO_Notes`). Options go through `biqEmittedVariants`, and TBD purchase orders have their notes filtered. See [XML export](xml-export.md).
 
 ## Optional: torque and spec checks
 

@@ -123,6 +123,7 @@ Mathéo's sheet changes with the product ordered (roller, designer roller, doubl
 - **Shutter sheet:** the Tilt Bar cell carries both the bar position and the tilt grouping. "Style" is BlindIQ's Rebate. Mid rail positions ("997 & 1997") set Middle Rail and its positions. The hinge configuration gives Control 1.
 - **Accessory rows** become the sheet's Wire Side Guides option where it has one, otherwise sundry lines (motor parts resolve in the motor sundry types). Prices are ignored; BlindIQ prices for itself.
   - Each row also leaves "Accessory: <name>" in the line's notes, for the editor, the One Touch Dual rule and the comparison. BlindIQ doesn't get that note when the part is a sundry line (`_partNotes`, see [XML export](xml-export.md#notes-for-parts-on-sundry-lines-every-source)); the wire side guides note always goes.
+  - A sundry line whose part doesn't resolve stays on the order, flagged, and BlindIQ gets it in the order notes rather than as a line ([XML export](xml-export.md#sundry-lines-without-a-part)).
   - Rows on the valance sheet return before the accessory rows are read, so a valance row's accessories are neither a sundry line nor a note (as before October 2026).
 - **Valance sheet** (`biqMatheoValance`): each row is a BlindIQ Valance line, and "Type of Blind" is filled as Roller Blind and noted, because the sheet doesn't print it.
 

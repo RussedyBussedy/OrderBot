@@ -10,7 +10,7 @@ For the stages around this (detection, the shared rule pipeline, the XML) see th
 |---|---|---|---|---|---|
 | Blind Guys order workbook | `.xlsx` / `.xls` | A header row with "Item #" and "Location" in the first 15 rows of the first sheet | `biqParseBlindGuysRows` → `biqNormalizeBlindGuys` | `blindguys` | One sheet per product: roller, double roller, wood venetian, aluminium venetian, vertical, shutter (outdoor, Romashade and cellular sheets go through the roller reader) |
 | Blind Guys workbook printed to PDF | `.pdf` | Text with "ORDERNo/Ref:", "Item #" and "Finished Width/Height"; must pass `biqTbdCoherent` | `biqBgPrintToRows` → the workbook reader above | `blindguys` | Rebuilds the spreadsheet grid from the text, so the print converts like the workbook |
-| Mathéo order sheet | `.pdf` | "Mathéo" or "matheoblinds" in the text, plus a header line with "#", "Location" and "Price" | `biqParseMatheoItems` → `biqNormalizeMatheo` | `matheo` | One layout per product; the "BD …" title and each row's price group decide the blind type |
+| Mathéo order sheet | `.pdf` | "Mathéo" or "matheoblinds" in the text, plus a header line with "#", "Location" and "Price" | `biqParseMatheoItems` → `biqNormalizeMatheo` | `matheo` | One layout per product; the "BD …" title and each row's price group decide the blind type (the Roman sheet's NA material makes a Roman Headrail) |
 | Finish Logic purchase order ("Online Purchase Order": TBD, Galaxy Blinds, any dealer) | `.pdf` | The "Online Purchase Order:" banner and the Item … Price header, without BlindIQ Online's "IQ Link ID" label | `biqParseBdPo` → `biqNormalizeBdPo` | `bdpo` | Printed in BlindIQ's own names with "K=V\|" options and ZIQ sundry codes; checked against the PO's Blind Total; notes filtered at export |
 | BlindIQ Online export | `.pdf` (`BlindIQ_ExportedCO_<IQ Link ID>.pdf`) | "Online Purchase Order:" and "IQ Link ID" | `biqParseBiqOnline` → `biqNormalizeBiqOnline` | `biqonline` | Marked `exact`; the comparison takes it as printed |
 | Lifestyle Blinds | `.pdf` | "lifestyleblinds", or "PURCHASE ORDER" with "AUTONEER" | `biqParseLifestyle` → `biqNormalizeLifestyle` | `lifestyle` | Product, range and colour are encoded in one Description |
@@ -84,11 +84,11 @@ The rows then go through `biqParseBlindGuysRows` and `biqNormalizeBlindGuys` exa
 
 ## Mathéo order sheet
 
-Mathéo's sheet changes with the product ordered (roller, designer roller, double roller, venetian, Vision, Allusion, cellular, valance, Zip X, Free Hang, Urban shutter).
+Mathéo's sheet changes with the product ordered (roller, designer roller, double roller, venetian, Vision, Allusion, cellular, valance, Roman, Zip X, Free Hang, Urban shutter).
 
 **Parser** (`biqParseMatheoItems`):
 
-- Header metadata: "PO#", "Quote #", "Job #", "Date", the Mathéo company line, the end client ("Name: … Tel"), and the product title ("BD Roller Blind", "BD Designer Roller Blind", "BD Valances Linear"…).
+- Header metadata: "PO#", "Quote #", "Job #", "Date", the Mathéo company line, the end client ("Name: … Tel"), and the product title ("BD Roller Blind", "BD Designer Roller Blind", "BD Valances Linear", "BD Roman Blind (Price Check)"…).
 - Columns are found from the header line. Split words ("Locatio" + "n") are tolerated, and words closer than a real column gap form one title. Dense layouts (the 25-column Urban shutter sheet, whose headers wrap over six lines) are anchored on a canonical column list, `BIQ_MATHEO_LAYOUTS`.
 - Cells may start up to about 17 px left of their header.
 - Page furniture that repeats on every page (the order header, the dealer's address) is dropped wherever it reappears.
@@ -121,8 +121,13 @@ Mathéo's sheet changes with the product ordered (roller, designer roller, doubl
   - "Handle" is Hold Downs when its text is one of those values.
   - The sheet's Control option mirrors the Controls column, and a motorised blind gets Crank Handle None.
 - **Shutter sheet:** the Tilt Bar cell carries both the bar position and the tilt grouping. "Style" is BlindIQ's Rebate. Mid rail positions ("997 & 1997") set Middle Rail and its positions. The hinge configuration gives Control 1.
-- **Accessory rows** become the sheet's Wire Side Guides option where it has one, otherwise sundry lines (motor parts resolve in the motor sundry types). Prices are ignored; BlindIQ prices for itself.
-  - Each row also leaves "Accessory: <name>" in the line's notes, for the editor, the One Touch Dual rule and the comparison. BlindIQ doesn't get that note when the part is a sundry line (`_partNotes`, see [XML export](xml-export.md#notes-for-parts-on-sundry-lines-every-source)); the wire side guides note always goes.
+- **Roman sheet** ("BD Roman Blind (Price Check)", 16 sheets from March to November 2026, which arrived with no blind type before November 2026): the blind type is Roman Panel.
+  - A row whose Material and Colour say NA is the headrail only: range Roman Headrail, no colour (14 of the 16 sheets; BlindIQ holds every such line as Roman Headrail). A row with a fabric is a Roman Panel on that fabric's range, with the usual prefix stripping ("Bd Edge Block" + "Pumice", BDO653676).
+  - Controls are Roman's own: Control 1 the side (Left / Right) and Control 2 the mechanism, Chain (the headrail's only one), or Eye Cordlock / Motor on a fabric range. Before November 2026 the sheet got the roller pair Lh Chain / Rh Pin, which isn't on Roman's lists.
+  - "NA" in Fix or Controls is no value, and the empty fix or side is a problem for the capturer to key (`_askFix`, `_askSide`). The Stack Choice column is the fabric range's option.
+  - The "Chain" column's "Steel Yes" is Steel Ball Chain=Yes, as on the roller sheet. Mech Colour and No Drums aren't on the sheet; [the Roman rules](rules.md#roman-blinds) fill them.
+- **Accessory rows** become the sheet's Wire Side Guides option where it has one, and an option of the line's own sheet when the part has the option's name and the option takes Yes ("Steel Ball Chain", "Chain Tidy"; bracket options excluded). A Roman Headrail row's "Headrail Kit 1000" is the line itself. Mathéo's "TBD " prefix ("TBD Steel Ball Chain") is ignored for both. Everything else becomes a sundry line (motor parts resolve in the motor sundry types). Prices are ignored; BlindIQ prices for itself.
+  - Each row also leaves "Accessory: <name>" in the line's notes, for the editor, the One Touch Dual rule and the comparison. BlindIQ doesn't get that note when the part is a sundry line, an option or the line itself (`_partNotes`, see [XML export](xml-export.md#notes-for-parts-on-sundry-lines-every-source)); the wire side guides note always goes.
   - A sundry line whose part doesn't resolve stays on the order, flagged, and BlindIQ gets it in the order notes rather than as a line ([XML export](xml-export.md#sundry-lines-without-a-part)).
   - Rows on the valance sheet return before the accessory rows are read, so a valance row's accessories are neither a sundry line nor a note (as before October 2026).
 - **Valance sheet** (`biqMatheoValance`): each row is a BlindIQ Valance line, and "Type of Blind" is filled as Roller Blind and noted, because the sheet doesn't print it.

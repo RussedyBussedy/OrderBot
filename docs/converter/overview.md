@@ -121,7 +121,7 @@ The order model holds names, never IDs. Names are resolved against the mappings 
 | Option sheet of a line | `biqVariantSpec(mappings, blindType, range)` |
 | Sundries | `biqResolveSundry`, `biqFuzzySundry`, `biqAddMotorSundry` |
 
-A name that doesn't resolve stays as the dealer wrote it, is flagged, and goes into the XML as an empty link: the converter never invents an ID. A sundry line is the exception: without a BlindIQ part it isn't written at all, and BlindIQ gets it in the order notes, because BlindIQ can't print an order that holds one ([XML export](xml-export.md#sundry-lines-without-a-part)). Once a name resolves, `biqCanonicalize` replaces it with BlindIQ's own spelling. Details, including how BlindIQ's catalogue gets into the mappings, are in [Mappings and catalogue](mappings-and-catalogue.md).
+A name that doesn't resolve stays as the dealer wrote it, is flagged, and goes into the XML as an empty link: the converter never invents an ID. A sundry line is the exception: without a BlindIQ part it isn't written at all, and BlindIQ gets it in the order notes, because BlindIQ can't print an order that holds one ([XML export](xml-export.md#sundry-lines-without-a-part)). Before that, the converter reads such a line again with the order's own motors and blinds, and asks the capturer where the order doesn't settle the part ([Rules](rules.md#sundry-lines-the-first-reading-didnt-match)). Once a name resolves, `biqCanonicalize` replaces it with BlindIQ's own spelling. Details, including how BlindIQ's catalogue gets into the mappings, are in [Mappings and catalogue](mappings-and-catalogue.md).
 
 ## Stage 5: problems and warnings
 

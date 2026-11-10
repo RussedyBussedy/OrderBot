@@ -622,9 +622,12 @@ function renderItems() {
                 : `<div class="text-xs text-slate-500 mt-0.5"><span class="biq-ai biq-ai-sug" title="AI suggestion — mapping is handled by Paul & Russel (✉ Send to mapping).">AI? ${escH(sugName)} (${pct}%)</span></div>`;
         } else if (src && biqLc(src) !== biqLc(baseNote))
             sub = `<div class="text-xs text-slate-400 mt-0.5">customer wrote: &quot;${escH(src)}&quot;</div>`;
-        // A line without a BlindIQ part isn't sent: BlindIQ can't print an order with one (biqExportedSundries).
+        // A line without a BlindIQ part isn't sent: BlindIQ can't print an order with one (biqExportedSundries). When the
+        // order didn't settle which part (battery or 220V, which remote, which kit colour), the line says so (s._ask).
         if (!sundryHasPart(s))
-            sub += `<div class="text-xs text-red-700 font-semibold mt-0.5">Not imported: no BlindIQ part. It goes in the order notes for the capturer to add in BlindIQ. Pick the part with 🔍, or delete the line.</div>`;
+            sub += s._ask && (s._ask.options || []).length && BiqConv.biqSundryAskOptions
+                ? `<div class="text-xs text-red-700 font-semibold mt-0.5">Not imported until you pick: ${escH(s._ask.q)} — ${escH(BiqConv.biqSundryAskOptions(s._ask))}? Use 🔍.</div>`
+                : `<div class="text-xs text-red-700 font-semibold mt-0.5">Not imported: no BlindIQ part. It goes in the order notes for the capturer to add in BlindIQ. Pick the part with 🔍, or delete the line.</div>`;
         sh += `<tr${a && a.mode === 'auto' ? ' class="biq-ai-row"' : ''}><td><input class="biq-in" value="${escH(s.code)}" data-biq-sundry="${i}" data-biq-field="code"></td>`
             + `<td><input class="biq-in" value="${escH(s.qty)}" data-biq-sundry="${i}" data-biq-field="qty"></td>`
             + `<td><input class="biq-in" value="${escH(s.type)}" data-biq-sundry="${i}" data-biq-field="type" placeholder="e.g. 8"></td>`

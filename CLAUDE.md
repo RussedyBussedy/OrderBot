@@ -562,6 +562,41 @@ The sheet behind BDO675469: Mathéo's "BD Roman Blind (Price Check)". Its 16 she
 - **Tests:** `new-tests/biq-matheo-roman.test.mjs` (36 checks, 2 of them reading the real sheets from `TASKFILES_DIR`).
 - **Not done:** a drop written only in a remark ("Blind Drop is 2000mm", Q062625166) stays a red "drop missing"; three sheets left the Height empty. Mathéo's price group on a fabric Roman ("Element - Cat C") still goes to the line notes, as on its other sheets.
 
+## Converter: sundry lines matched to BlindIQ's parts (Nov 2026)
+
+Russel (9 Nov 2026), on the lines without a part: "can we not line them up and make it understand what the customer attempted to order?"; then "the one touch dual needs a question of whether battery or 220v. otherwise build it". The 67 such lines on the 43 imports since 29 Aug were lined up with what the capturers stored (SVR01): they gave 51 a part. The converter had missed them on dealer shorthand, extra words, adaptor kits and bare remotes and chargers. Docs: `docs/converter/rules.md`, "Sundry lines the first reading didn't match".
+- **`biqResolveOpenSundries`** (end of `biqCanonicalize`, every source and the AI path): each line still without a part is read again once per wording (`_openTried`), with the blinds' hardware and controls final. A line with a part is never touched. `biqMotorCatalogue` reads the active parts of the seven motor types once per pass (about 25 ms for an order with such lines; reading the whole catalogue per lookup took 10 s).
+  - **Wording** (`biqSundryWording`, `biqMatchWording`): WF / ZB / OT (`biqTbdExpand` on every source), Mathéo's leading "TBD ", brackets, "/20rpm", an area ("- 25m2"), "Sys 40 & Sys 55", a lead-in. Then without "Somfy", "Motor(s)" or "Remote control", then without "Li-ion". BlindIQ's "Tellis" is Telis.
+  - **Matching** (`biqMatchMotorPart`): a figure is a figure of its own ("2nm" isn't in "1.2nm"; "3" is in "3nm/30", not in "40/30/28"). "One Touch Motor 2.0" is 2.0nm, not "… 220V". "One Touch +" isn't One Touch Dual.
+  - **Ties:** variants the wording doesn't name drop out (Matter, Thread, Short, No Battery, Variation); the order's one family decides; the plainest name wins. Parts BlindIQ names alike in several families (Tahoma Switch Pro, the outdoor kits) are all candidates, and a question's options then say their family (`biqAskParts`).
+  - **Battery or 220V** (`biqPowerQuestion`): a motor whose wording says neither, where BlindIQ sells both (One Touch Dual 2nm: 5309 / 5312), asks.
+  - **Roller adaptor kits** (`biqPickKit`, `BIQ_KIT_NAMES`): BlindIQ's own kit name is that kit, unless the order's motors are of another family (Blind Guys writes "Motor Adaptor Kit", BlindIQ's word for its Zigbee kits, for RTS ones too).
+    - Family: the one the wording names, else the order's motors' (two families: asked), else one a motor line without a part names, else Somfy RTS (Mathéo's kits without "ZB" were RTS).
+    - System 40 or 55 from the wording, else the motorised blinds.
+    - Colour: from the wording, else the motorised blinds' hardware. 2026 orders whose Roller System 40 blinds have one hardware colour took that colour's kit on 796 of 844. A double roller's hardware is its cassette (23 of 28). Grey and Silver are Light Grey, Charcoal is Anthracite, "TBC" is no colour. Two colours: asked. No such kit: White, noted "confirm".
+    - RTS System 55: the Sonesse 40 or Sonesse 30 Wire Free kit, by the wording or the motors, else asked. One Touch + kits go by torque.
+    - A kit chosen by colour follows a later hardware change while it is still the converter's (`_kitAuto`).
+  - **Outdoor kits** (`biqPickOutdoorKit`): "Outdoor Motor Adaptor Kit Free Hang" or "… System X", by the motorised outdoor blinds. Family: the order's motors' (2026: RTS 62 of 63, io 81 of 83, ShawSmart 35 of 35), else a motor line's wording, else RTS noted "confirm" (51 of 56 orders without a motor). Kits for Roman, venetian, cellular, RomaShade or mixed orders are left (`biqKitProduct`).
+  - **"<motor> + adaptor kit"** (`BIQ_PLUS_KIT_RE`) becomes two lines. A bare **"Remote" / "Charger"** is the family's usual part (`BIQ_FAMILY_PARTS`, 80 %+ of its 2026 orders), noted "the usual … confirm", else asked. There is none with no family on the order, and no charger when the RTS motors are all on mains.
+  - **Questions** (`s._ask`): the line stays out of the XML ("sundry lines without a part" above). `biqCollectProblems` says `Sundry N: "<wording>": battery or 220V — A or B? Pick it with 🔍. Until then it is left out of the import and listed in the order notes.` The editor's red line says "Not imported until you pick: …" (`biqSundryAskOptions`, read through `BiqConv`).
+- **The 67 lines:**
+  - 32 the stored part; 3 a question offering it; 2 "motor + kit" lines (the kit right, the motor asked).
+  - 2 kits in another colour: BDO670854 (read White, the capturer made the blinds Beige) and BDO675122 (a White kit on Black blinds).
+  - 12 left: a remote or charger with no family on the order, plugs, bracket covers, valance end caps and brackets, chain by the metre, an inactive power supply.
+  - The other 16: 3 already done, 6 on cancelled orders, 2 line options, 5 Roman headrail lines (previous section).
+  - Every orderable motor part typed as BlindIQ names it gives itself (149), a question offering it (5) or its namesake in another family (4), never a part of another name.
+- **Replay** of the 1,497 customer files (test package mappings) against the two sections above: 52 files change, only on lines that had no part. 85 lines now go to BlindIQ with a part and 2 ask; items, warnings and other problems are identical. Lines left out for want of a part: 93 in 54 files → 8 in 6.
+- **Against SVR01** (the 85 lines):
+  - 69 the part stored on the task's orders; 2 on tasks with no stored order.
+  - 8 follow the order where the capturer went another way: 5 kits in the blinds' hardware colour where White was stored, an io kit on an io order where the RTS one was, and 2 kits in the colour read where the capturer changed the blinds afterwards (BDO663682 Grey → Anthracite, BDO670854 White → Beige; the kit follows such a change in the editor).
+  - 3 parts the capturer left off: the Telis 16 remote on two Finish Logic POs, where it is a line option and not under SUNDRIES, and a motor on PO092612112.
+  - 1 quote whose order changed (Q062625184); 1 "Matter & Thread" motor the capturer stored as the plain one (BDO667677); 1 orderable One Touch Dual Smart Hub where the capturer took its type-13 twin.
+- **Not done:**
+  - The first reading (`biqAddMotorSundry`) is final for a line it matched. Its White default makes a bare "Adaptor kit" the White RTS roller kit on any order, outdoor ones too.
+  - On L17084 (BDO664579) the first reading took Zigbee's "Sonesse 30/28 Magnetic Adpater Motor USB-C" on an RTS order, so "Sonesse 30/28 Mag Charger" asks.
+  - Finish Logic remotes given as line options become sundry lines (Sharon left both off BDO666742).
+- **Tests:** `new-tests/biq-sundry-matching.test.mjs` (60 checks, 1 more with `TASKFILES_DIR`: 22 lines of 9 live imports). Updated: `biq-part-notes` ("OT Smart Hub" now resolves; a chain stopper is the part without one), `biq-sundry-no-part` (the same), `ui-part-notes` (+1).
+
 ## Improvement Phases (Planned)
 
 See the planning document. Phases in priority order:

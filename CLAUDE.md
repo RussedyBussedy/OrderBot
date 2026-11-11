@@ -500,6 +500,16 @@ Russel (16 Oct 2026) asked how OrderBot could handle the forms from Dean Hart's 
 - Not done: what to ask Dean for and the BlindIQ IDs question (project doc sections 2 and 3); Russel's product question whether the 65 mm Linear valance is a Blind Designs product (BlindIQ has one Linear Valance, so the size is lost).
 - Found in the review, not changed (every source): when `biqApplyCoupledPair` rewrites a pair whose sides aren't both stated, it reads the drive after overwriting the side it was on ("Lh Pin / Rh Chain" + "Lh Coupled / Rh Pin" loses the chain), and `biqDriveSide` doesn't count Dual as a drive. No real line hits it; the Finish Logic pairing never rewrites controls.
 
+## Converter: a blind with no chain or motor is a red problem (Nov 2026)
+
+From the 10 Nov 2026 review. BDO675515 (an e-mail read by the AI, imported by Venne on 9 Nov) was jobbed with KA / KB and NA / NB as "Lh Pin / Rh Intermediate" + "Lh Intermediate / Rh Pin": four blinds with no chain or motor, and nothing in the red list. The coupled-pair fault noted above does hit real orders (BDO675468's motor was put back by hand).
+- **`biqLineHasNoDrive(mappings, items, i)`**, used by `biqCollectProblems`: a roller-type line (`biqRequiresDualControl`) whose two sides are set and are a pin, an intermediate or a coupled bracket on both. The problem reads "has no chain or motor (Lh Pin / Rh Intermediate): set the control on one side."
+- **Coupled blinds** are driven by their partner, so the line passes when a blind of its coupled run has a drive (lines without controls in between, such as a valance, are skipped), when the partner a purchase order names does (`_joinWith`), or when the order has a driven coupled blind to spare (partners aren't always adjacent: BDO672429 has ten pairs interleaved). Otherwise: "…and neither has a blind it is coupled to: put the control on one of the pair."
+- **Evidence.** Stored Roller System 40/55 and Vision lines, Aug – 10 Nov 2026: 9 lines on 6 orders have no drive, all XML imports, none of the 8,135 hand-captured lines. On the 521 import files of 14 Oct – 10 Nov it fires on 10 of 2,588 lines: BDO673966's six quantity-2 lines sent as "Lh Intermediate / Rh Intermediate" (Venne split each by hand) and BDO675515's two pairs.
+- Nothing is blocked: the XML still downloads.
+- **Not done:** the pairing itself (`biqApplyCoupledPair` reads the drive after overwriting it, `biqDriveSide` doesn't count Dual, and an intermediate pair with no stated side gets "Lh Intermediate" on both blinds).
+- **Tests:** `new-tests/biq-no-drive.test.mjs` (27 checks), in the review package "Review fixes 2026-11". Suite 1,723 passed, the same 34 failures as main (1,696).
+
 ## Converter: 70mm cassettes and fabric inserts (Oct 2026)
 
 Russel (28 Oct 2026): is the converter picking up 70mm cassettes and their fabric inserts from the customer orders? Project doc `orderbot-converter-cassettes-2026-10`. Of 740 Roller System 40 cassette blinds converted from 10 Jun to 28 Oct 2026, the layouts read exactly now give 496 of 540 right (92%); the AI path kept the cassette on 26 of 190. It lost them three ways: the AI wasn't told BlindIQ's option names, the converter dropped "Cassette=Black" / "Cassette=70mm" / "Fabric Insert=Yes (same fabric)" without a word, and it left a cassette in the notes ("Incl. White Cassette", "With Black Cassette").

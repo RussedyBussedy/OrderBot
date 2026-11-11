@@ -4554,6 +4554,11 @@ export function biqCollectProblems(mappings, order) {
         if (!biqResolve(mappings, 'control2', it.control2).known && biqLc(it.control2)) probs.push({ t: w + 'control "' + it.control2 + '" not mapped.', cat: 'control2', name: it.control2 });
         if (biqRequiresDualControl(mappings, it.blindType) && (!biqLc(it.control1) || !biqLc(it.control2)))
             probs.push({ t: w + 'both control sides (Control L and Control R) must be set for ' + (it.blindType || 'this blind') + '.' });
+        // Both sides set, but neither is a chain or a motor: BDO675515 KA, KB, NA and NB were imported and jobbed as
+        // "Lh Pin / Rh Intermediate" + "Lh Intermediate / Rh Pin" on 9 Nov 2026 (biqLineHasNoDrive).
+        { const nd = biqLineHasNoDrive(mappings, order.items, i);
+          if (nd) probs.push({ t: w + 'has no chain or motor (' + biqNorm(it.control1) + ' / ' + biqNorm(it.control2) + ')'
+              + (nd === 'coupled' ? ', and neither has a blind it is coupled to: put the control on one of the pair.' : ': set the control on one side.') }); }
         // per-type+range control availability (BlindIQ's own Range_Controls matrix, where known)
         [['c1', 'control1'], ['c2', 'control2']].forEach(([side, field]) => {
             if (biqControlAllowed(mappings, it.blindType, side, it[field], it.range) === false) {
@@ -6750,6 +6755,32 @@ function biqDriveSide(it) {
     if (l && !r) return 'L';
     if (l && r) return 'B';
     return null;
+}
+// A roller-type line whose two sides are set but carry no drive: a pin, an intermediate or a coupled bracket on both.
+// Returns 'idle' for such a line with no coupled side (on an intermediate bracket each blind keeps its own drive),
+// 'coupled' for a coupled blind whose pair has no drive either, and '' otherwise. A coupled blind is driven by its
+// partner, so it passes when a blind of its coupled run carries a drive (lines without controls in between, such as
+// a valance, are skipped), when the partner a purchase order names does (_joinWith), or when the order has a driven
+// coupled blind to spare for it (partners are not always next to each other: BDO672429 has ten pairs interleaved).
+// Stored Roller System 40/55 and Vision lines, Aug - 10 Nov 2026: 9 lines on 6 orders have no drive, all of them XML
+// imports (BDO675515 KA, KB, NA, NB; BDO668098 E; BDO670421 V; three BlindIQ Online lines) and none of the 8,135
+// hand-captured lines.
+export function biqLineHasNoDrive(mappings, items, i) {
+    const both = x => biqNorm(x.control1) + ' ' + biqNorm(x.control2);
+    const drive = x => /chain|motor|dual|crank|spring|cord|wand/i.test(both(x));
+    const idle = s => /\b(pin|intermediate|coupled)\b/i.test(biqNorm(s));
+    const coupled = x => /\bcoupled\b/i.test(both(x));
+    const it = (items || [])[i];
+    if (!it || !idle(it.control1) || !idle(it.control2) || drive(it) || !biqRequiresDualControl(mappings, it.blindType)) return '';
+    if (!coupled(it)) return 'idle';
+    const blank = x => !biqNorm(x.control1) && !biqNorm(x.control2);
+    for (let j = i - 1; j >= 0 && (coupled(items[j]) || blank(items[j])); j--) if (drive(items[j])) return '';
+    for (let j = i + 1; j < items.length && (coupled(items[j]) || blank(items[j])); j++) if (drive(items[j])) return '';
+    const code = x => biqLc(biqNorm(x.code)), jw = x => biqLc(biqNorm(x._joinWith));
+    if (items.some(x => x !== it && coupled(x) && drive(x) && ((jw(it) && code(x) === jw(it)) || (code(it) && jw(x) === code(it))))) return '';
+    const driven = items.filter(x => coupled(x) && drive(x)).length;
+    const idleCoupled = items.filter(x => coupled(x) && !drive(x) && idle(x.control1) && idle(x.control2)).length;
+    return driven >= idleCoupled ? '' : 'coupled';
 }
 // Re-label a control onto a given side, preserving the drive type (Chain, Motor, …).
 function biqReSide(ctrlText, side) {

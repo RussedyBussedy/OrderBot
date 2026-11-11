@@ -10,8 +10,8 @@ Effort: **S** is under half a day, **M** is one to three days, **L** is longer.
 
 | Issue | Effect | Effort |
 |---|---|---|
-| Stale names in the validation lists in `js/constants.js` (for example "element vison", "element double roller") | Some blind types miss checks or get them wrongly, which raises false CRITICAL alerts | S |
-| Colourless products (Double Roller, bamboo, curtain tracks) get colour checks | False colour errors | S |
+| Stale names in the two control lists in `js/constants.js` ("element vison", "element roller", "outdoor widescreen"), and Double Roller Blind is missing from the both-controls list. The colour list was corrected in Nov 2026 | Dead entries; double rollers skip the both-controls check | S |
+| The colour check's colourless products are a hand-kept list (types in `js/constants.js`, four range names in `runPostAIValidations`) | A range BlindIQ makes colourless later raises false colour errors until it is added; reading the converter's catalogue (`rangeColours`) would follow each refresh | S |
 | Saving a guideline clears part of the guideline cache inconsistently | Comparisons can fail for up to five minutes afterwards (`CACHE_TTL_MS`) | S |
 | Corrections are identified by field and item letter only | A capturer's later correction on another order can overwrite an earlier one | S |
 | "Upload CSV to replace all" on the fabric, motor and tube tables deletes every row and then writes the new rows in a separate step | An interrupted upload leaves the table empty, and the torque and fabric checks then have nothing to work with | S |

@@ -57,7 +57,12 @@ A `canTurn` other than Yes or Out counts as No. The result is `fabricValidation 
 
 ### Colour
 
-An error (`colourValidation`) when Blind IQ's colour is empty, "N/A" or "-", unless the blind type is in `BLIND_TYPE_EXCLUSIONS_FOR_COLOUR_CHECK`.
+An error (`colourValidation`) when Blind IQ's colour is empty, "N/A" or "-", unless the product takes no colour in BlindIQ:
+
+- the blind type is in `BLIND_TYPE_EXCLUSIONS_FOR_COLOUR_CHECK` (every live range of the type has no colours: double rollers, curtain tracks, bamboo blinds);
+- or the range starts with "Roman Headrail", "Roller Kit", "Vertical Headrail" or "Sliding Headrail", which are colourless ranges inside types that do take colours (the test is in `runPostAIValidations`).
+
+Both lists were checked against BlindIQ's `Relate_Range_Colours` on 11 Nov 2026. Before that, 529 of the 570 Colour Alerts saved from 11 Oct to 10 Nov 2026 were on these products (Curtain Ripple 199, Double Roller Blind 181, Roman Headrail 65, Bamboo Roll-Up 54, Curtain Glide 24, Bamboo Roman 6); replayed with the corrected check, 41 alerts remain on 15 comparisons, all on products that take a colour. A range BlindIQ makes colourless later needs adding by hand until the check reads the converter's catalogue (`rangeColours`).
 
 ### Controls
 
@@ -139,7 +144,7 @@ Runs only when Pass 1 found an instruction that **all** blinds get valances (`va
 
 | Constant | Value (October 2026) | Used by |
 |---|---|---|
-| `BLIND_TYPE_EXCLUSIONS_FOR_COLOUR_CHECK` | `element double roller`, `curtain glide curtain ripple`, `curtain somfy`, `curtain motion` | The colour check: these types don't need an item colour (a double roller's fabrics are options) |
+| `BLIND_TYPE_EXCLUSIONS_FOR_COLOUR_CHECK` | `double roller blind`, `element double roller` (the old name), `curtain glide`, `curtain ripple`, `curtain somfy`, `curtain motion`, `bamboo roll-up`, `bamboo roman` | The colour check: these types don't take an item colour (a double roller's fabrics are options) |
 | `BLIND_TYPES_REQUIRING_CONTROL_VALIDATION` | `element roller`, `roller system 40`, `roller system 55`, `element vison`, `vision blind`, `romashade`, `outdoor channel x`, `outdoor free hang`, `outdoor zip x`, `outdoor wire x`, `outdoor widescreen` | Control rule 3: a drive is required (chain, motor or dual; crank, motor or spring on the outdoor types) |
 | `BLIND_TYPES_REQUIRING_DUAL_CONTROL` | `element roller sys 40`, `roller system 40`, `roller system 55`, `element double roller`, `outdoor free hang`, `element vision`, `vision blind` | Control rule 1: both controls required |
 | `CRITICAL_FIELDS` | `blindType`, `range`, `colour`, `qty`, `width`, `drop`, `control1`, `control2` | See [Critical fields](#critical-fields-and-how-critical-issues-surface) |

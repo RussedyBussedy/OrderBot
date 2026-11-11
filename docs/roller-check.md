@@ -44,6 +44,7 @@ The torque is worked out on the tube the motor goes in. A System 40-sized blind 
 The **Roller check** pill sits between Orders and Drawings and is visible to everyone. Its module is only loaded the first time the pill is clicked, and a failed import is caught, so it can't stop OrderBot loading. Each blind is a card:
 
 - **Inputs:** fabric (or its kg/m²), width, drop, bottom bar, system (worked out, or fixed at 40 or 55) and chain or motorised.
+- **A typed weight is for a fabric that isn't listed** (or one the list has no usable weight for). A listed fabric's own weight is always used, and a blue line says so when a different weight is in the box (Nov 2026). Before that the typed weight replaced the list's without a word, and Copy carried it to the next blind: 5 Screen at 2450 × 2600 with a left-over 0.2 read 1.96 kg and "Standard 1:1 chain" where the list's 0.569 gives 4.31 kg and the 1.5:1. To work with your own weight for a listed fabric, clear the fabric box.
 - **Chain blinds:** whether the order already has the 1.5:1 control or the Lift Assisting Spring.
 - **Motorised blinds:** brand, power and protocol narrow the motors. "Motor on the order" checks one motor against the blind: whether it fits the tube the blind needs (also without a fabric weight) and whether its torque is enough.
 

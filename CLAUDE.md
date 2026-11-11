@@ -597,6 +597,17 @@ Russel (9 Nov 2026), on the lines without a part: "can we not line them up and m
   - Finish Logic remotes given as line options become sundry lines (Sharon left both off BDO666742).
 - **Tests:** `new-tests/biq-sundry-matching.test.mjs` (60 checks, 1 more with `TASKFILES_DIR`: 22 lines of 9 live imports). Updated: `biq-part-notes` ("OT Smart Hub" now resolves; a chain stopper is the part without one), `biq-sundry-no-part` (the same), `ui-part-notes` (+1).
 
+## Converter: the bottom bar and hardware on AI-read orders (Nov 2026)
+
+From the 10 Nov 2026 review. The import files of 14 Oct – 10 Nov carried 220 Roller System 40 lines on 41 orders with Black or Grey hardware and a White Aluminium bar; capturers changed 200 by hand, and 12 blinds on 4 orders are stored that way (BDO673609, BDO673598 FA, BDO675306 E, BDO675515 KB and M). Keyed by hand, Black hardware has a Black Aluminium bar on 313 of 313 lines and Grey a Silver one on 383 of 385.
+- **Cause.** The AI path and the Blind Guys roller reader start from the sheet's template (Mech Colour White, Bottom Bar White Aluminium), and `biqApplyHardwareColours` only fills an empty bar. Mathéo and the BD order form already cleared the template's bar.
+- **AI path** (`biqAiResultToOrder`): when the document gives the hardware colour (or a cassette colour) and no bottom bar, the template's bar is cleared and `_barToHardware` is set. A bar the document states is kept. Double rollers keep their own rule.
+- **Dealer names on the AI path.** An option the AI writes under a dealer's name (Hardware Colour, Mechanism Colour, Bottom Bar Colour, Roll: the rename rules of `BIQ_OPTION_REMAPS`) now beats the template default. `biqFoldOptionSynonyms` only moves such a name onto an empty row, so "Hardware Colour=Black" used to be dropped for the template's White.
+- **Blind Guys roller sheet** (`biqBgRoller`): an empty Bottom Bar Colour cell beside a stated Mechanism Colour follows the hardware (Task439495 row 0005, Task437519 row 0006).
+- The note "Bottom Bar not on the order — … to match the hardware" is written only when the hardware isn't the sheet's default, so an order in White gets no new note.
+- **Not done:** a bar the converter set does not follow a later change of Mech Colour in the editor; a White bar the sheet states beside dark hardware is not queried.
+- **Tests:** `new-tests/biq-bar-follows-hardware.test.mjs` (34 checks; 14 fail on main), in the review package "Review fixes 2026-11". `biq-cassette`'s "Cassette=No" case now expects the bar note. Suite 1,730 passed, the same 34 failures as main (1,696).
+
 ## Improvement Phases (Planned)
 
 See the planning document. Phases in priority order:

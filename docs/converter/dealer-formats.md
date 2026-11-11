@@ -52,6 +52,7 @@ Order matters. The TBD software signature ("ORDER" plus "Options:") is the loose
 - **Roller sheets** (`biqBgRoller`, also used for outdoor, Romashade and cellular sheets):
   - Fabric is split into range and colour (`biqSplitFabric`); the Type column is the blind type ("System 40" is an alias).
   - A stated Mechanism Colour sets `_hwFromOrder`, so even White counts as the order's.
+  - An empty Bottom Bar Colour cell beside a stated Mechanism Colour: the bar follows the hardware (Black gives Black Aluminium, Grey gives Silver), noted when the mechanism isn't the sheet's default. A bar the sheet states is kept.
   - "Control Length" can be a custom length ("Custom: 3640"), which wins over the formula.
   - The 70 mm cassette column ("System 40 70mm Cassette" or "Closed Cassette") becomes the cassette option.
   - "Extra Brackets = Intermediate / Coupled" sets the bracket option under the blind type's own key (`biqBracketOptionKey`).
@@ -311,6 +312,8 @@ Anything not recognised, every image, and every scan (a PDF with 40 or fewer cha
 - It keeps the first run of digits of each size.
 - Option strings "Key=Value" become options, and a bare option becomes "Key = Yes".
 - It records the options the AI stated (`_givenOpts`) and a stated Val Size (`_valSizeStated`). A Mech Colour the AI gives counts as the order's (`_hwFromOrder`), White too: the AI is told never to fill one in.
+- An option the AI writes under a dealer's name (Hardware Colour, Mechanism Colour, Bottom Bar Colour, Roll) beats the sheet default the template pre-filled: the template value is cleared so `biqFoldOptionSynonyms` can move the dealer's name onto BlindIQ's option (Nov 2026).
+- When the document gives the hardware colour (or a cassette colour) but no bottom bar, the template's White bar is cleared so it follows the hardware (`_barToHardware`, noted when the hardware isn't the sheet's default). Double rollers keep their own rule.
 - After the pipeline's cassette rules, `biqCassetteFromNotes` reads a cassette the AI left in the notes (see [rules](rules.md#valances-and-cassettes)).
 - It merges double-roller second-fabric rows (`biqMergeDoubleRollerRows` with `copySizes`).
 - It resolves AI sundries in the motor sundry types first, then once in the whole orderable catalogue.

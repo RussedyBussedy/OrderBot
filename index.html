@@ -846,7 +846,10 @@
                 const byId = new Map();
                 for (const d of [...bdoSnap.docs, ...custSnap.docs, ...legacySnap.docs]) byId.set(d.id, { id: d.id, ...d.data() });
 
-                const matches = [...byId.values()].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+                // Newest first. The timestamps are ISO strings, and subtracting two strings gives NaN, which left the
+                // results in document-id order: an older check showed first for 120 of the 223 orders checked twice.
+                const when = d => (d.timestamp && typeof d.timestamp.toMillis === 'function') ? d.timestamp.toMillis() : (Date.parse(d.timestamp) || 0);
+                const matches = [...byId.values()].sort((a, b) => when(b) - when(a));
 
                 allDomElements.historyResults.innerHTML = '';
 

@@ -2712,7 +2712,11 @@ ${feedbackExamples}
                     const blindType = item.blindType?.blindIQValue?.toLowerCase().trim();
                     const colour = item.colour?.blindIQValue?.trim();
 
-                    if (blindType && !BLIND_TYPE_EXCLUSIONS_FOR_COLOUR_CHECK.includes(blindType)) {
+                    // A range that takes no colour inside a type that does (BlindIQ, Nov 2026): a Roman headrail, a roller
+                    // kit, a vertical or sliding headrail. 1,017 Roman Headrail lines a year got this alert every time.
+                    const colourlessRange = /^(roman headrail|roller kit|vertical headrail|sliding headrail)/.test((item.range?.blindIQValue || '').toLowerCase().trim());
+
+                    if (blindType && !BLIND_TYPE_EXCLUSIONS_FOR_COLOUR_CHECK.includes(blindType) && !colourlessRange) {
                         if (!colour || colour === 'N/A' || colour === '-') {
                             item.colourValidation = { type: 'error', message: `Colour Alert: No colour has been specified for this blind type.` };
                         }

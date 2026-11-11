@@ -141,7 +141,7 @@ The browser never blocks the download: `downloadXML` always writes the file, and
 
 ## Optional: torque and spec checks
 
-The "Run torque & spec checks" button (`runChecks` in the UI module) wraps the order with `biqToComparisonShape`, runs the comparison's `runPostAIValidations` (fabric, colour, control, chain, torque and motor checks) on it with the fabric, motor and tube property tables, and pulls the flags back onto the lines with `biqExtractCheckResults`. The comparison's remote note (motors but no remote on the order) shows as a plain line above the summary, not as a flag. Nothing in the order changes. See [Validations](../comparison/validations.md).
+The "Run torque & spec checks" button (`runChecks` in the UI module) wraps the order with `biqToComparisonShape`, runs the comparison's `runPostAIValidations` (fabric, colour, control, chain, torque and motor checks) on it with the fabric, motor and tube property tables, and pulls the flags back onto the lines with `biqExtractCheckResults`. That includes the Zip X motor table's verdict for motorised outdoor blinds (`motorTableValidation`, since Nov 2026: red for a motor smaller than the table's, amber for a size the table doesn't cover). The comparison's remote note (motors but no remote on the order) shows as a plain line above the summary, not as a flag. Nothing in the order changes. See [Validations](../comparison/validations.md).
 
 ## The order model
 

@@ -1297,6 +1297,8 @@ function biqBgRoller(mappings, o, it, raw, doubleRoller, product) {
       it._cdAuto = !biqStatedControlLength(cl); }
     it.variants = biqTemplateFor2(mappings, doubleRoller ? (product || 'Double Roller Blinds') : it.blindType, it.range);
     const mapv = (src, key) => { const v = cleanVal(raw[src]); if (v) biqSetVar(it.variants, key, v); };
+    // the sheet's default hardware, or null when the blind's sheet has no Mech Colour (biqBgRoller's empty-bar rule)
+    const tplMech0 = (m => m ? biqNorm(m[1]) : null)(it.variants.find(v => /^mech(anism)?\s*colou?r$/i.test(biqNorm(v[0]))));
     if (doubleRoller) {
         const frontIsBlockout = /block/i.test(raw['Configuration Front Blind'] || '');
         const front = cleanVal(raw['Front Blind Fabric']), back = cleanVal(raw['Back Blind Fabric']);
@@ -1308,6 +1310,13 @@ function biqBgRoller(mappings, o, it, raw, doubleRoller, product) {
     } else {
         mapv('Mechanism Colour', 'Mech Colour'); mapv('Bottom Bar Colour', 'Bottom Bar'); mapv('Roll', 'Roll Type');
         if (cleanVal(raw['Mechanism Colour'])) it._hwFromOrder = true;      // a stated White is the order's too
+        // An empty Bottom Bar Colour cell beside a stated Mechanism Colour: the bar is the hardware's, not the template's
+        // White Aluminium (Task439495: Black mechanism and no bar on row 8, Black Aluminium on rows 7 and 9; Task437519
+        // row 12 the same in Grey). Noted only when the mechanism isn't the sheet's default.
+        if (cleanVal(raw['Mechanism Colour']) && !cleanVal(raw['Bottom Bar Colour'])) {
+            const r0 = it.variants.find(v => /^bottom\s*bar$/i.test(biqNorm(v[0])));
+            if (r0 && tplMech0 !== null) { r0[1] = ''; if (biqLc(cleanVal(raw['Mechanism Colour'])) !== biqLc(tplMech0)) it._barToHardware = true; }
+        }
         mapv('Steel Ball Chain', 'Steel Ball Chain'); mapv('Remove Bracket Covers', 'Remove Bracket Covers');
         mapv('Plastic Bottom Bar', 'Plastic Bottom Bar'); mapv('Chain Tidy', 'Chain Tidy');
         mapv('Wired Side Guides', 'Wire Side Guides'); mapv('Fabric Only', 'Fabric Only');
@@ -4237,13 +4246,14 @@ export function biqAiResultToOrder(mappings, ai) {
           it.controlDrop = biqComputeControlDropV2(mappings, biqStatedControlLength(cd), it.drop, it.blindType, it.range);
           it._cdAuto = !biqStatedControlLength(cd); }
         it.variants = biqTemplateFor2(mappings, it.blindType, it.range);
-        const given = new Set();
+        const tplMech = biqNorm((it.variants.find(v => /^mech(anism)?\s*colou?r$/i.test(biqNorm(v[0]))) || [])[1]);   // the sheet's default hardware
+        const given = new Set(), givenVal = new Map();                     // option keys the document gave, and their values
         (li.options || []).forEach(opt => {
             const i = String(opt).indexOf('=');
             if (i > 0) {
                 const k = biqNorm(opt.slice(0, i));
                 biqSetVar(it.variants, k, biqNorm(opt.slice(i + 1)));
-                given.add(biqLc(k));
+                given.add(biqLc(k)); givenVal.set(biqLc(k), biqNorm(opt.slice(i + 1)));
                 if (/^val\s*size$/i.test(k)) it._valSizeStated = true;     // the document gave the venetian's valance width (or No)
             }
             else if (biqNorm(opt)) { biqSetVar(it.variants, biqNorm(opt), 'Yes'); given.add(biqLc(biqNorm(opt))); }
@@ -4252,6 +4262,34 @@ export function biqAiResultToOrder(mappings, ai) {
         // hardware (biqApplyDoubleRollers), not the sheet's White (BDO662216: Grey mechanism, stored Silver / Silver Aluminium).
         if (biqIsDoubleRoller(mappings, it) && [...given].some(k => /^(mech(anism)?|h\/?\s*ware|hardware)\s*colou?r$/.test(k)))
             it.variants.forEach(v => { if (/^(cassette\s*colou?r|bottom\s*bar)$/i.test(biqNorm(v[0])) && !given.has(biqLc(v[0]))) v[1] = ''; });
+        // An option the document gives under a dealer's name ("Hardware Colour", "Bottom Bar Colour", "Roll") beats the
+        // sheet default the template pre-filled. biqFoldOptionSynonyms only moves such a name onto an EMPTY row, so
+        // "Hardware Colour=Black" used to be dropped for the template's White (and then counted as a stated White).
+        const aliasVal = rule => { const a = rule.aliases.find(x => givenVal.get(x)); return a ? givenVal.get(a) : ''; };
+        BIQ_OPTION_REMAPS.forEach(rule => {
+            if (rule.value || given.has(biqLc(rule.to)) || !aliasVal(rule)) return;
+            const row = it.variants.find(v => biqLc(v[0]) === biqLc(rule.to));
+            if (row) row[1] = '';
+        });
+        // The bottom bar follows the hardware when the document gives the hardware (or a cassette colour) but no bar,
+        // as on Mathéo's sheets and the BD order form (biqApplyHardwareColours), not the template's White Aluminium.
+        // 14 Oct - 10 Nov 2026: 220 Roller System 40 lines on 41 converted orders went out with Black or Grey hardware
+        // and a White bar and capturers changed 200 by hand; keyed by hand, Black hardware has a Black Aluminium bar
+        // on 313 of 313 lines and Grey a Silver one on 383 of 385. Noted only when the hardware isn't the sheet's own
+        // default, so an order in White gets no new note. With no hardware colour in the end the bar stays empty here
+        // and biqApplyOptionDefaults puts the sheet default back.
+        if (!biqIsDoubleRoller(mappings, it)) {
+            const ruleOf = to => BIQ_OPTION_REMAPS.find(r => !r.value && biqLc(r.to) === to) || { aliases: [] };
+            const stated = to => givenVal.get(to) || aliasVal(ruleOf(to));
+            const hwGiven = stated('mech colour');
+            const casGiven = [...givenVal].some(([k, v]) => /cass?ett?e/.test(k) && !/insert|inlay|end\s*cap/.test(k) && v && !/^(no|none|n\/?a|-|false)$/i.test(v));
+            const barRow = it.variants.find(v => /^bottom\s*bar$/i.test(biqNorm(v[0])));
+            const hasMech = it.variants.some(v => /^mech(anism)?\s*colou?r$/i.test(biqNorm(v[0])));
+            if (barRow && hasMech && !stated('bottom bar') && (hwGiven || casGiven)) {
+                barRow[1] = '';
+                if (hwGiven ? biqLc(hwGiven) !== biqLc(tplMech) : casGiven) it._barToHardware = true;
+            }
+        }
         if (biqIsDoubleRoller(mappings, it) || !biqNorm(it.blindType)) it._givenOpts = [...given];   // for biqMergeDoubleRollerRows
         // The AI is told never to fill in a hardware colour the document doesn't give, so its "Mech Colour=White" is the
         // order's — the cassette "Yes" beside it is a White cassette, not a red one (biqApplyHardwareColours).

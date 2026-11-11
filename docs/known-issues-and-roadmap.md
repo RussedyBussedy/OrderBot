@@ -33,7 +33,7 @@ Effort: **S** is under half a day, **M** is one to three days, **L** is longer.
 
 | Issue | Effect | Effort |
 |---|---|---|
-| The shared coupled-pair function (`biqApplyCoupledPair`) can lose a blind's chain or motor when it rewrites a pair whose sides aren't both stated, and `biqDriveSide` doesn't count Dual as a drive | No real line hits it yet (found in the Finish Logic review); fixing it touches every layout | M |
+| The shared coupled-pair function (`biqApplyCoupledPair`) can lose a blind's chain or motor when it rewrites a pair whose sides aren't both stated, and `biqDriveSide` doesn't count Dual as a drive | Real orders hit it: BDO675515 was jobbed on 9 Nov 2026 with four blinds that have no chain or motor, and BDO675468's motor was put back by hand. Since Nov 2026 a blind left without a drive is a red problem (`biqLineHasNoDrive`); the pairing itself is still to fix, and it touches every layout | M |
 | Sizes from AI and form paths take the first digits ("1 200" or "1,200" become 1; "2.5m" becomes 2) | Wrong sizes on some AI-read orders | S |
 | Six of the 34 live blind types have no blocking minimum width | Impossible sizes can pass | S |
 | The XML isn't cleaned of control characters; sundry codes run out after "z" | BlindIQ can reject an import file | S |

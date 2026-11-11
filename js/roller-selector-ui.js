@@ -99,7 +99,8 @@ function resultView(line) {
     const wrap = el('div');
     if (r.width > 0 && r.drop > 0) {
         const stats = el('div', { class: 'grid grid-cols-2 md:grid-cols-5 gap-2 mb-3' },
-            stat('Fabric', r.fabric ? `${r.fabric.name} · ${r.fabric.kg ?? '?'} kg/m² · roll ${r.fabric.roll} mm` : (line.kgPerM2 ? line.kgPerM2 + ' kg/m²' : '—')),
+            // the weight shown is the one used: the list's, or the typed one when the list has none for this fabric
+            stat('Fabric', r.fabric ? `${r.fabric.name} · ${r.fabric.kg ?? (parseFloat(line.kgPerM2) > 0 ? line.kgPerM2 + ' (typed)' : '?')} kg/m² · roll ${r.fabric.roll} mm` : (line.kgPerM2 ? line.kgPerM2 + ' kg/m²' : '—')),
             stat('Blind weight', r.kg != null ? r.kg.toFixed(2) + ' kg' : '—'),
             stat('Torque +20 %', r.torque[40] != null ? `Sys 40 ${r.torque[40].toFixed(2)} · Sys 55 ${r.torque[55].toFixed(2)} Nm` : '—'),
             stat('System', r.system ? 'Roller System ' + r.system : '—'),

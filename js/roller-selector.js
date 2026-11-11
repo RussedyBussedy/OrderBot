@@ -226,7 +226,8 @@ function fittingMotors(kg, systems, { brand, power, protocol }) {
 
 // One blind, as the selector's multi-line sheet works it out, with every warning (V2.1 showed only the first).
 // input: { fabrics (fabricList()), system: 40 | 55 | 'auto', fabric (name, alias or BlindIQ range), colour,
-//          kgPerM2 (overrides the fabric's weight),
+//          kgPerM2 (a weight typed for a fabric that isn't in the list or has no usable weight there; a listed
+//          fabric's own weight wins, and a message says so),
 //          width, drop, bar, control: 'chain' | 'motor', brand, power: 'wf' | '220v', protocol, motorName (a MOTORS name
 //          to check), has15, hasSpring }
 // -> { fabric, kg, widthCheck, system, chain, torque: {40, 55}, recommended, alternatives, motorCheck, messages }
@@ -235,11 +236,17 @@ export function selectRollerSystem(input) {
     const messages = [];
     const add = (level, text) => messages.push({ level, text });
     const fabric = input.fabric ? findFabric(input.fabrics, input.fabric, input.colour) : null;
-    const kgM2 = input.kgPerM2 > 0 ? +input.kgPerM2 : (fabric ? fabric.kg : null);
+    // The typed weight is for a fabric that isn't listed. It used to replace a listed fabric's weight without a word,
+    // and "Copy" in the Roller check view carried it to the next blind: 5 Screen at 2450 × 2600 with a left-over 0.2
+    // read 1.96 kg and "Standard 1:1 chain" where the list's 0.569 gives 4.31 kg and the 1.5:1 (Nov 2026).
+    const typedKg = input.kgPerM2 > 0 ? +input.kgPerM2 : null, listedKg = fabric && fabric.kg > 0 ? fabric.kg : null;
+    const kgM2 = listedKg != null ? listedKg : typedKg;
     const res = { fabric, width, drop, kg: null, widthCheck: null, system: null, chain: null, torque: {}, recommended: null, alternatives: [], motorCheck: null, messages };
     if (!(width > 0) || !(drop > 0)) { add('info', 'Enter the width and drop.'); return res; }
     if (input.fabric && !fabric) add('warning', `"${s(input.fabric)}" isn't in OrderBot's fabric list — enter its weight (kg/m²), or add it under Fabric properties on the Orders view.`);
     if (fabric && fabric.kg == null && !(input.kgPerM2 > 0)) add('warning', `OrderBot's fabric list has no usable weight for ${fabric.name} — enter it (kg/m²), and correct it under Fabric properties.`);
+    if (typedKg != null && listedKg != null && Math.abs(typedKg - listedKg) > 1e-9)
+        add('info', `${fabric.name} is in OrderBot's fabric list at ${listedKg} kg/m², so that weight is used, not the ${typedKg} typed. To work with your own weight, clear the fabric.`);
     const kg = rollerWeight(kgM2, width, drop, input.bar);
     res.kg = kg;
     res.widthCheck = fabricWidthCheck(fabric, width, drop, ROLL_ALLOWANCE);

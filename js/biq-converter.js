@@ -4917,7 +4917,9 @@ export function biqExtractCheckResults(comparisonData) {
     (comparisonData.lineItems || []).forEach(li => {
         const flags = [];
         // 'info' (the Roller System Selector's advice, e.g. the Lift Assisting Spring) is not a flag here
-        ['fabricValidation', 'colourValidation', 'controlValidation', 'chainValidation', 'rollerValidation', 'torqueValidation', 'minWidthValidation'].forEach(k => {
+        // motorTableValidation (js/outdoor-motors.js) replaces the torque estimate on motorised Free Hang, Zip X, Channel X
+        // and Wire X lines, so without it here an undersized Somfy motor showed "no alerts" (BDO652491's 15 Nm for 25 Nm).
+        ['fabricValidation', 'colourValidation', 'controlValidation', 'chainValidation', 'rollerValidation', 'torqueValidation', 'minWidthValidation', 'motorTableValidation'].forEach(k => {
             if (li[k] && li[k].type !== 'info') flags.push({ kind: k, type: li[k].type || 'error', message: li[k].message });
         });
         if (Array.isArray(li.motorValidation)) li.motorValidation.forEach(m => flags.push({ kind: 'motorValidation', type: 'error', message: m }));

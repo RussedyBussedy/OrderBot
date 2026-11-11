@@ -177,7 +177,7 @@ Unverified: spreadsheets (`.xlsx`, `.xls`) and TIFF or BMP images go to Gemini a
 
 ## Torque and spec checks
 
-"Run torque & spec checks" (`runChecks`) loads the fabric, motor and tube tables through the injected getters and converts the order with `biqToComparisonShape`. It then runs the comparison's own `runPostAIValidations` on that copy and reads the flags back with `biqExtractCheckResults`.
+"Run torque & spec checks" (`runChecks`) loads the fabric, motor and tube tables through the injected getters and converts the order with `biqToComparisonShape`. It then runs the comparison's own `runPostAIValidations` on that copy and reads the flags back with `biqExtractCheckResults`: the fabric, colour, control, chain, roller, torque, minimum-width and motor checks and, since Nov 2026, the Zip X motor table's verdict (`motorTableValidation`). Blue `info` results are left out.
 
 - Flags appear under each line, with blind weights and the torque needed summarised.
 - Ranges with no fabric properties are listed, because their weight and torque can't be worked out.

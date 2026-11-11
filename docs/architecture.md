@@ -133,7 +133,7 @@ A developer taking over needs all of these. Until each one has a home in a priva
 
 | What | Where it is now | Why it matters | Suggested home |
 |---|---|---|---|
-| Regression tests (`orderbot-tests.zip`) | OneDrive: `Document Converter/OrderBot reviews/` | The only automated safety net: about 1,700 checks pass on `main`. Kept out of this repo because its fixtures are business data. | `tests/` in this repo once it's private ([testing.md](testing.md)) |
+| Regression tests (`orderbot-tests.zip`) | OneDrive: `Document Converter/OrderBot reviews/` | The only automated safety net: about 1,800 checks pass on `main`. Kept out of this repo because its fixtures are business data. | `tests/` in this repo once it's private ([testing.md](testing.md)) |
 | Review packages for each change (patches, tests, replays) | OneDrive: `Document Converter/OrderBot reviews/<topic>/` and `Document Converter/OrderBot converter accuracy 2026-10-09/` | Evidence behind the rules | Pull requests and their descriptions; data in a private store |
 | Analysis tooling for the quarterly review and monthly report (`analysis-tools/`, `monthly/`: SQL, `compute.mjs`, `render.mjs`, `firestore_export.js`) | OneDrive: `Document Converter/OrderBot reviews/` | Produces the numbers management sees | A private `orderbot-analytics` repo |
 | Daily Cost Report (`cost_report.py`) | The office PC | Shares a data contract with `js/cost-report-console.js` | Its own private repo |

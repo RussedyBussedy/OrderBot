@@ -22,7 +22,7 @@ All of this lives in `index.html`. Terms such as BDO number, range and roll widt
 **Paging and order.**
 
 - There's no paging: one search returns every match. A **Load more** button (`#history-load-more-btn`) is wired to `findHistory(true)`, but its container is never shown and `findHistory` ignores the argument. `lastHistoryDoc` and the imported `orderBy`, `limit` and `startAfter` are left over from a paged version. Paging and a date filter are on the improvement list in `CLAUDE.md`.
-- The results are meant to be sorted newest first, but the sort subtracts the `timestamp` strings (ISO dates), which gives `NaN`, so in practice they stay in query order: BDO number matches first, then customer number matches, then the older records.
+- The results are sorted newest first, by the saved `timestamp` (an ISO string, read with `Date.parse`; a check without a usable timestamp sorts last). Until Nov 2026 the sort subtracted the strings, which gives `NaN`, so the results stayed in document-id order and an older check showed first for 120 of the 223 orders that had been checked more than once.
 
 ## Corrections (feedback)
 

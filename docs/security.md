@@ -7,6 +7,7 @@ How OrderBot is protected today, what data it handles, and the rules every chang
 | Layer | Today | Direction |
 |---|---|---|
 | The page | A static site that anyone with the address can load. Staff normally reach it through the SharePoint embed. | Sign-in before the page is usable |
+| The visualiser's page (`visualiser/`) | Published encrypted, because the site can be loaded by anyone. Its key reaches it through the SharePoint embed's fragment and is never in the repository ([user interface](app/user-interface.md#drawings-the-embedded-visualiser)). | Stays encrypted for as long as the site can be loaded without signing in |
 | Identity | Firebase **anonymous** sign-in: each browser gets an ID, not a person | Microsoft (Entra ID) sign-in, with roles for capturers and admins |
 | Data access | Firestore security rules decide what a signed-in client may read and write. They're edited in the Firebase console and aren't versioned. | Rules kept in this repository and changed through pull requests |
 | Admin mode | A switch stored in the browser (`biq_admin`) that shows the mapping tools and the Cost report view, after a confirmation. It keeps capturers away from tools they shouldn't use by accident, but it isn't access control. | Real roles, checked by the rules |
@@ -24,7 +25,7 @@ How OrderBot is protected today, what data it handles, and the rules every chang
 
 ## Rules for every change
 
-1. **No secrets in code**, ever: not in the repository, not in commit history, not in a pull request description. Server-side keys go in Secret Manager. If a secret is committed by mistake, rotate it first and clean the history second.
+1. **No secrets in code**, ever: not in the repository, not in commit history, not in a pull request description. Server-side keys go in Secret Manager. The visualiser's key, its passphrase and its unencrypted page are secrets too: every file on `main` is published. If a secret is committed by mistake, rotate it first and clean the history second.
 2. **Treat document and database text as untrusted.** Customer documents, AI answers and anything in Firestore can contain markup. Put such text on the page with `textContent` or an escaping helper, never by building HTML strings from it. The cost report console already follows this rule for Firestore data.
 3. **Pin third-party code.** Load libraries at a fixed version with an integrity (SRI) hash, and update them deliberately in their own pull request ([architecture.md](architecture.md#libraries-loaded-from-cdns)).
 4. **Keep the backend minimal.** The proxy should do as little as possible. Anything added to it (checks, limits) goes in its own pull request and is tested on its own (`CLAUDE.md` rule 2).

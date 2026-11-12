@@ -28,6 +28,7 @@ OrderBot is Blind Designs' internal web app for checking and capturing customer 
 |---|---|
 | `index.html` | The single-page app: layout, styles, and the code for order comparison, history and reference data |
 | `js/` | ES modules the page loads: settings (`config.js`, `constants.js`), comparison context and rule checks, the outdoor motor table, the BlindIQ XML converter (`biq-converter.js`, `biq-converter-ui.js`, `biq-form-specs.js`) and the admin cost report console |
+| `visualiser/` | The Bend & Blind Visualiser's page, shown in the Drawings view. It's an encrypted build: its source is kept outside this repository, and its key is never committed |
 | `index.js`, `package.json`, `Dockerfile`, `.dockerignore` | The Gemini proxy that runs on Google Cloud Run |
 | `data/` | Two reference JSON files (sundry names, designer fabric aliases); not loaded by the app today |
 | `bd-logo-white.png` | Header logo |

@@ -235,10 +235,12 @@ The Firestore security rules are managed in the Firebase console and aren't in t
 | `cr_name` | `localStorage` | A name | `js/cost-report-console.js` (`NAME_KEY`, `rememberName`) | Who saves the cost report settings (`updatedBy`) |
 | `ob_roller_lines` | `localStorage` | JSON list of blinds | `js/roller-selector-ui.js` (`STORE`) | The Roller check view's blinds, for that browser only |
 | `ob_guidelines_open`, `ob_fabric_open`, `ob_motor_open`, `ob_tube_open`, `ob_biq_open` | `localStorage` | `open` or `closed` | `index.html` → `setupCollapsible` | Which panels are open |
+| `bd-visualiser-key` | `localStorage` | The visualiser's key | `visualiser/index.html` (the visualiser's own page) | Set when someone ticks **Remember on this device** on the visualiser's passphrase screen. Removed when it no longer unlocks the page. |
+| `bd-visualiser-key-tab` | `sessionStorage` | The visualiser's key | `visualiser/index.html` | Kept for the tab once a key from the address has unlocked the page, so a reload still works. Gone when the tab closes. |
 
-- OrderBot's own code uses no `sessionStorage`, cookies or IndexedDB. The Firebase SDK keeps its sign-in state itself.
+- OrderBot's own code uses no `sessionStorage`, cookies or IndexedDB. The Firebase SDK keeps its sign-in state itself. The two `bd-visualiser-key` entries belong to the visualiser's page, which is published from the same site and so shares its storage.
 - Most storage access in the converter and the cost report is wrapped in `try`/`catch`, so a browser that blocks storage still works. `setupCollapsible`'s isn't, and neither is the converter's "leave admin mode" path.
-- The Drawings view's key arrives in the page's URL fragment and isn't stored ([app/user-interface.md](app/user-interface.md)).
+- The Drawings view's key arrives in the page's URL fragment. OrderBot's own page passes it to the visualiser and doesn't store it ([app/user-interface.md](app/user-interface.md#drawings-the-embedded-visualiser)).
 
 ## In-memory caches
 

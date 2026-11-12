@@ -49,7 +49,7 @@ This wiki explains how OrderBot works and how to work on it safely. It's written
 
 | Page | What it covers |
 |---|---|
-| [Runbooks](operations/runbooks.md) | Step-by-step procedures: deploys, key rotation, catalogue refresh, triage |
+| [Runbooks](operations/runbooks.md) | Step-by-step procedures: deploys, key rotation, catalogue refresh, visualiser builds, triage |
 | [Security](security.md) | The security model today and the principles every change follows |
 | [Known issues and roadmap](known-issues-and-roadmap.md) | A dated snapshot of known problems and planned work |
 

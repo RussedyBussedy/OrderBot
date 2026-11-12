@@ -12,7 +12,7 @@ flowchart LR
     end
     subgraph Browser["OrderBot in the browser"]
         APP["index.html + js/ modules<br/>(GitHub Pages; embedded in SharePoint)"]
-        VIS["Drawings view: iframe of the<br/>Bend & Blind Visualiser (bd-tools)"]
+        VIS["Drawings view: iframe of the<br/>Bend & Blind Visualiser (visualiser/)"]
     end
     subgraph Google["Google Cloud / Firebase project orderbot-2b212"]
         PROXY["Cloud Run: gemini-secure-proxy<br/>(index.js, africa-south1)"]
@@ -47,7 +47,7 @@ Solid lines are automatic. Dotted lines are steps a person takes: an admin impor
 | Gemini proxy (`index.js`) | Google Cloud Run, service `gemini-secure-proxy`, region `africa-south1` | Adds the Gemini API key from Secret Manager and forwards the request. Stores nothing. | [Backend proxy](backend-proxy.md) |
 | Firestore | Firebase project `orderbot-2b212` | Comparisons, corrections, guidelines, reference tables, converter mappings, cost report settings | [Data model](data-model.md) |
 | Gemini API | Google | Reads documents and compares orders. Gemini 3.8 Flash for every call. | [AI models](ai-models.md) |
-| Bend & Blind Visualiser | A separate repository (`bd-tools`) on GitHub Pages, shown in an iframe | Factory and customer drawings for curtain tracks, sloped verticals and shaped cellular blinds. Encrypted build. | Outside this repo |
+| Bend & Blind Visualiser | `visualiser/index.html`, published with the frontend and shown in an iframe | Factory and customer drawings for curtain tracks, sloped verticals and shaped cellular blinds. A separate tool: the file is its encrypted build, and its source is outside this repo. | [User interface](app/user-interface.md#drawings-the-embedded-visualiser) |
 | Daily Cost Report | `cost_report.py` on the office PC | Emails the cost report. Reads its settings from, and writes its status to, `orderbot_cost_report`. | [Cost report console](cost-report-console.md) |
 | BlindIQ | Blind Designs' SQL Server | The system of record. The source of the converter's catalogue; receives the converter's XML. | [Mappings and catalogue](converter/mappings-and-catalogue.md) |
 
@@ -126,6 +126,7 @@ Firestore holds nine collections, all prefixed `orderbot_`: `comparisons`, `feed
 | BlindIQ's database is the source of truth for mappings | Drift from a stale snapshot caused every wrong-ID incident of August 2026 | [ADR 0003](decisions/0003-blindiq-database-is-source-of-truth-for-mappings.md) |
 | Gemini 3.8 Flash at its default temperature | One GA model for every call; Google advises against lowering the temperature on Gemini 3 | [ADR 0004](decisions/0004-gemini-3-8-flash-default-temperature.md) |
 | Deterministic rules run after the AI and keep its answer | Rules cut the noise; keeping the AI's result makes every change auditable | [ADR 0006](decisions/0006-deterministic-rules-after-the-ai.md) |
+| The visualiser's encrypted page is published from this repository, as its own page | One repository and one site to host and to move; a fault in either tool can't stop the other | [ADR 0009](decisions/0009-visualiser-page-in-this-repository.md) |
 
 ## Things that live outside this repository
 
@@ -137,7 +138,7 @@ A developer taking over needs all of these. Until each one has a home in a priva
 | Review packages for each change (patches, tests, replays) | OneDrive: `Document Converter/OrderBot reviews/<topic>/` and `Document Converter/OrderBot converter accuracy 2026-10-09/` | Evidence behind the rules | Pull requests and their descriptions; data in a private store |
 | Analysis tooling for the quarterly review and monthly report (`analysis-tools/`, `monthly/`: SQL, `compute.mjs`, `render.mjs`, `firestore_export.js`) | OneDrive: `Document Converter/OrderBot reviews/` | Produces the numbers management sees | A private `orderbot-analytics` repo |
 | Daily Cost Report (`cost_report.py`) | The office PC | Shares a data contract with `js/cost-report-console.js` | Its own private repo |
-| Bend & Blind Visualiser source | Not in any repository. Only an encrypted build is in `RussedyBussedy/bd-tools`. | The Drawings view depends on it | A private repo with the build step |
+| Bend & Blind Visualiser source | Not in any repository. Only its encrypted build is: `visualiser/index.html` here, and the copy left in `RussedyBussedy/bd-tools` until that repository is archived. | The Drawings view depends on it | A private repo with the build step. The source must never sit where the site publishes it. |
 | June 2026 server automation (`convert-cli.mjs`, `setup-server.ps1`, `watch-tasks.ps1`) | OneDrive: `Document Converter/OrderBot integration/automation/` | Runs an older subset of the converter's rules; due to be retired | Retire, or a private repo |
 | BlindIQ SQL extract scripts (`BlindIQ_schema_discovery.sql` and the catalogue refresh queries) | OneDrive: `Document Converter/` and the review packages | Rebuild the converter's catalogue | `tools/catalogue/` in a private repo |
 | Specs that `CLAUDE.md` cites as Claude project documents (`specs/blindiq-catalogue.md`, `claude/daily-cost-report/orderbot-console-spec.md`) | Not among the OrderBot Claude project's documents today, so their location needs confirming | Background for the converter's catalogue and the cost report contract | `docs/` once the repo is private |

@@ -12,6 +12,7 @@ Architecture decision records (ADRs): short notes of significant decisions about
 | [0006](0006-deterministic-rules-after-the-ai.md) | Deterministic rules run after the AI and keep its answer | Accepted |
 | [0007](0007-private-company-github-organisation.md) | Code lives in a private Blind Designs GitHub organisation | Proposed |
 | [0008](0008-firebase-hosting-with-pr-previews.md) | Firebase Hosting, with a preview for every pull request | Proposed |
+| [0009](0009-visualiser-page-in-this-repository.md) | The visualiser's encrypted page is published from this repository | Accepted |
 
 ## Writing a new record
 

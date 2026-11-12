@@ -84,6 +84,23 @@ gcloud run services update-traffic gemini-secure-proxy --to-revisions=<previous 
 
 **Undo:** revert the revert, once the fix is ready.
 
+## Publish a new visualiser build
+
+**When:** the Bend & Blind Visualiser has changed, or its key is being replaced. The visualiser's source and its build step are kept outside this repository ([architecture.md](../architecture.md#things-that-live-outside-this-repository)). The build produces one encrypted `index.html`.
+
+**Steps**
+
+1. On a branch, replace `visualiser/index.html` with the new build. Replace the whole file; never edit it by hand.
+2. Commit nothing else from the build: not the key, not the passphrase, not the unencrypted page. GitHub Pages publishes every file on `main`.
+3. Say in the commit message which visualiser version the build is. The file can't be reviewed by reading it.
+4. Open a pull request and merge it like any other frontend change ([CONTRIBUTING](../../CONTRIBUTING.md)).
+5. If the build was made with a new key, put the new key in the staff SharePoint embed's fragment (`#dk=…`) straight after the merge. Until then the Drawings view shows the passphrase screen.
+6. To make browsers fetch the new page at once, raise the number after `dv=` in the embed. Otherwise they can keep the old one for about 10 minutes.
+
+**Check:** open OrderBot through the SharePoint page → **Drawings**. The visualiser opens without asking for the passphrase and shows the change. **OPEN FULL SCREEN** opens it in its own tab.
+
+**Undo:** revert the pull request ([Roll back a bad frontend release](#roll-back-a-bad-frontend-release)). If the key changed, put the previous key back in the embed.
+
 ## Update the fabric, motor or tube tables
 
 **When:** a fabric's weight, width or turning rule changes, a motor is added or retired, or a blind type's tube changes. The torque and fabric-width validations read these tables.

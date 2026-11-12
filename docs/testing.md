@@ -79,7 +79,8 @@ To run one file: `cd` into the package and run, for example, `node new-tests/biq
 1. **Comparison:** upload a real customer document and its BlindIQ printout → **Run comparisons** → the report renders, with critical fields highlighted → find the order in **Comparison history**.
 2. **Converter** (if touched): open a sample customer file in a known layout → the order appears with no new problems → the XML downloads.
 3. **Admin views** (if touched): switch to admin mode → the mapping tools and the Cost report view open.
-4. The browser console (F12) shows no new errors.
+4. **Drawings** (if the view's script or `visualiser/` was touched): open OrderBot with the SharePoint embed's fragment → **Drawings** → the visualiser opens without asking for the passphrase → **OPEN FULL SCREEN** opens it in its own tab.
+5. The browser console (F12) shows no new errors.
 
 ## Bringing the tests into the repository
 

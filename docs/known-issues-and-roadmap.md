@@ -57,7 +57,7 @@ Effort: **S** is under half a day, **M** is one to three days, **L** is longer.
 | Node 20 (Docker image `node:20-slim`) reached end of life in April 2026; there's no lockfile | Unsupported runtime; builds aren't reproducible | S |
 | Tailwind is loaded from its Play CDN unpinned; SheetJS 0.18.5 and PDF.js 3.11.174 are behind releases that include security fixes; no SRI hashes | Unplanned changes; maintenance debt | M |
 | `data/sundry-names.json` and `data/designer-aliases.json` aren't used by the app | Clutter, and business data in a public repository | S |
-| `.dockerignore` excludes only top-level `*.md`, so `docs/` and `.github/` are copied into the proxy's container image | Harmless, but add both folders to `.dockerignore` with the next proxy change | S |
+| `.dockerignore` excludes only top-level `*.md`, so `docs/`, `.github/` and (since November 2026) `visualiser/` are copied into the proxy's container image | Harmless, but add the three folders to `.dockerignore` with the next proxy change | S |
 | Unused code: `biqImportSafetyScan`, `biqComputeControlDrop`, the history paging imports, `historyDataCache` | Clutter that misleads readers | S |
 | The regression tests, analysis tools, the Daily Cost Report script and the visualiser's source live outside any repository | Handover risk ([architecture.md](architecture.md#things-that-live-outside-this-repository)) | M |
 | 13 merged branches not deleted, 3 stale April branches, generic commit messages | Hard-to-read history ([development-workflow.md](development-workflow.md#branch-hygiene)) | S |

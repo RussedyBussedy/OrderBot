@@ -8,6 +8,7 @@ The step-by-step plan for making OrderBot's code company-owned and private, with
 - The frontend is served by **GitHub Pages** from `OrderBot`'s `main`. The Drawings view loads `bd-tools`, which is also on GitHub Pages.
 - The regression tests, analysis tools, Daily Cost Report script and visualiser source live outside any repository ([architecture.md](../architecture.md#things-that-live-outside-this-repository)).
 - Done on 29 October 2026: a local clone at `C:\dev\blind-designs\OrderBot`, outside OneDrive, and this wiki.
+- Changed in November 2026: the visualiser's encrypted page is now `visualiser/index.html` in `OrderBot` ([ADR 0009](../decisions/0009-visualiser-page-in-this-repository.md)). The Drawings view no longer loads `bd-tools`, so only `OrderBot`'s site has to move. The steps below are updated for that.
 
 ## The phases
 
@@ -56,7 +57,7 @@ Effort: **S** is under half a day, **M** one to three days, **L** longer.
    | Repository | Proposal |
    |---|---|
    | `OrderBot` | Move. This plan. |
-   | `bd-tools` | Move, together with the visualiser's source, which isn't in any repository today |
+   | `bd-tools` | Archive once nobody uses its old address. Its page moved into `OrderBot` in November 2026 and it gets no new builds. The visualiser's source, which isn't in any repository today, still needs a home (phase 6). |
    | `delivery-optimiser`, `DashBoard`, `Tech-Release-Generator` | Move if they're company tools (Russel to confirm) |
    | `outlook-mcp-server` | Move. It's a company integration. |
    | `OrderBoTTest` | Archive. It's an old test copy from November 2025. |
@@ -86,10 +87,12 @@ Effort: **S** is under half a day, **M** one to three days, **L** longer.
    }
    ```
 
+   `visualiser/` must stay published: the Drawings view loads it. Nothing in that list ignores it.
+
 3. `firebase deploy --only hosting`, then test the project's `web.app` address. Run a comparison, convert a file, open admin mode and the Drawings view.
 4. In its own pull request, add the new address to `allowedOrigins` in `index.js` and deploy the proxy on its own ([runbook](../operations/runbooks.md#deploy-the-proxy)).
 5. If the Firebase web API key restricts which websites may use it, add the new address (Google Cloud console → APIs & Services → Credentials).
-6. Do the same for `bd-tools`, the visualiser: give it its own Firebase Hosting site in the same project, then point `BASE` in the script at the end of `index.html` at it.
+6. The visualiser needs no step of its own: `visualiser/index.html` is published with the app, and `BASE` in the script at the end of `index.html` is a relative address. Check the Drawings view on the new address with the embed's fragment added, so the page unlocks the way it does for staff.
 7. Run `firebase init hosting:github` and keep **only** the workflow that deploys to the live channel on merge to `main`. Leave out the pull request previews until phase 4 gives them their own database.
 8. Switch the staff SharePoint embed to the new address, **keeping its `#dk=…&dv=…` fragment**, and update bookmarks and staff guides.
 9. Keep GitHub Pages running for one to two weeks as a fallback, then switch it off (repository Settings → Pages).
@@ -157,7 +160,7 @@ Effort: **S** is under half a day, **M** one to three days, **L** longer.
 
 **Owner:** whoever knows each piece. **Effort:** M.
 
-- The visualiser's source into the private `bd-tools`, with the build step that produces the encrypted page.
+- The visualiser's source into a private repository, with the build step that produces `visualiser/index.html`. If that repository is `OrderBot` itself, add the source folder to hosting's `ignore` list first (phase 1): the page is encrypted and the source isn't, so the source must never be published.
 - `cost_report.py` into its own private repository (for example `daily-cost-report`), with the Firestore contract documented on both sides.
 - The analysis tools and the monthly report scripts into a private `orderbot-analytics`.
 - The BlindIQ catalogue extract scripts into `tools/catalogue/` in `OrderBot`.
@@ -169,7 +172,7 @@ Effort: **S** is under half a day, **M** one to three days, **L** longer.
 ## Checklist
 
 - [ ] **0** Organisation name, plan, owners (two or more, with two-factor authentication), development partner access, and repository list decided; ADR 0007 accepted
-- [ ] **1** Firebase Hosting serves the app (and `bd-tools`); proxy CORS updated in its own pull request; SharePoint embed switched with its fragment; merges deploy to Firebase; Pages off after a fortnight
+- [ ] **1** Firebase Hosting serves the app (with `visualiser/`); proxy CORS updated in its own pull request; SharePoint embed switched with its fragment; merges deploy to Firebase; Pages off after a fortnight
 - [ ] **2** Organisation created; repositories transferred and private; remotes, the Claude project sync, Claude Code, the scheduled tasks and the docs updated
 - [ ] **3** Tests in `tests/` and green in CI; ruleset on `main`; `CODEOWNERS`; ADR 0005 superseded
 - [ ] **4** `staging` database seeded; `config.js` switches by host; proxy accepts previews; preview links on pull requests

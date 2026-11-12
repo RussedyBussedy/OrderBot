@@ -89,6 +89,7 @@ What to expect today, because there's no separate test environment yet ([environ
 | Feature | Running locally |
 |---|---|
 | Layout, views and the converter on a known dealer layout | Works. The converter reads its mappings from the **production** database. |
+| The Drawings view | Works. It loads `visualiser/` from your copy and shows the visualiser's passphrase screen. To open it the way staff do, add the SharePoint embed's fragment to the address (`http://localhost:8000/#dk=…&dv=…`). Never paste that key into a file, a commit or a pull request. |
 | Connecting to Firebase | Should work. If the page says "Could not connect to the database", the Firebase web API key may restrict which websites can use it: an admin can add `http://localhost:8000/*` under Google Cloud console → APIs & Services → Credentials. |
 | Anything that calls the AI (comparisons, the converter's AI reading) | Fails. The proxy only answers the websites in its CORS list (`allowedOrigins` in `index.js`), and `localhost` isn't on it yet. |
 | Saving: corrections, guidelines, fabric, motor and tube tables, mappings | Writes to the **production** database that capturers use. Don't, until the staging database exists. |

@@ -31,7 +31,7 @@ flowchart LR
 | **Comparison history** | Capturers, admins | Finds earlier checks by order number. |
 | **BlindIQ XML converter** | Capturers (convert), admins (maintain the mappings) | Reads the customer's document. Known dealer layouts are read exactly; anything else is read by the AI. OrderBot turns it into a BlindIQ order using BlindIQ's own catalogue and the company's rules, shows the problems a capturer must fix, and produces an XML file the capturer imports into BlindIQ. |
 | **AI guidelines, and fabric, motor and tube properties** | Paul and Russel in practice (the app doesn't restrict editing yet) | The reference data the checks use: business rules for the AI, fabric weights and widths, motor torque, tube sizes. |
-| **Drawings** | Staff, factory | Shows the separate *Bend & Blind Visualiser* (curtain track bends, sloped verticals, shaped cellular blinds) inside OrderBot. Its code lives in another repository. |
+| **Drawings** | Staff, factory | Shows the separate *Bend & Blind Visualiser* (curtain track bends, sloped verticals, shaped cellular blinds) inside OrderBot. It's a tool of its own: this repository holds only its finished, encrypted page. |
 | **Cost report** (admin only) | Paul, Russel | Settings for the Daily Cost Report that the office PC emails each day. |
 
 ## Scale and results

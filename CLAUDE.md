@@ -59,9 +59,10 @@ There are no tests in this repository (the regression package lives outside it, 
 | `js/roller-selector.js` | The Roller System Selector's rules (pure, tested in node): the fabric list helpers (`fabricList`, `findFabric`; no fabric data), BlindIQ's roller motors (`MOTORS`, `rollerMotorOf`), `selectRollerSystem`, `chainCheck`, `validateRollerSystems` |
 | `js/roller-selector-ui.js` | The "Roller check" view (everyone; loaded on first open) |
 | `js/biq-converter.js` | Document converter core (pure, no DOM): parses Blind Guys xlsx / Mathéo PDF / BD forms / AI JSON → BlindIQ order + XML; name→ID resolution via `orderbot_biq_mappings` (Firestore); also holds `BIQ_SEED_MAPPINGS` and `BIQ_EXTRACTION_SCHEMA` |
-| `js/biq-converter-ui.js` | Converter UI (the "BlindIQ XML converter" section of the Orders view, called "the Drawings tab" in older notes below; the header's Drawings pill is the bd-tools visualiser): drag-drop, preview, mappings manager |
+| `js/biq-converter-ui.js` | Converter UI (the "BlindIQ XML converter" section of the Orders view, called "the Drawings tab" in older notes below; the header's Drawings pill is the visualiser, `visualiser/index.html`): drag-drop, preview, mappings manager |
 | `js/biq-form-specs.js` | BD order-form specs: `BIQ_FORM_SPECS`, `biqDetectForm`, `biqParseSpecForm`, `biqElementGridOptions` |
 | `js/cost-report-console.js` | Admin-only "Cost report" view: Paul's settings for the Daily Cost Report (see below) |
+| `visualiser/index.html` | The Bend & Blind Visualiser's encrypted page, shown in the Drawings view. A finished build made outside this repo: replace it whole, never edit it (see "Drawings view" below) |
 | `package.json` | 2 dependencies: `express` and `@google-cloud/secret-manager` |
 | `Dockerfile` | Cloud Run deployment (node:20-slim, port 8080) |
 
@@ -120,6 +121,16 @@ Admin mode adds a third view, **Cost report** (`js/cost-report-console.js`), whe
 
 - **Frontend:** Push `index.html` to the `main` branch on GitHub. It is served from GitHub Pages at `https://russedybussedy.github.io` and embedded in SharePoint.
 - **Backend:** Deploy via `gcloud run deploy` or Cloud Run build trigger. The image is built from `Dockerfile`.
+
+## Drawings view: the visualiser's page (Nov 2026)
+
+Russel (12 Nov 2026): "bundle them first, then we can look at locking it later". The Bend & Blind Visualiser's page moved from the separate `bd-tools` site into this repository, so one repository and one site move to the company GitHub. Docs: `docs/app/user-interface.md` and `docs/decisions/0009-visualiser-page-in-this-repository.md`.
+- **`visualiser/index.html`** is the visualiser's encrypted build, copied byte for byte from `RussedyBussedy/bd-tools` (a53dfa1, its last build there). Its source and build step are outside this repo. A new build replaces the file whole, in a pull request of its own (runbook "Publish a new visualiser build"); never edit it.
+- **The plain script at the end of `index.html`** loads it by the relative address `visualiser/` (`BASE`), so it is served from wherever OrderBot is. The key still comes only from the SharePoint embed's fragment (`#dk=…&dv=…`) and is passed on as `#k=`.
+- **Never commit the visualiser's key, its passphrase, or its unencrypted page or source.** GitHub Pages publishes every file on `main`, and making the repository private doesn't change that.
+- It stays a page of its own in an iframe: don't merge its code into `index.html`. One lock page over the whole site was left for later; it needs a build step (rule 3).
+- `bd-tools` keeps its copy until nobody uses its old address. It gets no new builds.
+- Tests: `ui-visualiser-embed.test.cjs` (35 checks in headless Chromium, review package "Visualiser in OrderBot 2026-11"). The view loads the page from the same site at five addresses and passes the key and version on. A stand-in page built from the lock page's own code unlocks by key, by passphrase and by a key remembered at the old address. The real page was not unlocked in the tests, because its key is not kept with them.
 
 ## AI Models
 

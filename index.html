@@ -3621,17 +3621,20 @@ ${feedbackExamples}
 
     <script>
     /* ============ Drawings tab — Bend & Blind Visualiser embed ============
-       Embeds the ENCRYPTED visualiser (bd-tools). The decryption key is NOT in
-       this file and must never be committed here: the staff SharePoint page's
-       embed src carries it in the URL FRAGMENT as #dk=<key>&dv=<version> and
-       this script forwards it into the iframe as #k= (fragments never reach a
-       server). Anyone on the bare public URL gets the visualiser's passphrase
-       screen instead. dv = bd-tools cache-buster (?v=) so rotations only touch
-       the SharePoint embed, not this repo. Standalone plain script on purpose —
-       independent of the app module above. */
+       Embeds the ENCRYPTED visualiser: visualiser/index.html in this repository
+       (until Nov 2026 it was loaded from the separate bd-tools site). BASE is a
+       relative address, so the page is served from wherever OrderBot is hosted.
+       The decryption key is NOT in this file and must never be committed to
+       this repository: the staff SharePoint page's embed src carries it in the
+       URL FRAGMENT as #dk=<key>&dv=<version> and this script forwards it into
+       the iframe as #k= (fragments never reach a server). Anyone on the bare
+       public URL gets the visualiser's passphrase screen instead. dv = the
+       visualiser's cache-buster (?v=): a new build or key changes the page in
+       visualiser/ and the SharePoint embed, never this script. Standalone plain
+       script on purpose — independent of the app module above. */
     (function () {
         'use strict';
-        var BASE = 'https://russedybussedy.github.io/bd-tools/';
+        var BASE = 'visualiser/';
         function visualiserSrc() {
             var h = location.hash || '';
             var k = (h.match(/[#&]dk=([A-Za-z0-9_-]+)/) || [])[1] || '';

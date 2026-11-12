@@ -2,7 +2,7 @@
 
 `js/biq-converter-ui.js` draws the BlindIQ XML converter: the collapsible "BlindIQ XML converter" card in the Orders view. It turns a customer's order file into an editable [BlindIQ](../glossary.md) order, shows what still needs fixing, and produces the XML that order capturers import into BlindIQ. It also holds the admin mapping tools, and it lends its file reading to the order comparison.
 
-> **Naming.** `CLAUDE.md` and some code comments call this "the Drawings tab". Today the **Drawings** pill shows the Bend & Blind Visualiser, which comes from a separate repository (`bd-tools`). The converter is a section of the **Orders** view.
+> **Naming.** `CLAUDE.md` and some code comments call this "the Drawings tab". Today the **Drawings** pill shows the Bend & Blind Visualiser, a separate tool whose page is `visualiser/index.html`. The converter is a section of the **Orders** view.
 
 This page covers the screen, its state and its Firestore traffic. Parsing, rules, mappings and the XML format have their own pages: [overview](overview.md), [dealer formats](dealer-formats.md), [rules](rules.md), [mappings and catalogue](mappings-and-catalogue.md) and [XML export](xml-export.md). Trade and BlindIQ terms used here (dealer, range, sundry, control drop, catalogue refresh and so on) are defined in the [glossary](../glossary.md).
 

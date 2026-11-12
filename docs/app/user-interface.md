@@ -8,7 +8,7 @@ OrderBot is a single web page, `index.html`, with four views behind the pills in
 |---|---|---|---|---|
 | Orders (default) | `#nav-orders` | `<main>` | Everyone | `index.html` (most of the app), plus `js/biq-converter-ui.js` for the converter section |
 | Roller check | `#nav-roller-check` | `#roller-check-view` | Everyone | `js/roller-selector-ui.js`, loaded on first open; see [Roller check](../roller-check.md) |
-| Drawings | `#nav-drawings` | `#drawings-view` | Everyone | An `<iframe>` showing the Bend & Blind Visualiser from the separate `bd-tools` repository |
+| Drawings | `#nav-drawings` | `#drawings-view` | Everyone | An `<iframe>` showing the Bend & Blind Visualiser's page, `visualiser/index.html` |
 | Cost report | `#nav-cost-report` | `#cost-report-view` | Admin mode only | `js/cost-report-console.js`, see [Cost report console](../cost-report-console.md) |
 
 The header also holds the Blind Designs logo (`bd-logo-white.png`) and the "OrderBot" title with "AI order checking" under it.
@@ -28,15 +28,18 @@ The current view isn't kept in the URL or in storage: a reload always returns to
 
 ## Drawings: the embedded visualiser
 
-The Drawings view shows the Bend & Blind Visualiser (curtain track bends, sloped verticals, shaped cellular blinds) in `#drawings-frame`. Its code lives in the `bd-tools` repository, not here. The iframe is only loaded the first time someone opens the view, and the **OPEN FULL SCREEN** link (`#drawings-fullscreen`) opens the same address in a new tab, which the page suggests for printing.
+The Drawings view shows the Bend & Blind Visualiser (curtain track bends, sloped verticals, shaped cellular blinds) in `#drawings-frame`. The visualiser is a separate tool with its own page, `visualiser/index.html`. That file is a finished build: its source is kept outside this repository ([architecture.md](../architecture.md#things-that-live-outside-this-repository)), so it's replaced as a whole and never edited by hand. Until November 2026 it was loaded from the separate `bd-tools` site ([ADR 0009](../decisions/0009-visualiser-page-in-this-repository.md)).
+
+The plain script loads the page by a relative address (`BASE` is `visualiser/`), so it comes from the same site as OrderBot wherever OrderBot is hosted. The iframe is only loaded the first time someone opens the view, and the **OPEN FULL SCREEN** link (`#drawings-fullscreen`) opens the same address in a new tab, which the page suggests for printing.
 
 The visualiser is published encrypted. At a high level:
 
 1. The staff SharePoint page that embeds OrderBot adds the decryption key and a version number to the URL **fragment** of OrderBot's address (the part after `#`).
 2. `visualiserSrc` in the plain script reads them and builds the iframe address: the key goes into the visualiser's own fragment, and the version number becomes a cache-busting query parameter.
 3. Fragments are never sent to a web server, and the key is never committed to this repository. Opened without the key (for example from the bare GitHub Pages address), the visualiser shows its own passphrase screen instead.
+4. Once the key has unlocked the page, the visualiser's page removes it from its own address and keeps it for that tab, so a reload still works. Someone who types the passphrase can tick **Remember on this device** ([browser storage](../data-model.md#browser-storage)).
 
-Rotating the key or bumping the version is done in the SharePoint embed (and in `bd-tools`), not in this repository. See [Security](../security.md) and the [runbooks](../operations/runbooks.md).
+The script never changes for a new build or a new key. A new build replaces `visualiser/index.html`; a new key also means a new key in the SharePoint embed; and raising the version number in the embed makes browsers fetch the page again. See the [runbook](../operations/runbooks.md#publish-a-new-visualiser-build) and [Security](../security.md).
 
 ## Cost report (admin only)
 

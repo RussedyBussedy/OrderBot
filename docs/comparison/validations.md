@@ -22,7 +22,8 @@ flowchart TD
     C --> K["Controls"]
     K --> CH["Chain ratio"]
     CH --> M["validateMotorDependencies, whole order"]
-    M --> RS["validateRollerSystems, whole order"]
+    M --> RM["validateRollerMotors, whole order"]
+    RM --> RS["validateRollerSystems, whole order"]
     RS --> V["validateValances, whole order"]
     V --> O["validateOutdoorMotors, whole order"]
     O --> T["applyConfidenceThresholds"]
@@ -39,6 +40,7 @@ Computed once per line and reused by the chain check, the motor torque check and
 - The tube is looked up by Blind IQ's blind type: the exact key first, else the longest tube-table key contained in the blind type ("Element Roller Sys 40" finds "Element Roller"), skipping a key whose diameter contradicts a "40" or "55" in the type's name.
 - **Weight** (kg) = width (m) × drop (m) × fabric weight + width (m) × the bottom bar's kg per metre: 0.36 for SmartRail, 0.20 for a plastic bar, else 0.28 (aluminium), read from the line's options, including options packed into another one ("Hardware Colour = Mech Colour=White | Bottom Bar=White Plastic"). Calculated for roller blinds, and for any blind whose tube is found.
 - **Required torque** (Nm) = weight × 9.81 × tube radius (m), and **with a 20% safety margin** for the comparison with motors. Only when the tube is found, and not for an outdoor blind on a crank or a spring: it has no motor to size (Paul, 8 November 2026). A motorised Free Hang, Zip X, Channel X or Wire X gets it here, and the Zip X motor table replaces it at the end.
+- **On a Roller System 40 / 55 line this figure is replaced** further on by the lift-and-friction torque (`validateRollerMotors`, below): the lift at the heaviest point of travel with the fabric rolled on the tube and the bearing friction. That one needs no 20 % on top, so the line then has `torqueMethod: 'lift'` and no `requiredTorqueSafety`. The blue strip reads "RQD Torque: 1.18 Nm (lift and friction, with the fabric rolled on the tube)".
 - Stored as `blindWeight`, `requiredTorque` and `requiredTorqueSafety` (strings with two decimals).
 
 ### Fabric width, turning and Out of Warranty
@@ -102,7 +104,7 @@ A motor is recognised by its name in the table, not by the word "motor", because
 | Check | Result |
 |---|---|
 | No motor-table row for this motor **and** Blind IQ's blind type (exact name, any case) | "Motor Alert: No properties found…"; the other checks are skipped |
-| The motor's `torque` is under `requiredTorqueSafety` | `torqueValidation` |
+| The motor's `torque` is under `requiredTorqueSafety` | `torqueValidation`. On a Roller System 40 / 55 line `validateRollerMotors` (below) then replaces it with its own verdict, so this one only stands on other blind types with a tube row. |
 | The blind is narrower than the motor's `minWidth` | `minWidthValidation` |
 | No ordered adapter kit contains any of the row's `adapterKit` entries (the four spellings are treated alike, on both sides) | "Adapter Alert" |
 | None of the blind's controls equals one of the row's `blindControl` entries | "Control Alert: Missing valid control…" |
@@ -131,6 +133,26 @@ Runs only when Pass 1 found an instruction that **all** blinds get valances (`va
 - A **standalone valance line** has valance, pelmet, fascia or cassette wording and no drop, or a drop under 200 mm. Its width counts once per unit of its quantity (capped at 50).
 - Every other blind needs, for each unit of its quantity, an unused standalone valance **10–15 mm wider** than itself (it was wrongly 20–25 mm before). Otherwise it gets an error naming the nearest unused valance width, or a warning when its own width can't be read.
 - The order gets `valanceValidation.global` (an alert with the number of blinds that failed) or `valanceValidation.globalOk` (all passed, with any spare valances counted). Differences in valance type aren't flagged: when the customer didn't choose one, that's the capturer's call.
+
+### Roller motors: torque and battery life (validateRollerMotors)
+
+`validateRollerMotors` from `js/roller-selector.js` runs after the motor table's checks and before the System 40 / 55 limits (Russel, 13 November 2026). It works the torque out as the lift and the bearing friction, and adds how long a battery motor's charge lasts. The method, what it was checked against and the motors' data are in [Roller check](../roller-check.md#torque-and-battery-life).
+
+- **Every Roller System 40 / 55 line** with a fabric weight and a size gets `requiredTorque` by that method (a chain blind without a motor's weight in the tube) and `torqueMethod: 'lift'`. The simple formula's `requiredTorqueSafety` and its alert are removed. Double rollers and other roller types aren't worked out: the method is for one fabric on one tube.
+- **Which sundries are motors.** Those `rollerMotorOf` reads (BlindIQ's roller motors, also inside other wording such as "… Sonesse 30 Wire Free RTS 2nm (ZIQ20220)"), each with BlindIQ's own rating (`MOTORS`), not the motor table's `torque` column. A sundry it can't read is looked up in the motor table (`motorTable`): a row for Roller System 40 / 55 whose `motorName` is in the sundry, which is how the table's own check finds older motors ("Roll Up 28 Rts 1.1/28" has no "nm" in its name).
+- **Pairing.** One motor per unit of a sundry's quantity, one slot per unit of a line's quantity. The most demanding blind takes the strongest motor left that is of its kind (a One Touch Dual for a System 40 blind specified Dual) and fits its tube. Of equally strong motors the mains one goes first, then the bigger battery, so a battery alert means no other sharing-out avoids it. A line is judged on the weakest motor that falls to its units.
+- **`torqueValidation`** (it replaces the motor table's own torque alert on a paired line; both figures are compared to two decimals, as shown):
+  - `type: 'error'` (red, in the critical box): the motor's rated torque is under what the blind needs. On an order with more than one kind of motor the message says how they were paired.
+  - `type: 'warning'` (amber) instead, where the pairing can't be known:
+    - the order has fewer roller motors than motorised roller blinds, so some blinds take the dealer's own motors ("The order has 2 roller motors for 3 motorised roller blinds, so confirm which blinds take which motor");
+    - or the order also has motorised double rollers, Vision blinds or other roller types, and a stronger motor on it may be this blind's. When no motor on the order is strong enough it is still red (BDO673291: six 1.1 Nm motors for two double rollers and two Roller System 40 blinds). Outdoor blinds, curtains and venetians have motors of their own and don't count.
+  - `type: 'warning'` (amber): the torque is enough, but the blind is more than 50 g over the weight capacity Louvolite publishes for that One Touch motor.
+- **`batteryValidation`** (`type`, `message`, `months`, `days`, `basis`, `motor`), for a battery motor: how long one charge lasts at one up and down a day.
+  - `info` (blue, not an alert): "Battery: about 8½ months per charge at one up and down a day (One Touch Dual Motor Lithium Ion 1.1nm; an estimate from Louvolite's datasheet)." A figure worked out from a motor record ends "(…; the maker's own figures)".
+  - `warning` (amber, an alert, never in the critical box): under six months when the figure comes from the maker's own records; under four months when it is an estimate from the datasheet.
+  - `alternative` (`motor`, `months`, `days`, `basis`), under six months, flagged or not: the motor of the same range with the bigger battery, when the blind can take it and it would last a quarter longer (`biggerBatteryMotor`; Russel, 13 November 2026). The message then ends "The One Touch Dual Motor Lithium Ion 3.0nm, with a battery 2.9 times the size (10.8 V 5000 mAh against 7.4 V 2500 mAh), would last about 6½ months on this blind, by the same estimate." The motor must be for the same tube, strong enough, within its weight capacity and not longer than the blind is wide (Louvolite's minimum blind width, and the motor table's **Min W**). It changes no flag. The rules are in [Roller check](../roller-check.md#battery-life).
+- **A line with no motor to pair** (the dealer supplies the motors, or the sundry isn't read as a roller motor) keeps its torque and gets no battery line. Whatever the motor table's own check said of it stays.
+- **Replayed** over the latest check of every order from 1 August to 10 November 2026 (4,908 orders, 25,133 lines): 13,269 lines get the new torque. Three lines become red (BDO673291 C and D, BDO674642 B), where the old rule had no torque alert on any line. Five lines on three orders get the amber weight-capacity warning. 676 lines on 173 orders get a battery line, and 62 of them on 23 orders are flagged. Of the 324 battery lines under six months, 231 name the motor with the bigger battery (the One Touch Dual 3 Nm on all 177 of the 2 Nm's). No other validation changes. Those figures are by datasheet estimates and the fabric list of 10 November; with the motor records and the 45 fabric thicknesses Firestore has held since 13 November, 57 lines on 20 orders are flagged.
 
 ### Roller System 40 / 55: validateRollerSystems
 

@@ -4,22 +4,28 @@
 // Renders into #roller-check-view: one card per blind (fabric, size, bottom bar, chain or motor), with the
 // weight, the tube, the chain or the motors that lift it, and every warning, worked out by js/roller-selector.js
 // (the same rules the comparison flags with). A motor picked under "Motor on the order" is checked against the
-// blind: the tube it fits and its torque.
+// blind: the tube it fits, its torque (the lift and the bearing friction), Louvolite's weight capacity for it and, for a
+// battery motor, how long one charge lasts.
 //
 // Fabrics come from OrderBot's one fabric list (Fabric properties, Firestore orderbot_fabric_properties), read
 // through deps.getFabricProperties when the view opens; the motors and rules are in js/roller-selector.js. The
-// lines are kept in localStorage (ob_roller_lines) for the person using the page only. Everything is written as text nodes.
+// makers' own motor records (deps.getMotorCalcRecords, optional) make a battery figure the maker's instead of an
+// estimate from the datasheet. The lines are kept in localStorage (ob_roller_lines) for the person using the page
+// only. Everything is written as text nodes.
 //
 // Named exports only, no build step (browser-native ES module).
 // =============================================================================
 
 import { MOTORS, BRANDS, LIMITS, fabricsOf, protocolsOf, selectRollerSystem } from './roller-selector.js';
+import { monthsText } from './roller-motor-calc.js';
 
 const STORE = 'ob_roller_lines';
 const LEVEL_CLASS = { error: 'bg-red-100 text-red-800', warning: 'bg-yellow-100 text-yellow-800', info: 'bg-blue-100 text-blue-800', ok: 'bg-green-100 text-green-800' };
 const blank = () => ({ location: '', fabric: '', kgPerM2: '', width: '', drop: '', bar: 'Alu Bottom Bar', system: 'auto', control: 'chain', brand: '', power: '', protocol: '', motorName: '', has15: false, hasSpring: false });
 
-let root = null, lines = [], fabrics = null, fabricError = '', deps = {};
+let root = null, lines = [], fabrics = null, fabricError = '', deps = {}, records = null;
+// "· battery about 8½ months" beside a battery motor ("est." when it is worked out from the datasheet)
+const batteryNote = b => (b ? ` · battery ${monthsText(b.days)}${b.basis === 'estimate' ? ' (est.)' : ''}` : '');
 
 function load() {
     try { const v = JSON.parse(localStorage.getItem(STORE) || '[]'); if (Array.isArray(v) && v.length) return v.map(x => ({ ...blank(), ...x })); } catch (e) { /* private window, blocked storage */ }
@@ -93,6 +99,7 @@ function resultView(line) {
     const r = selectRollerSystem({
         ...line,
         fabrics,
+        records,
         system: line.system === 'auto' ? 'auto' : +line.system,
         kgPerM2: parseFloat(line.kgPerM2) || 0,
     });
@@ -102,13 +109,14 @@ function resultView(line) {
             // the weight shown is the one used: the list's, or the typed one when the list has none for this fabric
             stat('Fabric', r.fabric ? `${r.fabric.name} · ${r.fabric.kg ?? (parseFloat(line.kgPerM2) > 0 ? line.kgPerM2 + ' (typed)' : '?')} kg/m² · roll ${r.fabric.roll} mm` : (line.kgPerM2 ? line.kgPerM2 + ' kg/m²' : '—')),
             stat('Blind weight', r.kg != null ? r.kg.toFixed(2) + ' kg' : '—'),
-            stat('Torque +20 %', r.torque[40] != null ? `Sys 40 ${r.torque[40].toFixed(2)} · Sys 55 ${r.torque[55].toFixed(2)} Nm` : '—'),
+            // what a motor must give: the lift at the heaviest point with the bearing friction
+            stat('Torque needed', r.torque[40] != null && r.torque[55] != null ? `Sys 40 ${r.torque[40].toFixed(2)} · Sys 55 ${r.torque[55].toFixed(2)} Nm` : '—'),
             stat('System', r.system ? 'Roller System ' + r.system : '—'),
             stat(line.control === 'motor' ? 'Lightest motor that lifts it' : 'Chain', line.control === 'motor'
-                ? (r.recommended ? `${r.recommended.motor.name} (Sys ${r.recommended.system})` : '—')
+                ? (r.recommended ? `${r.recommended.motor.name} (Sys ${r.recommended.system})${batteryNote(r.recommended.battery)}` : '—')
                 : (r.chain ? r.chain.advice : '—')));
         wrap.append(stats);
-        if (r.alternatives.length) wrap.append(el('p', { class: 'text-xs text-slate-500 mb-2', text: 'Also lifts it: ' + r.alternatives.map(a => `${a.motor.name} (Sys ${a.system})`).join(' · ') }));
+        if (r.alternatives.length) wrap.append(el('p', { class: 'text-xs text-slate-500 mb-2', text: 'Also lifts it: ' + r.alternatives.map(a => `${a.motor.name} (Sys ${a.system})${batteryNote(a.battery)}`).join(' — ') }));
     }
     const msgs = r.messages.length ? r.messages : (r.width > 0 && r.drop > 0 && r.kg != null ? [{ level: 'ok', text: 'Within the selector\'s limits.' }] : []);
     msgs.forEach(m => wrap.append(el('div', { class: `p-2 mb-1 rounded text-sm font-semibold ${LEVEL_CLASS[m.level] || ''}`, text: m.text })));
@@ -129,7 +137,7 @@ function render() {
         el('div', { class: 'flex items-center justify-between mb-2 px-1' },
             el('p', { class: 'bd-overline', style: 'margin-bottom:0;', text: 'Roller check — Roller System Selector' })),
         el('div', { class: 'bd-card p-5 mb-4 text-sm text-slate-700' },
-            el('p', { text: `Roller System 40 and 55 blinds: the weight, the tube, the chain or the motors that lift it. System 40 to ${LIMITS[40].width} × ${LIMITS[40].drop} mm; System 55 to ${LIMITS[55].width} × ${LIMITS[55].drop} mm and ${LIMITS[55].kg} kg. Chain: 1:1 to 4 kg, 1.5:1 from 4 to 8 kg, System 55 beyond. Motors need their torque + 20 %, on the tube they go in. The same rules flag OrderBot's comparisons.` }), listNote),
+            el('p', { text: `Roller System 40 and 55 blinds: the weight, the tube, the chain or the motors that lift it. System 40 to ${LIMITS[40].width} × ${LIMITS[40].drop} mm; System 55 to ${LIMITS[55].width} × ${LIMITS[55].drop} mm and ${LIMITS[55].kg} kg. Chain: 1:1 to 4 kg, 1.5:1 from 4 to 8 kg, System 55 beyond. A motor's torque must cover the lift at the blind's heaviest point, with the fabric rolled on the tube, and the bearing friction, on the tube it goes in; a One Touch motor must also be within Louvolite's weight capacity. A battery motor shows how long one charge lasts at one up and down a day${records ? '' : ' (an estimate from the datasheet)'}. The same rules flag OrderBot's comparisons.` }), listNote),
         dl, list,
         el('div', { class: 'flex justify-center gap-3 mb-10' },
             el('button', { type: 'button', class: 'bd-btn-primary py-2 px-5', text: '+ Add a blind', onclick: () => { lines.push(blank()); save(); render(); } }),
@@ -149,6 +157,11 @@ async function loadFabrics() {
         fabrics = null;
         fabricError = "OrderBot's fabric list could not be loaded, so fabrics can't be looked up: try again, or type each fabric's weight (kg/m²).";
     }
+    // the makers' own motor records, when the page has them: optional, so a failure only leaves the estimates
+    try {
+        const getRecords = (deps && deps.getMotorCalcRecords) || (window.OrderBotRollerDeps && window.OrderBotRollerDeps.getMotorCalcRecords);
+        records = getRecords ? await getRecords() : null;
+    } catch (e) { records = null; }
 }
 // d: { getFabricProperties } (index.html): resolves to the fabric list (fabricList() in js/roller-selector.js)
 export async function initRollerCheck(d = {}) {

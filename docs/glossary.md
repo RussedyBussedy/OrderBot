@@ -10,6 +10,7 @@ The blind-trade, BlindIQ, OrderBot and platform terms used in this wiki and in t
 | 5 mm steps | BlindIQ holds most products' sizes in 5 mm steps. The converter rounds widths and drops read off an order to the step (…1 and …2 down, …3 and …4 up). Products made to the millimetre (shutters, Perfect Fit, outdoor and skylight products) are left alone. |
 | Admin mode | A switch in the converter that shows the mapping tools and the Cost report view. It's meant for Paul and Russel and is stored in the browser as `biq_admin`. It's a convenience to keep capturers out of the mapping tools, not a security control. The AI guidelines and the fabric, motor and tube tables aren't behind it. |
 | Allusion | A blind with fabric vanes hung on a vertical-style track. Its fabrics come in 107 mm (or 90 mm) widths. |
+| Battery life (autonomy) | How long one charge of a battery (wire-free) motor lasts at one up and down a day. It is shown on each battery-motor line and flagged when it won't reach the six months Blind Designs quotes ([Roller check](roller-check.md#battery-life)). |
 | BD order form | Blind Designs' own fillable PDF order forms. The converter reads them with `js/biq-form-specs.js`. |
 | `BD_STANDARDS` | The text in `js/comparison-context.js` that tells the AI what Blind Designs supplies when the customer doesn't say (White hardware, 5 mm steps, control-drop formulas and so on). |
 | BDO number | BlindIQ's order number for a Blind Designs order, e.g. `BDO672621`. Comparisons are saved and searched by it. |
@@ -65,7 +66,7 @@ The blind-trade, BlindIQ, OrderBot and platform terms used in this wiki and in t
 | Steel Ball Chain | A metal chain option instead of the standard plastic chain on roller blinds. Many dealers order it as a standing choice, so the comparison doesn't treat silence about it as a mistake. |
 | Sundry | A part ordered on its own line on a BlindIQ order: motors, remotes, chargers, adaptors, accessories. BlindIQ sundries have types, and motors resolve only within the seven motor sundry types. |
 | System X (Zip X, Channel X, Wire X, Free Hang) | Outdoor blind systems whose sides are held by a zip, a channel or a wire, or hang free. |
-| Torque (Nm) | A motor's turning force. OrderBot estimates the torque a roller blind needs from its size, fabric weight and bottom bar, and checks the motor against it. |
+| Torque (Nm) | A motor's turning force. OrderBot works out the torque a roller blind needs from its size, fabric and bottom bar, and checks the motor against it. For Roller System 40 / 55 it is the lift at the heaviest point of travel, with the fabric rolled on the tube and the bearing friction ([Roller check](roller-check.md#torque)). |
 | Tube | The roller tube a blind winds onto. Its diameter, set per blind type in the Tube properties table, feeds the torque check. |
 | Universal Frame | A Perfect Fit frame for when the blind can't clip into the window's beading. It always uses 24 mm clips and isn't something the customer orders as a clip size. |
 | Urban shutters | A shutter range. Panels from 1201 to 1800 mm without a middle rail get a 100 mm rail. |

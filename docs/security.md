@@ -25,7 +25,7 @@ How OrderBot is protected today, what data it handles, and the rules every chang
 
 ## Rules for every change
 
-1. **No secrets in code**, ever: not in the repository, not in commit history, not in a pull request description. Server-side keys go in Secret Manager. The visualiser's key, its passphrase and its unencrypted page are secrets too: every file on `main` is published. If a secret is committed by mistake, rotate it first and clean the history second.
+1. **No secrets in code**, ever: not in the repository, not in commit history, not in a pull request description. Server-side keys go in Secret Manager. The visualiser's key, its passphrase and its unencrypted page are secrets too: every file on `main` is published. So are the motor makers' own records for the battery calculation, which are not published figures: the repository holds only published datasheet figures, and the page reads the records from Firestore ([roller check](roller-check.md#battery-life)). If a secret is committed by mistake, rotate it first and clean the history second.
 2. **Treat document and database text as untrusted.** Customer documents, AI answers and anything in Firestore can contain markup. Put such text on the page with `textContent` or an escaping helper, never by building HTML strings from it. The cost report console already follows this rule for Firestore data.
 3. **Pin third-party code.** Load libraries at a fixed version with an integrity (SRI) hash, and update them deliberately in their own pull request ([architecture.md](architecture.md#libraries-loaded-from-cdns)).
 4. **Keep the backend minimal.** The proxy should do as little as possible. Anything added to it (checks, limits) goes in its own pull request and is tested on its own (`CLAUDE.md` rule 2).

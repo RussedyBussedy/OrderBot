@@ -149,11 +149,12 @@ Because of the top-level `await`, **nothing below it runs until sign-in has fini
 | `./js/comparison-context.js` | Named | `selectRelevantFeedback`, `formatCorrectionExamples`, `BD_STANDARDS`, `NOT_SPECIFIED_RULES`, `READING_RULES`, `RESULT_VALUES`, `describeConverterReading`, `SECOND_READING_PROMPT`, `secondReadingSchema` |
 | `./js/comparison-checks.js` | Named, and namespace `Checks` | `applyDeterministicChecks`, `reconcileSecondReading`, `needsSecondReading`; `Checks.applyExactReading` |
 | `./js/outdoor-motors.js` | Named | `validateOutdoorMotors` |
+| `./js/roller-selector.js` | Named, and namespace `RollerRules` | `fabricList`, `findFabric`, `aliasList`, `ROLL_ALLOWANCE`, `notOnRollerRolls`, `barKg`, `barOf`, `chainCheck`, `has15Of`, `hasSpringOf`, `rollerSystemOf`, `validateRollerSystems`; `RollerRules.validateRollerMotors` (13 Nov 2026) |
 | `./js/cost-report-console.js` | Dynamic `import()`, admin mode only | `initCostReportConsole` |
 
-`orderBy`, `limit` and `startAfter` are imported but not used (they're left over from a paged history search). `getDoc` and `serverTimestamp` are only passed on to the cost report console.
+`orderBy`, `limit` and `startAfter` are imported but not used (they're left over from a paged history search). `serverTimestamp` is only passed on to the cost report console; `getDoc` also reads the optional motor records (`getMotorCalcRecords`).
 
-**Why the namespace imports.** According to the comment beside them, GitHub Pages lets browsers cache each file for up to ten minutes, so for a few minutes after a deploy a browser can run the new `index.html` with an old copy of a module. A named import of an export that the old copy doesn't have is a load error that stops the whole module, and with it the page. A namespace import just gives `undefined` for the missing export, and the code checks before calling it (`if (Checks.applyExactReading)`, `BiqUI.biqReadCustomerFile ? … : null`, `BiqUI.biqComparisonCatalogue ? … : null`). The same idea is behind the "(1/2: js)" then "(2/2)" commit pairs: the modules ship first, the `index.html` that uses them second.
+**Why the namespace imports.** According to the comment beside them, GitHub Pages lets browsers cache each file for up to ten minutes, so for a few minutes after a deploy a browser can run the new `index.html` with an old copy of a module. A named import of an export that the old copy doesn't have is a load error that stops the whole module, and with it the page. A namespace import just gives `undefined` for the missing export, and the code checks before calling it (`if (Checks.applyExactReading)`, `BiqUI.biqReadCustomerFile ? … : null`, `BiqUI.biqComparisonCatalogue ? … : null`, `if (typeof validateRollerMotors === 'function')` for `RollerRules.validateRollerMotors`). The same idea is behind the "(1/2: js)" then "(2/2)" commit pairs: the modules ship first, the `index.html` that uses them second.
 
 ### Top-level state
 
@@ -166,6 +167,7 @@ Because of the top-level `await`, **nothing below it runs until sign-in has fini
 | `_feedbackGuidelineCache` | Corrections and guidelines for the prompt, with the time they were loaded |
 | `historyDataCache`, `lastHistoryDoc` | History search leftovers: the first is filled but never read, the second is never set to a document |
 | `confirmCallback` | What the confirm modal runs on **Confirm** |
+| `motorCalcRecords`, `motorCalcPromise` | The makers' own motor records for the battery calculation (`orderbot_motor_calc/records`), `null` when the document isn't there, and the one read that fetches them |
 | `CRITICAL_FIELD_LABELS`, `VALANCE_KEYWORDS` | Constants for the critical sweep and the valance check |
 
 `allDomElements` is one object of element references, looked up by ID once at start-up. Add new static elements there. A few elements are still fetched directly with `document.getElementById` (the critical modal, the progress bar, the toast container).
@@ -185,7 +187,7 @@ Because of the top-level `await`, **nothing below it runs until sign-in has fini
 | Collapsibles | `setupCollapsible` |
 | Fabric properties | `setupFabricDropZone`, `processFabricFile`, `parseCsvAndExtractFabricData`, `uploadFabricProperties`, `loadAndDisplayFabricProperties`, `renderFabricRow`, `getFabricProperties` |
 | Post-AI checks | `applyConfidenceThresholds`, `analyzeReasoningPatterns`, `runPostAIValidations`, `validateValances`, `validateMotorDependencies` |
-| Motor properties | `setupMotorDropZone`, `processMotorFile`, `parseCsvAndExtractMotorData`, `uploadMotorProperties`, `loadAndDisplayMotorProperties`, `renderMotorRow`, `getMotorProperties` |
+| Motor properties | `setupMotorDropZone`, `processMotorFile`, `parseCsvAndExtractMotorData`, `uploadMotorProperties`, `loadAndDisplayMotorProperties`, `renderMotorRow`, `getMotorProperties`, `getMotorCalcRecords` |
 | Tube properties | `setupTubeDropZone`, `processTubeFile`, `parseCsvAndExtractTubeData`, `uploadTubeProperties`, `loadAndDisplayTubeProperties`, `renderTubeRow`, `getTubeProperties` |
 | Initial load | The sequence below |
 | Plain script | `visualiserSrc`, `init`, `show` |
@@ -197,7 +199,7 @@ Event listeners are attached where each group's code runs, top to bottom, so the
 At the bottom of the module, in this order:
 
 1. `addNewPair()`: the first, empty pair.
-2. `loadAndDisplayGuidelines()`, `loadAndDisplayFabricProperties()`, `loadAndDisplayMotorProperties()`, `loadAndDisplayTubeProperties()`. These are `async` and not awaited: the lists fill in as Firestore answers.
+2. `loadAndDisplayGuidelines()`, `loadAndDisplayFabricProperties()`, `loadAndDisplayMotorProperties()`, `loadAndDisplayTubeProperties()`, then `getMotorCalcRecords()`. These are `async` and not awaited: the lists fill in as Firestore answers.
 3. `setupCollapsible` for the guidelines, fabric, motor and tube cards (`ob_guidelines_open`, `ob_fabric_open`, `ob_motor_open`, `ob_tube_open`).
 4. The pdf.js worker address.
 5. `setupCollapsible` for the converter section (`ob_biq_open`), then `BiqUI.initBiqConverter(deps)`. The converter receives what it needs from the page instead of importing it: `db` and the Firestore functions `collection`, `doc`, `getDocs`, `setDoc` and `onSnapshot`; `PROXY_API_URL`, `EXTRACTION_MODEL` and `COMPARISON_MODEL`; `getFabricProperties`, `getMotorProperties` and `getTubeProperties`; `runPostAIValidations`; `showToast` and `showConfirmModal`.

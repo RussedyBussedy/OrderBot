@@ -6,9 +6,13 @@
 // sell and missed Optuo RTS 3Nm, Sonesse 40 Wired 3/6Nm, Zigbee 220V 6/9Nm and One Touch+ 220V 1.8Nm.
 //
 // Weight = fabric kg/m² × width × drop + bottom bar kg/m × width (aluminium 0.28, SmartRail 0.36, plastic 0.20).
-// Torque = weight × 9.81 × tube radius (System 40 0.020 m, System 55 0.0275 m), plus 20 %; a motor fits when its
-// torque is at least that. The torque is worked out on the tube the motor goes in, so a System 40-sized blind
-// that needs a System 55 motor is checked at the 55 mm radius (V2.1 kept the 40 mm one).
+// Torque: since 13 Nov 2026 the lift and the friction (Russel; js/roller-motor-calc.js): the hanging weight on the
+// tube's radius plus the fabric rolled on it, plus bearing friction, at the heaviest point of travel; a motor fits
+// when its rated torque is at least that. Before, it was the workbook's weight × 9.81 × tube radius (System 40
+// 0.020 m, System 55 0.0275 m) plus 20 % (torqueNeeded, kept for a line the new method can't work out); the new
+// figure is 7 to 49 % above it. Louvolite also gives each One Touch motor a weight capacity, checked beside the
+// torque. The torque is worked out on the tube the motor goes in, so a System 40-sized blind that needs a System 55
+// motor is checked on the 55 mm tube (V2.1 kept the 40 mm one). A battery motor also gets how long one charge lasts.
 // Sizes: System 40 to 3200 × 3400 mm, System 55 to 4000 × 4500 mm and 11.5 kg (the selling limits in
 // biq-converter.js's BIQ_SELL_LIMITS). Chain: System 40 1:1 to 4 kg, 1.5:1 from 4 to 8 kg, over 8 kg System 55.
 // A Roller System 40 of 4–8 kg without the 1.5:1 is red: the capturer must spec it (Russel, 5 Nov 2026; amber from
@@ -23,7 +27,10 @@
 // Fabrics: there is ONE list, OrderBot's Fabric properties (Firestore orderbot_fabric_properties, edited in the
 // panel on the Orders view; Russel, 2 Nov 2026). Nothing here keeps a copy: the caller passes the list built by
 // fabricList(). Each fabric is { fabricName, fabricWeight (kg/m²), fabricWidth (roll mm), canTurn (Yes / No / Out),
-// aliases (other spellings: BlindIQ's range names such as "Didsbury Block", dealer spellings) }.
+// aliases (other spellings: BlindIQ's range names such as "Didsbury Block", dealer spellings),
+// fabricThickness (mm, optional: the spec sheet's nominal thickness, for the torque; 0.48 mm when it isn't there) }.
+
+import { DEFAULTS, BATTERY, liftTorque, motorKgOf, overCapacity, chargeWh, batteryLife, batteryMessage, monthsText, minWidthOf, biggerBattery, MOTOR_DATA } from './roller-motor-calc.js';
 
 export const RADIUS = { 40: 0.02, 55: 0.0275 };
 export const SAFETY = 1.2;
@@ -42,12 +49,13 @@ const mmOf = v => { const m = s(v).match(/\d{2,5}(?:\.\d+)?/); return m ? parseF
 export const aliasList = v => (Array.isArray(v) ? v : s(v).split(/[,;|]/)).map(s).filter(Boolean);
 
 // Fabric properties documents -> Map keyed by every name and alias (lower case). Each value keeps the
-// document's own fields and adds { name, kg, roll, turn }: kg null when the weight is missing or implausible
-// (over 5 kg/m², e.g. 450 typed for 0.45), turn 'yes' | 'out' | 'no'.
+// document's own fields and adds { name, kg, roll, turn, thick }: kg null when the weight is missing or implausible
+// (over 5 kg/m², e.g. 450 typed for 0.45), turn 'yes' | 'out' | 'no', thick the thickness in mm (null when it is
+// missing or not between 0 and 3 mm).
 const fabricFields = d => {
-    const kg = parseFloat(d.fabricWeight), t = lc(d.canTurn);
+    const kg = parseFloat(d.fabricWeight), t = lc(d.canTurn), mm = parseFloat(d.fabricThickness);
     return { name: s(d.fabricName), kg: kg > 0 && kg <= 5 ? kg : null, roll: parseInt(d.fabricWidth, 10) || null,
-        turn: /^y/.test(t) ? 'yes' : /^o/.test(t) ? 'out' : 'no', aliases: aliasList(d.aliases) };
+        turn: /^y/.test(t) ? 'yes' : /^o/.test(t) ? 'out' : 'no', aliases: aliasList(d.aliases), thick: mm > 0 && mm <= 3 ? mm : null };
 };
 export function fabricList(docs) {
     const map = new Map(), all = [];
@@ -172,6 +180,10 @@ export function rollerMotorOf(text) {
     const known = MOTORS.find(m => t === lc(m.name) || t.endsWith(' ' + lc(m.name)));
     if (known) return { nm: known.nm, systems: known.systems, name: known.name };
     if (NOT_A_ROLLER_MOTOR.test(t)) return null;
+    // BlindIQ's name inside other wording, the longest first ("ZIQ20220 Motors Somfy Rts Sonesse 30 Wire Free RTS 2nm
+    // (Qty: 10.00)", "One Touch Dual Motor Lithium Ion 2.0nm (ZIQ40005)"): the motor itself, so its data is found
+    const inside = MOTORS.filter(m => t.includes(lc(m.name))).sort((a, b) => b.name.length - a.name.length)[0];
+    if (inside) return { nm: inside.nm, systems: inside.systems, name: inside.name };
     // another wording of a roller motor: only with its torque, which every BlindIQ roller motor name gives
     const nmM = t.match(/(\d+(?:\.\d+)?)\s*n\.?m\b/);
     if (!nmM) return null;
@@ -206,22 +218,64 @@ export function chainCheck(system, kg, { has15 = false, hasSpring = false, can15
     return null;
 }
 
-// The motors that lift the blind on a tube, weakest first: [{ motor, system, needed }] (needed = Nm incl. 20 %)
-function fittingMotors(kg, systems, { brand, power, protocol }) {
-    const out = [];
+// What a motor must give on a tube (Nm): the lift and friction with a motor of motorKg in the tube (0 for a chain blind),
+// or the workbook's weight × 9.81 × radius + 20 % for a blind too short for the method (under some 200 mm of drop).
+// To two decimals, as it is shown: a 2 Nm motor passes a blind that "needs 2.00 Nm".
+const round2 = x => Math.round(x * 100) / 100;
+const needOn = (spec, kg, motorKg) => { const t = liftTorque(spec, motorKg); return round2(t && t.nm != null ? t.nm : torqueNeeded(kg, spec.system)); };
+
+// The motors that lift the blind on a tube, weakest first: fit = [{ motor, system, needed }] (needed = the torque with
+// that motor in the tube). A One Touch motor whose weight capacity the blind exceeds is never offered: capped lists
+// those the torque alone would have allowed.
+function fittingMotors(specOn, kg, systems, { brand, power, protocol }, records) {
+    const fit = [], capped = [];
     for (const m of MOTORS) {
         if (brand && m.brand !== brand) continue;
         if (power && m.power !== power) continue;
         if (protocol && m.protocol !== protocol) continue;
         if (m.variant) continue;
+        const cap = overCapacity(m.name, kg);
         for (const sys of systems) {
             if (!m.systems.includes(sys)) continue;
-            const needed = torqueNeeded(kg, sys);
-            if (needed != null && m.nm >= needed) out.push({ motor: m, system: sys, needed });
+            const needed = needOn(specOn(sys), kg, motorKgOf(m.name, records));
+            if (needed == null || m.nm < needed) continue;
+            if (cap) capped.push({ motor: m, system: sys, cap });
+            else fit.push({ motor: m, system: sys, needed });
         }
     }
     // System 40 first (no tube upgrade), then the smallest motor
-    return out.sort((a, b) => (a.system - b.system) || (a.motor.nm - b.motor.nm));
+    fit.sort((a, b) => (a.system - b.system) || (a.motor.nm - b.motor.nm));
+    return { fit, capped };
+}
+
+// The motor of the same range that would last longer on this blind. Russel (13 Nov 2026): "if someone has spec'd a
+// one touch dual 2nm motor and the battery autonomy would only be 2 months, could you give them what a 3nm one touch
+// dual motor would be as a comparison?" (The 3 Nm's battery is 10.8 V 5000 mAh, the 2 Nm's 7.4 V 2500 mAh.)
+// Asked when a charge lasts under six months (BATTERY.minDays), flagged or not. The motor must have the bigger
+// battery by its datasheet (a tenth or more: a published fact, where how much current a motor draws is mostly
+// assumed), and be one the blind can take as it stands: the same brand and protocol (a Matter & Thread motor for a
+// Matter & Thread one), not a short or no-battery version, for the blind's own tube, strong enough with its own
+// weight in the tube, within its weight capacity, and not longer than the blind is wide (MOTOR_DATA's minimum blind
+// width, and the caller's: the comparison passes the motor table's). Of those, the one that lasts longest, and only
+// when that is a quarter longer than the motor on the blind (BATTERY.altGain).
+// spec: the blind on its tube (rollerBlind's shape); kg: fabric + bottom bar; life: batteryLife() of motorName on it.
+// -> { motor, nm, days, basis } or null
+export function biggerBatteryMotor(spec, kg, motorName, life, { records, minWidthOf: callerMinWidth } = {}) {
+    const own = MOTORS.find(m => m.name === motorName);
+    if (!own || !spec || !life || !(life.days > 0)) return null;
+    let best = null;
+    for (const m of MOTORS) {
+        if (m === own || m.variant || m.power !== 'wf' || m.brand !== own.brand || m.protocol !== own.protocol || !m.systems.includes(spec.system)) continue;
+        if (!biggerBattery(m.name, own.name)) continue;
+        const minWidth = Math.max(minWidthOf(m.name) || 0, (typeof callerMinWidth === 'function' && callerMinWidth(m.name)) || 0);
+        if (minWidth > 0 && spec.widthMm < minWidth) continue;
+        if (kg > 0 && overCapacity(m.name, kg)) continue;
+        if (!(m.nm >= needOn(spec, kg, motorKgOf(m.name, records)))) continue;
+        const l = batteryLife(spec, m.name, m.nm, records);
+        if (!l || !(l.days >= life.days * BATTERY.altGain)) continue;
+        if (!best || l.days > best.days) best = { motor: m.name, nm: m.nm, days: l.days, basis: l.basis };
+    }
+    return best;
 }
 
 // One blind, as the selector's multi-line sheet works it out, with every warning (V2.1 showed only the first).
@@ -229,8 +283,11 @@ function fittingMotors(kg, systems, { brand, power, protocol }) {
 //          kgPerM2 (a weight typed for a fabric that isn't in the list or has no usable weight there; a listed
 //          fabric's own weight wins, and a message says so),
 //          width, drop, bar, control: 'chain' | 'motor', brand, power: 'wf' | '220v', protocol, motorName (a MOTORS name
-//          to check), has15, hasSpring }
-// -> { fabric, kg, widthCheck, system, chain, torque: {40, 55}, recommended, alternatives, motorCheck, messages }
+//          to check), has15, hasSpring, records (the makers' own motor records, when the page has them) }
+// -> { fabric, kg, widthCheck, system, chain, torque: {40, 55} (what a motor must give on each tube), recommended,
+//      alternatives (each { motor, system, needed, battery }), motorCheck, motorBattery, motorBatteryAlternative, messages }
+// battery / motorBattery: how long one charge lasts (batteryLife in js/roller-motor-calc.js), null for a 220V motor.
+// motorBatteryAlternative: under six months, the same range's motor that would last longer (biggerBatteryMotor), or null.
 export function selectRollerSystem(input) {
     const width = mmOf(input.width), drop = mmOf(input.drop);
     const messages = [];
@@ -241,7 +298,7 @@ export function selectRollerSystem(input) {
     // read 1.96 kg and "Standard 1:1 chain" where the list's 0.569 gives 4.31 kg and the 1.5:1 (Nov 2026).
     const typedKg = input.kgPerM2 > 0 ? +input.kgPerM2 : null, listedKg = fabric && fabric.kg > 0 ? fabric.kg : null;
     const kgM2 = listedKg != null ? listedKg : typedKg;
-    const res = { fabric, width, drop, kg: null, widthCheck: null, system: null, chain: null, torque: {}, recommended: null, alternatives: [], motorCheck: null, messages };
+    const res = { fabric, width, drop, kg: null, widthCheck: null, system: null, chain: null, torque: {}, recommended: null, alternatives: [], motorCheck: null, motorBattery: null, motorBatteryAlternative: null, messages };
     if (!(width > 0) || !(drop > 0)) { add('info', 'Enter the width and drop.'); return res; }
     if (input.fabric && !fabric) add('warning', `"${s(input.fabric)}" isn't in OrderBot's fabric list — enter its weight (kg/m²), or add it under Fabric properties on the Orders view.`);
     if (fabric && fabric.kg == null && !(input.kgPerM2 > 0)) add('warning', `OrderBot's fabric list has no usable weight for ${fabric.name} — enter it (kg/m²), and correct it under Fabric properties.`);
@@ -256,7 +313,10 @@ export function selectRollerSystem(input) {
     const fits40 = fitsSize(40, width, drop), fits55 = fitsSize(55, width, drop);
     if (forced && !fitsSize(forced, width, drop)) add(forced === 55 || !fits55 ? 'error' : 'warning', `${width} × ${drop} mm is beyond the System ${forced} selling limit (${LIMITS[forced].width} × ${LIMITS[forced].drop} mm) — Out of Warranty, ask the factory.`);
     if (!forced && !fits55) add('error', `${width} × ${drop} mm is beyond every roller system (System 55 to ${LIMITS[55].width} × ${LIMITS[55].drop} mm) — ask the factory.`);
-    if (kg != null) { res.torque[40] = torqueNeeded(kg, 40); res.torque[55] = torqueNeeded(kg, 55); }
+    // the blind on a tube, as js/roller-motor-calc.js takes it (the fabric's own thickness when the list has it)
+    const specOn = sys => ({ system: sys, widthMm: width, dropMm: drop, kgPerM2: kgM2, thicknessMm: fabric ? fabric.thick : null, barKgPerM: barKg(input.bar) });
+    const inTube = input.control === 'motor' ? DEFAULTS.motorKg : 0;
+    if (kg != null) { res.torque[40] = needOn(specOn(40), kg, inTube); res.torque[55] = needOn(specOn(55), kg, inTube); }
 
     if (input.control !== 'motor') {
         let sys = forced || (fits40 && !(kg > CHAIN.sys40Max) ? 40 : 55);
@@ -275,15 +335,17 @@ export function selectRollerSystem(input) {
     if (kg == null) {
         res.system = forced || (fits40 ? 40 : 55);
         add('info', 'Enter the fabric (or its weight) to work out the torque and the motors that lift it.');
-        checkMotorOnOrder(input, res, { kg, forced, fits40, add });
+        checkMotorOnOrder(input, res, { kg, forced, fits40, add, specOn });
         return res;
     }
     const filters = { brand: input.brand || '', power: input.power || '', protocol: input.protocol || '' };
-    const fit = fittingMotors(kg, systems, filters);
+    const { fit, capped } = fittingMotors(specOn, kg, systems, filters, input.records);
+    const cappedNames = [...new Set(capped.map(c => `${c.motor.name} (${c.cap} kg)`))];
+    const withBattery = x => ({ ...x, battery: batteryLife(specOn(x.system), x.motor.name, x.motor.nm, input.records) });
     if (fit.length) {
-        res.recommended = fit[0];
+        res.recommended = withBattery(fit[0]);
         // each motor once, on the tube it is listed first for
-        res.alternatives = fit.slice(1).filter((x, i, a) => x.motor !== fit[0].motor && a.findIndex(y => y.motor === x.motor) === i).slice(0, 3);
+        res.alternatives = fit.slice(1).filter((x, i, a) => x.motor !== fit[0].motor && a.findIndex(y => y.motor === x.motor) === i).slice(0, 3).map(withBattery);
         res.system = fit[0].system;
         if (!forced && fits40 && fit[0].system === 55) {
             const any40 = MOTORS.some(m => !m.variant && m.systems.includes(40) && (!filters.brand || m.brand === filters.brand)
@@ -296,38 +358,59 @@ export function selectRollerSystem(input) {
     } else {
         res.system = forced || (fits40 ? 40 : 55);
         // say what would work instead, never change the power or brand silently
-        const other = fittingMotors(kg, systems, { brand: filters.brand })[0] || fittingMotors(kg, systems, {})[0];
+        const other = fittingMotors(specOn, kg, systems, { brand: filters.brand }, input.records).fit[0] || fittingMotors(specOn, kg, systems, {}, input.records).fit[0];
         // no such motor for these tubes at all, or none strong enough
         const anyForTube = MOTORS.some(m => !m.variant && systems.some(x => m.systems.includes(x)) && (!filters.brand || m.brand === filters.brand)
             && (!filters.power || m.power === filters.power) && (!filters.protocol || m.protocol === filters.protocol));
-        const tubes = 'System ' + systems.join(' or ');
-        add('error', (anyForTube
-            ? `No ${describe(filters)} motor is strong enough for ${kg.toFixed(1)} kg (needs ${torqueNeeded(kg, systems[systems.length - 1]).toFixed(2)} Nm on System ${systems[systems.length - 1]} incl. 20 %)`
-            : `There is no ${describe(filters)} motor for a ${tubes} tube`) + (other ? ` — ${other.motor.name} (System ${other.system}) would.` : '.'));
+        const tubes = 'System ' + systems.join(' or '), last = systems[systems.length - 1];
+        // none for these tubes at all; or the torque would do but the blind is over Louvolite's weight capacity for
+        // every one that has it; or none strong enough
+        add('error', (!anyForTube ? `There is no ${describe(filters)} motor for a ${tubes} tube`
+            : capped.length ? `No ${describe(filters)} motor takes ${kg.toFixed(1)} kg: it is over the weight capacity Louvolite gives the ${cappedNames.join(', the ')}, whose torque would do`
+                : `No ${describe(filters)} motor is strong enough for ${kg.toFixed(1)} kg (needs ${needOn(specOn(last), kg, DEFAULTS.motorKg).toFixed(2)} Nm on System ${last})`)
+            + (other ? ` — ${other.motor.name} (System ${other.system}) would.` : '.'));
     }
+    // Louvolite's weight capacity kept a motor out that the torque alone would have allowed: say so
+    if (capped.length && fit.length) add('info', `${kg.toFixed(1)} kg is over the weight capacity Louvolite gives the ${cappedNames.join(', the ')}: not offered, although the torque would do.`);
     if (res.system === 55 && kg > LIMITS[55].kg) add('error', `${kg.toFixed(1)} kg is over System 55's ${LIMITS[55].kg} kg limit.`);
+    // the motor the selector would pick: a battery that won't last is worth knowing before it is ordered, with what the
+    // same range's longer-lasting motor would give
+    if (res.recommended && res.recommended.battery && res.recommended.battery.short && !input.motorName) {
+        const r = res.recommended, alt = biggerBatteryMotor(specOn(r.system), kg, r.motor.name, r.battery, { records: input.records });
+        add('warning', batteryMessage(r.battery, r.motor.name, alt).message);
+    }
 
-    checkMotorOnOrder(input, res, { kg, forced, fits40, add });
+    checkMotorOnOrder(input, res, { kg, forced, fits40, add, specOn });
     return res;
 }
-// The motor picked under "Motor on the order": the tube it fits (also without a weight) and, with one, its torque.
+// The motor picked under "Motor on the order": the tube it fits (also without a weight) and, with one, its torque,
+// the maker's weight capacity and, for a battery motor, how long a charge lasts.
 // The tube is the one the blind must have: the system picked, else System 55 when the size is over System 40's,
 // else System 40 when the motor fits it (System 55 for a System 55-only motor, a motor upgrade).
-function checkMotorOnOrder(input, res, { kg, forced, fits40, add }) {
+function checkMotorOnOrder(input, res, { kg, forced, fits40, add, specOn }) {
     if (!input.motorName) return;
     const parsed = MOTORS.find(x => x.name === input.motorName) || rollerMotorOf(input.motorName);
     if (!parsed) return;
     const sys = forced || (!fits40 ? 55 : parsed.systems.includes(40) ? 40 : 55);
     const tubeOk = parsed.systems.includes(sys);
-    const needed = kg != null ? torqueNeeded(kg, sys) : null;
+    const needed = kg != null ? needOn(specOn(sys), kg, motorKgOf(parsed.name, input.records)) : null;
     const strongOk = needed == null || parsed.nm == null || parsed.nm >= needed;
-    res.motorCheck = { ok: tubeOk && strongOk, system: sys, needed, nm: parsed.nm };
+    const cap = kg != null ? overCapacity(parsed.name, kg) : null, capOk = !cap;
+    res.motorCheck = { ok: tubeOk && strongOk && capOk, system: sys, needed, nm: parsed.nm, capKg: cap };
     if (tubeOk) res.system = sys;          // the order's motor decides the tube
     if (!tubeOk) add('error', `${parsed.name} doesn't fit a System ${sys} tube (it goes in System ${parsed.systems.join(' / ')}).`);
-    else if (!strongOk) add('error', `${parsed.name} (${parsed.nm} Nm) is too weak: ${kg.toFixed(1)} kg on System ${sys} needs ${needed.toFixed(2)} Nm incl. 20 %.`);
-    else if (needed != null) add('ok', `${parsed.name} lifts it on System ${sys} (${parsed.nm} Nm, needs ${needed.toFixed(2)} Nm incl. 20 %).`);
+    else if (!strongOk) add('error', `${parsed.name} (${parsed.nm} Nm) is too weak: ${kg.toFixed(1)} kg on System ${sys} needs ${needed.toFixed(2)} Nm.`);
+    else if (needed != null) add('ok', `${parsed.name} lifts it on System ${sys} (${parsed.nm} Nm, needs ${needed.toFixed(2)} Nm).`);
     else add('ok', `${parsed.name} fits a System ${sys} tube.`);
+    if (tubeOk && strongOk && !capOk) add('warning', `${kg.toFixed(1)} kg is over the weight capacity Louvolite gives the ${parsed.name} (${cap} kg), although its torque would do. Confirm the motor.`);
     if (tubeOk && !forced && sys === 55 && fits40) add('info', `${parsed.name} goes in System 55, so the blind is made on System 55.`);
+    if (tubeOk && kg != null) {
+        const life = res.motorBattery = batteryLife(specOn(sys), parsed.name, parsed.nm, input.records);
+        // under six months: what the same range's longer-lasting motor would give on this blind
+        res.motorBatteryAlternative = life && life.days < BATTERY.minDays ? biggerBatteryMotor(specOn(sys), kg, parsed.name, life, { records: input.records }) : null;
+        const msg = batteryMessage(life, parsed.name, res.motorBatteryAlternative);
+        if (msg) add(msg.type, msg.message);
+    }
 }
 const describe = f => [f.brand, f.protocol, f.power === 'wf' ? 'wire-free' : f.power === '220v' ? '220V' : ''].filter(Boolean).join(' ') || 'roller';
 
@@ -406,9 +489,11 @@ export function validateRollerSystems(data) {
         const kg = parseFloat(it.blindWeight);
         if (sys === 55 && kg > LIMITS[55].kg) note(it, 'error', `Roller System: ${kg.toFixed(1)} kg is over System 55's ${LIMITS[55].kg} kg limit — ask the factory.`);
         if (sys === 40 && motorised(it) && kg > 0) {
-            // past the strongest System 40 motor only a System 55 motor lifts the blind
-            const need = torqueNeeded(kg, 40), max = MAX_SYS40_NM();
-            if (need > max) note(it, 'warning', `Roller System: ${kg.toFixed(1)} kg needs ${need.toFixed(2)} Nm incl. 20 % — more than any System 40 motor (${max} Nm): System 55.`);
+            // past the strongest System 40 motor only a System 55 motor lifts the blind. The torque is the one
+            // validateRollerMotors worked out (lift and friction) when it ran before this, else the simple formula's
+            const lifted = it.torqueMethod === 'lift' && parseFloat(it.requiredTorque) > 0;
+            const need = lifted ? parseFloat(it.requiredTorque) : torqueNeeded(kg, 40), max = MAX_SYS40_NM();
+            if (need > max) note(it, 'warning', `Roller System: ${kg.toFixed(1)} kg needs ${need.toFixed(2)} Nm${lifted ? '' : ' incl. 20 %'} — more than any System 40 motor (${max} Nm): System 55.`);
         }
     }
 
@@ -449,6 +534,160 @@ export function validateRollerSystems(data) {
         it.rollerValidation = { type: list[0].type, message: list.map(x => x.message).join(' ') };
         if (list[0].type === 'error') out.errors++;
         else if (list[0].type === 'warning') out.warnings++;
+    }
+    return out;
+}
+
+// Blind IQ's Roller System 40 / 55 lines: the torque each needs, whether its motor gives it, and how long a battery
+// motor's charge lasts (js/roller-motor-calc.js; Russel, 13 Nov 2026).
+// Every such line with a fabric weight and a size gets
+//   it.requiredTorque   what a motor must give at the heaviest point of travel (Nm, two decimals), it.torqueMethod =
+//                       'lift'; the simple formula's "+20 %" figure (requiredTorqueSafety) is removed.
+// The motorised ones are then paired with the order's roller motors: the sundries rollerMotorOf reads, else a motor the
+// motor table (opts.motorTable, orderbot_motor_properties) lists for Roller System 40 / 55 by its name, which is how the
+// table's own check finds older motors ("Roll Up 28 Rts 1.1/28" has no "nm" in its name). One motor per unit of a
+// sundry, one slot per unit of a line's quantity. The most demanding blind takes the strongest motor left that is of
+// its kind (a One Touch Dual where a System 40 blind is specified Dual) and fits its tube; of equally strong motors
+// the mains one goes first, then the bigger battery, so a battery alert means no other sharing-out avoids it. A line
+// is judged on the weakest motor that falls to its units:
+//   it.torqueValidation   { type: 'error' }: the motor's rated torque is under what the blind needs (to two decimals).
+//                         { type: 'warning' } instead where the pairing can't be known: the order has fewer roller
+//                         motors than motorised roller blinds (some take the dealer's own), or it also has motorised
+//                         double rollers, Vision or other roller types and a stronger motor that may be this blind's.
+//                         Also 'warning' when the torque is enough but the blind is over the weight capacity Louvolite
+//                         publishes for the motor. On a paired line it replaces the motor table's own torque alert.
+//   it.batteryValidation  { type: 'info' | 'warning', message, months, days, basis, motor }: how long one charge lasts
+//                         at one up and down a day. 'warning' under six months (an estimate: under four, see the module).
+//                         Under six months, flagged or not, it also carries `alternative` { motor, months, days, basis }
+//                         when a motor of the same range would last a quarter longer on this blind (biggerBatteryMotor:
+//                         the One Touch Dual 3 Nm for a 2 Nm), and the message says what that motor would give.
+// A line with no motor to pair (the dealer's own motors, a sundry that isn't read as a roller motor) keeps its torque,
+// and whatever the motor table's own check said of it. Double rollers and other roller types aren't worked out: the
+// method is for one fabric on one tube.
+// opts: { fabrics (fabricList()), records (the makers' own motor records, when the page has them), motorTable }
+// -> { checked, paired, torqueErrors, torqueWarnings, capacityWarnings, battery, batteryWarnings, batteryAlternatives }
+export function validateRollerMotors(data, { fabrics, records, motorTable } = {}) {
+    const out = { checked: 0, paired: 0, torqueErrors: 0, torqueWarnings: 0, capacityWarnings: 0, battery: 0, batteryWarnings: 0, batteryAlternatives: 0 };
+    if (!data || !Array.isArray(data.lineItems)) return out;
+    const qtyOf = it => Math.min(500, Math.max(1, parseInt(s(it.qty && it.qty.blindIQValue), 10) || 1));
+    const blinds = [];
+    for (const it of data.lineItems) {
+        if (!it) continue;
+        // what an earlier pass over the same lines left: the app makes one pass, and a second must not keep the first's
+        delete it.batteryValidation; delete it.torqueMethod;
+        if (it.torqueValidation && it.torqueValidation.by === 'rollerMotors') delete it.torqueValidation;
+        const sys = rollerSystemOf(it.blindType && it.blindType.blindIQValue);
+        if (!sys) continue;
+        const w = mmOf(it.width && it.width.blindIQValue), d = mmOf(it.drop && it.drop.blindIQValue);
+        const fabric = findFabric(fabrics, it.range && it.range.blindIQValue, it.colour && it.colour.blindIQValue);
+        if (!fabric || !(fabric.kg > 0) || !(w > 0) || !(d > 0)) continue;
+        const spec = { system: sys, widthMm: w, dropMm: d, kgPerM2: fabric.kg, thicknessMm: fabric.thick, barKgPerM: barKg(barOf(it)) };
+        const powered = motorised(it);
+        const base = liftTorque(spec, powered ? DEFAULTS.motorKg : 0);      // a chain blind has no motor in its tube
+        if (!base || base.nm == null) continue;
+        out.checked++;
+        it.requiredTorque = round2(base.nm).toFixed(2);
+        it.torqueMethod = 'lift';
+        if (it.blindWeight == null) it.blindWeight = base.kg.toFixed(2);
+        delete it.requiredTorqueSafety;
+        if (powered) blinds.push({ it, sys, spec, need: base.nm, kg: base.kg, dual: /dual/.test(ctl(it)), qty: qtyOf(it), motor: null });
+    }
+    if (!blinds.length) return out;
+
+    // a motor the motor table lists for Roller System 40 / 55, by its name inside the sundry (the longest name wins)
+    const tableMotorOf = text => {
+        const t = lc(text);
+        if (!t || NOT_A_ROLLER_MOTOR.test(t)) return null;
+        let best = null;
+        for (const row of Array.isArray(motorTable) ? motorTable : []) {
+            const name = lc(row && row.motorName), sys = rollerSystemOf(row && row.blindType), nm = parseFloat(row && row.torque);
+            if (!name || !sys || !(nm > 0) || !t.includes(name)) continue;
+            if (!best || name.length > best.key.length) best = { key: name, nm, name: s(row.motorName), systems: [sys] };
+            else if (name === best.key && !best.systems.includes(sys)) best.systems.push(sys);
+        }
+        return best ? { nm: best.nm, systems: best.systems, name: best.name } : null;
+    };
+    // the narrowest blind a motor goes in by the motor table: the figure its own "Below Minimum Width" check uses
+    const tableMinWidth = name => {
+        let min = 0;
+        for (const row of Array.isArray(motorTable) ? motorTable : []) {
+            if (!row || lc(row.motorName) !== lc(name) || !rollerSystemOf(row.blindType)) continue;
+            const w = parseInt(row.minWidth, 10);
+            if (w > min) min = w;
+        }
+        return min || null;
+    };
+    const motors = [];
+    for (const sd of data.sundries || []) {
+        const text = sd && sd.item && sd.item.blindIQValue;
+        const m = rollerMotorOf(text) || tableMotorOf(text);
+        if (!m) continue;
+        const known = MOTORS.find(x => x.name === m.name);
+        const q = Math.min(500, Math.max(1, parseInt(sd.quantity, 10) || 1));
+        for (let i = 0; i < q; i++) motors.push({ ...m, otd: /one\s*touch\s*dual/i.test(m.name), wh: chargeWh(m.name, !!known && known.power === '220v') });
+    }
+    const total = motors.length;
+    const mixed = new Set(motors.map(m => m.name)).size > 1;       // more than one kind of motor: the pairing matters
+    const strongest = motors.reduce((a, m) => Math.max(a, m.nm), 0);
+    // Motors are order-level sundries. When the order also has motorised blinds of other types that take roller motors
+    // (a double roller, a Vision, a Romashade), a motor paired here may be theirs: a weak pairing is then a question
+    // (amber), not a verdict, unless no motor on the order is strong enough (BDO673291: six 1.1 Nm motors for two
+    // double rollers and two Roller System 40 blinds that need more). Outdoor blinds, curtains and venetians have
+    // motors of their own, which aren't read here.
+    const OWN_MOTORS = /outdoor|zip\s*x|channel\s*x|wire\s*x|free\s*hang|curtain|venetian|cellular|vertical|allusion|shutter/;
+    const shared = data.lineItems.some(it => { const t = lc(it && it.blindType && it.blindType.blindIQValue); return it && motorised(it) && !rollerSystemOf(t) && !OWN_MOTORS.test(t); });
+    // one slot per blind, the most demanding first
+    const slots = [];
+    for (const b of blinds) for (let i = 0; i < b.qty; i++) slots.push(b);
+    slots.sort((a, b) => b.need - a.need);
+    // With fewer motors than blinds some blinds take the dealer's own, and which ones isn't known: a question too.
+    const enough = total >= slots.length;
+    const better = (a, b) => { for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] > b[i]; return false; };
+    for (const b of slots) {
+        if (!motors.length) break;
+        let pick = 0, best = null;
+        motors.forEach((m, i) => {
+            const key = [b.sys === 40 ? +(m.otd === b.dual) : 1, +m.systems.includes(b.sys), m.nm, m.wh];
+            if (!best || better(key, best)) { pick = i; best = key; }
+        });
+        const m = motors.splice(pick, 1)[0];
+        if (!b.motor || m.nm < b.motor.nm) b.motor = m;
+    }
+
+    for (const b of blinds) {
+        const m = b.motor;
+        if (!m) continue;
+        out.paired++;
+        const t = liftTorque(b.spec, motorKgOf(m.name, records));
+        const need = round2(t && t.nm != null ? t.nm : b.need);
+        b.it.requiredTorque = need.toFixed(2);
+        delete b.it.torqueValidation;                 // the motor table's weight × radius + 20 % verdict gives way to this one
+        const cap = overCapacity(m.name, b.kg), maker = (MOTOR_DATA[m.name] && MOTOR_DATA[m.name].maker) || 'the maker';
+        if (m.nm < need) {
+            const none = strongest < need, sure = enough && (none || !shared);
+            const why = !enough ? ` The order has ${total} roller motor${total === 1 ? '' : 's'} for ${slots.length} motorised roller blinds, so confirm which blinds take which motor.`
+                : none ? (mixed ? ' No motor on the order is strong enough.' : '')
+                    : shared ? ' The order also has motorised blinds of other types, so confirm which blinds take which motor.'
+                        : mixed ? ' The order\'s motors are paired with its blinds strongest first, each on a tube it fits and a One Touch Dual where the blind is specified Dual.' : '';
+            b.it.torqueValidation = { type: sure ? 'error' : 'warning', by: 'rollerMotors', message: `Torque Alert: this blind needs ${need.toFixed(2)} Nm at its heaviest point (${b.kg.toFixed(2)} kg on a System ${b.sys} tube, with the fabric rolled on it and the bearing friction) and the ${m.name} gives ${m.nm} Nm.` + why };
+            if (sure) out.torqueErrors++; else out.torqueWarnings++;
+        } else if (cap) {
+            b.it.torqueValidation = { type: 'warning', by: 'rollerMotors', message: `Motor Alert: ${b.kg.toFixed(2)} kg is over the weight capacity ${maker} gives the ${m.name} (${cap} kg), although its ${m.nm} Nm covers the ${need.toFixed(2)} Nm this blind needs. Confirm the motor.` };
+            out.capacityWarnings++;
+        }
+        const life = batteryLife(b.spec, m.name, m.nm, records);
+        // under six months, flagged or not: what the same range's longer-lasting motor would give on this blind
+        const alt = life && life.days < BATTERY.minDays ? biggerBatteryMotor(b.spec, b.kg, m.name, life, { records, minWidthOf: tableMinWidth }) : null;
+        const msg = batteryMessage(life, m.name, alt);
+        if (msg) {
+            b.it.batteryValidation = { ...msg, days: Math.round(life.days), basis: life.basis, motor: m.name };
+            if (alt) {
+                b.it.batteryValidation.alternative = { motor: alt.motor, months: monthsText(alt.days), days: Math.round(alt.days), basis: alt.basis };
+                out.batteryAlternatives++;
+            }
+            out.battery++;
+            if (msg.type === 'warning') out.batteryWarnings++;
+        }
     }
     return out;
 }

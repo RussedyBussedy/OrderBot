@@ -136,8 +136,9 @@ The CSV rules, for all three tables:
 | 3 | `fabricWidth` | The roll width in mm |
 | 4 | `canTurn` | `Yes`, `No` or `Out` (can be turned only out of warranty); anything other than Yes or Out counts as No |
 | 5 (optional) | `aliases` | Other spellings, separated by `\|` in the CSV and by commas in the panel's **Also known as** box: Blind IQ's range name when it differs ("Didsbury Block", "Sheerweave 4500 Fr"), dealer spellings |
+| 6 (optional) | `fabricThickness` | The fabric's thickness in **mm** (0.55, not 55), from its spec sheet's "Nominal Thickness"; the panel's **Thick** box. Used for the torque a roller motor must give and its battery's life ([Roller check](../roller-check.md#torque)). Without it 0.48 mm is taken; the panel refuses more than 3. Since 13 Nov 2026. |
 
-An illustrative row (not real data): `Example Blockout;0.450;2500;Out;Example BO|Example Block`. An upload replaces every fabric, so leave out the 5th column only if you mean to remove the aliases.
+An illustrative row (not real data): `Example Blockout;0.450;2500;Out;Example BO|Example Block;0.45`. An upload replaces every fabric, so leave out the 5th or 6th column only if you mean to remove the aliases or the thicknesses.
 
 **This is OrderBot's one fabric list** (Russel, 2 Nov 2026). The comparison's weight and fabric-width checks, the Roller check view and the converter's Out of Warranty and 1.5:1 rules all read it; no copy is kept in the code. A line's fabric is found by Blind IQ's range: the name or an alias as written (without a trailing "#"); Blind IQ's shortened print (12+ characters that start exactly one name or alias); Designer ranges by the colour's design name ("Argent Gold 2050mm @" finds "Argent", with the colour's own roll width); else one side of " / " (System 55's "5 Screen / Aventus 5%" finds "5 Screen"), which gives the weight but not the roll width the comparison's width check uses. See `findFabric` in `js/roller-selector.js` and [Roller check](../roller-check.md).
 

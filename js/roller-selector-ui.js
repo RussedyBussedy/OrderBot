@@ -10,7 +10,8 @@
 // Fabrics come from OrderBot's one fabric list (Fabric properties, Firestore orderbot_fabric_properties), read
 // through deps.getFabricProperties when the view opens; the motors and rules are in js/roller-selector.js. The
 // makers' own motor records (deps.getMotorCalcRecords, optional) make a battery figure the maker's instead of an
-// estimate from the datasheet. The lines are kept in localStorage (ob_roller_lines) for the person using the page
+// estimate from the datasheet, and OrderBot's motor table (deps.getMotorProperties, optional) gives the narrowest
+// blind a motor goes in. The lines are kept in localStorage (ob_roller_lines) for the person using the page
 // only. Everything is written as text nodes.
 //
 // Named exports only, no build step (browser-native ES module).
@@ -23,7 +24,7 @@ const STORE = 'ob_roller_lines';
 const LEVEL_CLASS = { error: 'bg-red-100 text-red-800', warning: 'bg-yellow-100 text-yellow-800', info: 'bg-blue-100 text-blue-800', ok: 'bg-green-100 text-green-800' };
 const blank = () => ({ location: '', fabric: '', kgPerM2: '', width: '', drop: '', bar: 'Alu Bottom Bar', system: 'auto', control: 'chain', brand: '', power: '', protocol: '', motorName: '', has15: false, hasSpring: false });
 
-let root = null, lines = [], fabrics = null, fabricError = '', deps = {}, records = null;
+let root = null, lines = [], fabrics = null, fabricError = '', deps = {}, records = null, motorTable = null;
 // "· battery about 8½ months" beside a battery motor ("est." when it is worked out from the datasheet)
 const batteryNote = b => (b ? ` · battery ${monthsText(b.days)}${b.basis === 'estimate' ? ' (est.)' : ''}` : '');
 
@@ -100,6 +101,7 @@ function resultView(line) {
         ...line,
         fabrics,
         records,
+        motorTable,
         system: line.system === 'auto' ? 'auto' : +line.system,
         kgPerM2: parseFloat(line.kgPerM2) || 0,
     });
@@ -162,6 +164,12 @@ async function loadFabrics() {
         const getRecords = (deps && deps.getMotorCalcRecords) || (window.OrderBotRollerDeps && window.OrderBotRollerDeps.getMotorCalcRecords);
         records = getRecords ? await getRecords() : null;
     } catch (e) { records = null; }
+    // OrderBot's motor table, for the narrowest blind a motor goes in (its Min W): optional too. Without it a longer
+    // motor is named by Louvolite's minimum blind width.
+    try {
+        const getTable = (deps && deps.getMotorProperties) || (window.OrderBotRollerDeps && window.OrderBotRollerDeps.getMotorProperties);
+        motorTable = getTable ? await getTable() : null;
+    } catch (e) { motorTable = null; }
 }
 // d: { getFabricProperties } (index.html): resolves to the fabric list (fabricList() in js/roller-selector.js)
 export async function initRollerCheck(d = {}) {

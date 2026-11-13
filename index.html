@@ -559,7 +559,7 @@
         // as its pill is clicked (getMotorCalcRecords, further down).
         let motorCalcRecords = null, motorCalcPromise = null;
         // the Roller check view (opened by the plain view-switch script below) reads the one fabric list through this
-        window.OrderBotRollerDeps = { getFabricProperties: () => getFabricProperties(), getMotorCalcRecords: () => getMotorCalcRecords() };
+        window.OrderBotRollerDeps = { getFabricProperties: () => getFabricProperties(), getMotorCalcRecords: () => getMotorCalcRecords(), getMotorProperties: () => getMotorProperties() };
 
         // firebaseConfig, PROXY_API_URL, PROMPT_VERSION imported from ./js/config.js
 

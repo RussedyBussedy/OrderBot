@@ -27,7 +27,7 @@
 //     leaflet, the Sonesse 30 spec sheet, the Sonesse 40 WireFree flyer and the Zigbee reference book.
 // Louvolite's weight capacity per motor ("Motor weight capacity of 6kg") is its own limit, so it is checked beside
 // the torque. The 220 V 2 Nm motor's is 5 kg in the Quick Motor Guide and on page 1 of its sheet, 6 kg in the table
-// on page 2: the lower one is used.
+// on page 2: 6 kg is used (Russel, 13 Nov 2026: "make it 6").
 //
 // BATTERY FIGURES ARE OF TWO KINDS, and the result says which (`basis`):
 //   measured  the maker's own record of the motor (current against torque, standby, battery). Such records are not
@@ -70,7 +70,8 @@ const SOMFY_RTS = 'standby taken as the 85 µA Somfy publishes for the Roll Up B
 // standbyUa: published currents. record: the id of the maker's own record; sibling: that record is of the RTS
 // version of this motor (same drive and battery), and the result says so. minWidthMm: the narrowest blind the motor
 // goes in ("Blind width min" in Louvolite's Quick Motor Guide of January 2026), so a longer motor is never named for
-// a blind it doesn't fit.
+// a blind it doesn't fit. OrderBot's own motor table comes first where it has a minimum width (Russel, 13 Nov 2026:
+// "Stay with our min widths"); these are for a motor it has none for, and for a caller without the table.
 export const MOTOR_DATA = {
     'Roll Up Basic 28 Wire Free RTS 0.7nm': { maker: 'Somfy', kg: 0.5, rpm: 28, battery: li(12, 3, 1400), amps: 0.8, noLoadAmps: 0.2, standbyUa: 85, record: 'roll-up-basic-28-rts-li-ion' },
     'Sonesse 28 Wire Free RTS 1.1nm': { maker: 'Somfy', rpm: 20, battery: li(12, 3, 2600), standbyUa: 85, note: SOMFY_RTS, record: 'sonesse-28-rts-li-ion' },
@@ -88,11 +89,11 @@ export const MOTOR_DATA = {
     // 2600 mAh on the spec sheet, 2500 in the Quick Motor Guide of January 2026: the lower one
     'One Touch Dual Motor Lithium Ion 2.0nm': { maker: 'Louvolite', capKg: 6, minWidthMm: 630, rpm: 20, battery: li(7.4, 2, 2500) },
     'One Touch Dual Motor Lithium Ion 3.0nm': { maker: 'Louvolite', capKg: 8.5, minWidthMm: 665, rpm: 20, battery: li(10.8, 3, 5000) },
-    'One Touch Dual Motor 220V 2nm': { maker: 'Louvolite', capKg: 5, minWidthMm: 560 },
+    'One Touch Dual Motor 220V 2nm': { maker: 'Louvolite', capKg: 6, minWidthMm: 560 },
     'One Touch Dual Motor 220V 6nm': { maker: 'Louvolite', capKg: 12, minWidthMm: 650 },
     'One Touch Dual Matter & Thread Motor Lithium 2.0nm': { maker: 'Louvolite', capKg: 6, minWidthMm: 630, rpm: 20, battery: li(7.4, 2, 2500) },
     'One Touch Dual Matter & Thread Motor Lithium 3.0nm': { maker: 'Louvolite', capKg: 8.5, minWidthMm: 665, rpm: 20, battery: li(10.8, 3, 5000) },
-    'One Touch Dual Matter & Thread Motor 220V 2nm': { maker: 'Louvolite', capKg: 5, minWidthMm: 560 },
+    'One Touch Dual Matter & Thread Motor 220V 2nm': { maker: 'Louvolite', capKg: 6, minWidthMm: 560 },
 };
 
 // The blind as the engine takes it, or null when a figure is missing.
@@ -171,7 +172,7 @@ export function chargeWh(name, mains) {
 }
 export const capacityKgOf = name => (MOTOR_DATA[name] && MOTOR_DATA[name].capKg) || null;
 // The maker's weight capacity (kg) when the blind is over it, else null. The weight is worked out from nominal
-// figures, so 50 g over isn't "over": 5.05 kg on a 5 kg motor passes, 5.06 doesn't.
+// figures, so 50 g over isn't "over": 6.05 kg on a 6 kg motor passes, 6.06 doesn't.
 export const CAPACITY_TOLERANCE_KG = 0.05;
 export function overCapacity(name, kg) {
     const cap = capacityKgOf(name);

@@ -130,6 +130,7 @@ export const fitsSize = (system, widthMm, dropMm) => widthMm <= LIMITS[system].w
 // BlindIQ's roller motors (Nov 2026), in BlindIQ's names. systems = the roller tubes it goes in, as capturers
 // fit them (Nov 2025 – Oct 2026 orders) and as BlindIQ's adaptor kits allow (the "Sys 55 Adaptor Kit for
 // Sonesse 30 Wire Free" puts the Sonesse 30 WF in a 55 mm tube). power 'wf' = battery (wire-free), '220v'.
+// The two Motion motors are 220 V (Russel, 13 Nov 2026), so they get no battery figure.
 // variant: a short-head or no-battery version of another motor, checked but never recommended on its own.
 export const MOTORS = [
     { name: 'Roll Up Basic 28 Wire Free RTS 0.7nm', brand: 'Somfy', protocol: 'RTS', power: 'wf', nm: 0.7, systems: [40] },
@@ -255,9 +256,10 @@ function fittingMotors(specOn, kg, systems, { brand, power, protocol }, records)
 // battery by its datasheet (a tenth or more: a published fact, where how much current a motor draws is mostly
 // assumed), and be one the blind can take as it stands: the same brand and protocol (a Matter & Thread motor for a
 // Matter & Thread one), not a short or no-battery version, for the blind's own tube, strong enough with its own
-// weight in the tube, within its weight capacity, and not longer than the blind is wide (MOTOR_DATA's minimum blind
-// width, and the caller's: the comparison passes the motor table's). Of those, the one that lasts longest, and only
-// when that is a quarter longer than the motor on the blind (BATTERY.altGain).
+// weight in the tube, within its weight capacity, and not longer than the blind is wide. The narrowest blind is
+// OrderBot's own figure where the caller has one (minWidthOf: the motor table's Min W; Russel, 13 Nov 2026: "Stay
+// with our min widths"), else Louvolite's (MOTOR_DATA). Of those, the one that lasts longest, and only when that is
+// a quarter longer than the motor on the blind (BATTERY.altGain).
 // spec: the blind on its tube (rollerBlind's shape); kg: fabric + bottom bar; life: batteryLife() of motorName on it.
 // -> { motor, nm, days, basis } or null
 export function biggerBatteryMotor(spec, kg, motorName, life, { records, minWidthOf: callerMinWidth } = {}) {
@@ -267,7 +269,8 @@ export function biggerBatteryMotor(spec, kg, motorName, life, { records, minWidt
     for (const m of MOTORS) {
         if (m === own || m.variant || m.power !== 'wf' || m.brand !== own.brand || m.protocol !== own.protocol || !m.systems.includes(spec.system)) continue;
         if (!biggerBattery(m.name, own.name)) continue;
-        const minWidth = Math.max(minWidthOf(m.name) || 0, (typeof callerMinWidth === 'function' && callerMinWidth(m.name)) || 0);
+        const ours = typeof callerMinWidth === 'function' ? callerMinWidth(m.name) : null;
+        const minWidth = ours > 0 ? ours : (minWidthOf(m.name) || 0);
         if (minWidth > 0 && spec.widthMm < minWidth) continue;
         if (kg > 0 && overCapacity(m.name, kg)) continue;
         if (!(m.nm >= needOn(spec, kg, motorKgOf(m.name, records)))) continue;
@@ -278,12 +281,28 @@ export function biggerBatteryMotor(spec, kg, motorName, life, { records, minWidt
     return best;
 }
 
+// The narrowest blind (mm) a motor goes in by OrderBot's motor table (orderbot_motor_properties' "Min W", the figure
+// its own "Below Minimum Width" check uses), or null when the table has none for it. The motor's row for the blind's
+// own roller system when it has one, else its row for the other.
+export function tableMinWidth(motorTable, name, system) {
+    let own = 0, other = 0;
+    for (const row of Array.isArray(motorTable) ? motorTable : []) {
+        const rowSystem = rollerSystemOf(row && row.blindType);
+        if (!rowSystem || lc(row.motorName) !== lc(name)) continue;
+        const w = parseInt(row.minWidth, 10);
+        if (!(w > 0)) continue;
+        if (rowSystem === system) own = Math.max(own, w); else other = Math.max(other, w);
+    }
+    return own || other || null;
+}
+
 // One blind, as the selector's multi-line sheet works it out, with every warning (V2.1 showed only the first).
 // input: { fabrics (fabricList()), system: 40 | 55 | 'auto', fabric (name, alias or BlindIQ range), colour,
 //          kgPerM2 (a weight typed for a fabric that isn't in the list or has no usable weight there; a listed
 //          fabric's own weight wins, and a message says so),
 //          width, drop, bar, control: 'chain' | 'motor', brand, power: 'wf' | '220v', protocol, motorName (a MOTORS name
-//          to check), has15, hasSpring, records (the makers' own motor records, when the page has them) }
+//          to check), has15, hasSpring, records (the makers' own motor records, when the page has them),
+//          motorTable (OrderBot's motor table, when the page has it: its Min W is the narrowest blind a motor goes in) }
 // -> { fabric, kg, widthCheck, system, chain, torque: {40, 55} (what a motor must give on each tube), recommended,
 //      alternatives (each { motor, system, needed, battery }), motorCheck, motorBattery, motorBatteryAlternative, messages }
 // battery / motorBattery: how long one charge lasts (batteryLife in js/roller-motor-calc.js), null for a 220V motor.
@@ -376,7 +395,7 @@ export function selectRollerSystem(input) {
     // the motor the selector would pick: a battery that won't last is worth knowing before it is ordered, with what the
     // same range's longer-lasting motor would give
     if (res.recommended && res.recommended.battery && res.recommended.battery.short && !input.motorName) {
-        const r = res.recommended, alt = biggerBatteryMotor(specOn(r.system), kg, r.motor.name, r.battery, { records: input.records });
+        const r = res.recommended, alt = biggerBatteryMotor(specOn(r.system), kg, r.motor.name, r.battery, { records: input.records, minWidthOf: name => tableMinWidth(input.motorTable, name, r.system) });
         add('warning', batteryMessage(r.battery, r.motor.name, alt).message);
     }
 
@@ -407,7 +426,7 @@ function checkMotorOnOrder(input, res, { kg, forced, fits40, add, specOn }) {
     if (tubeOk && kg != null) {
         const life = res.motorBattery = batteryLife(specOn(sys), parsed.name, parsed.nm, input.records);
         // under six months: what the same range's longer-lasting motor would give on this blind
-        res.motorBatteryAlternative = life && life.days < BATTERY.minDays ? biggerBatteryMotor(specOn(sys), kg, parsed.name, life, { records: input.records }) : null;
+        res.motorBatteryAlternative = life && life.days < BATTERY.minDays ? biggerBatteryMotor(specOn(sys), kg, parsed.name, life, { records: input.records, minWidthOf: name => tableMinWidth(input.motorTable, name, sys) }) : null;
         const msg = batteryMessage(life, parsed.name, res.motorBatteryAlternative);
         if (msg) add(msg.type, msg.message);
     }
@@ -607,16 +626,6 @@ export function validateRollerMotors(data, { fabrics, records, motorTable } = {}
         }
         return best ? { nm: best.nm, systems: best.systems, name: best.name } : null;
     };
-    // the narrowest blind a motor goes in by the motor table: the figure its own "Below Minimum Width" check uses
-    const tableMinWidth = name => {
-        let min = 0;
-        for (const row of Array.isArray(motorTable) ? motorTable : []) {
-            if (!row || lc(row.motorName) !== lc(name) || !rollerSystemOf(row.blindType)) continue;
-            const w = parseInt(row.minWidth, 10);
-            if (w > min) min = w;
-        }
-        return min || null;
-    };
     const motors = [];
     for (const sd of data.sundries || []) {
         const text = sd && sd.item && sd.item.blindIQValue;
@@ -677,7 +686,7 @@ export function validateRollerMotors(data, { fabrics, records, motorTable } = {}
         }
         const life = batteryLife(b.spec, m.name, m.nm, records);
         // under six months, flagged or not: what the same range's longer-lasting motor would give on this blind
-        const alt = life && life.days < BATTERY.minDays ? biggerBatteryMotor(b.spec, b.kg, m.name, life, { records, minWidthOf: tableMinWidth }) : null;
+        const alt = life && life.days < BATTERY.minDays ? biggerBatteryMotor(b.spec, b.kg, m.name, life, { records, minWidthOf: name => tableMinWidth(motorTable, name, b.sys) }) : null;
         const msg = batteryMessage(life, m.name, alt);
         if (msg) {
             b.it.batteryValidation = { ...msg, days: Math.round(life.days), basis: life.basis, motor: m.name };

@@ -4919,11 +4919,15 @@ export function biqExtractCheckResults(comparisonData) {
         // 'info' (the Roller System Selector's advice, e.g. the Lift Assisting Spring) is not a flag here
         // motorTableValidation (js/outdoor-motors.js) replaces the torque estimate on motorised Free Hang, Zip X, Channel X
         // and Wire X lines, so without it here an undersized Somfy motor showed "no alerts" (BDO652491's 15 Nm for 25 Nm).
-        ['fabricValidation', 'colourValidation', 'controlValidation', 'chainValidation', 'rollerValidation', 'torqueValidation', 'minWidthValidation', 'motorTableValidation'].forEach(k => {
+        // batteryValidation (js/roller-selector.js): a battery motor whose charge won't last six months is a flag; the
+        // months themselves ('info') aren't
+        ['fabricValidation', 'colourValidation', 'controlValidation', 'chainValidation', 'rollerValidation', 'torqueValidation', 'minWidthValidation', 'motorTableValidation', 'batteryValidation'].forEach(k => {
             if (li[k] && li[k].type !== 'info') flags.push({ kind: k, type: li[k].type || 'error', message: li[k].message });
         });
         if (Array.isArray(li.motorValidation)) li.motorValidation.forEach(m => flags.push({ kind: 'motorValidation', type: 'error', message: m }));
-        out.push({ index: li._converterIndex, blindWeight: li.blindWeight, requiredTorque: li.requiredTorque, requiredTorqueSafety: li.requiredTorqueSafety, flags });
+        // torqueMethod 'lift': requiredTorque is the whole figure (no +20 %); batteryText: "about 8½ months" for a battery motor
+        out.push({ index: li._converterIndex, blindWeight: li.blindWeight, requiredTorque: li.requiredTorque, requiredTorqueSafety: li.requiredTorqueSafety,
+            torqueMethod: li.torqueMethod, batteryText: (li.batteryValidation && li.batteryValidation.months) || null, flags });
     });
     // remoteNote: an order with motors and no remote at all (a note, not a flag)
     return { items: out, global: comparisonData.motorValidation ? comparisonData.motorValidation.global : null, note: comparisonData.remoteNote || null };

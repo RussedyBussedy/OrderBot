@@ -695,7 +695,9 @@ function renderChecks() {
     html += `<div class="text-sm text-slate-600">${flagged.length ? flagged.length + ' item(s) flagged — see red rows in the grid.' : '✔ No torque / fabric / control / motor alerts.'}`;
     if (weights.length) html += ` &nbsp;·&nbsp; Weights computed for ${weights.length} item(s): ` + weights.map(w => {
         const it = order.items[w.index];
-        return `<b>${escH(it && it.code || '?')}</b> ${w.blindWeight}kg${w.requiredTorqueSafety ? ' / needs ' + w.requiredTorqueSafety + 'Nm' : ''}`;
+        // a Roller System 40 / 55 line's torque is the lift and the friction (no 20 % on top); its battery motor's months follow
+        const need = w.requiredTorqueSafety || (w.torqueMethod === 'lift' ? w.requiredTorque : '');
+        return `<b>${escH(it && it.code || '?')}</b> ${w.blindWeight}kg${need ? ' / needs ' + escH(need) + 'Nm' : ''}${w.batteryText ? ' / battery ' + escH(w.batteryText) : ''}`;
     }).join(', ');
     html += '</div>';
     if (checkResults.missingFabric && checkResults.missingFabric.length)

@@ -549,8 +549,17 @@
         import * as Checks from './js/comparison-checks.js';
         import { validateOutdoorMotors } from './js/outdoor-motors.js';
         import { fabricList, findFabric, aliasList, ROLL_ALLOWANCE, notOnRollerRolls, barKg, barOf, chainCheck, has15Of, hasSpringOf, rollerSystemOf, validateRollerSystems } from './js/roller-selector.js';
+        // Added Nov 2026 (the roller motors' torque and battery life): looked up at run time, like BiqUI and
+        // Checks, so a browser still holding the previous roller-selector.js checks as before instead of failing to load.
+        import * as RollerRules from './js/roller-selector.js';
+        const validateRollerMotors = RollerRules.validateRollerMotors;
+        // The makers' own motor records for the battery calculation (js/roller-motor-calc.js), or null. They are
+        // one optional Firestore document and never in this repository: they are not published figures.
+        // Both are declared here, before the sign-in is awaited: the Roller check view can ask for the records as soon
+        // as its pill is clicked (getMotorCalcRecords, further down).
+        let motorCalcRecords = null, motorCalcPromise = null;
         // the Roller check view (opened by the plain view-switch script below) reads the one fabric list through this
-        window.OrderBotRollerDeps = { getFabricProperties: () => getFabricProperties() };
+        window.OrderBotRollerDeps = { getFabricProperties: () => getFabricProperties(), getMotorCalcRecords: () => getMotorCalcRecords() };
 
         // firebaseConfig, PROXY_API_URL, PROMPT_VERSION imported from ./js/config.js
 
@@ -917,7 +926,8 @@
             const [fabricProperties, motorProperties, tubeProperties] = await Promise.all([
                 getFabricProperties(),
                 getMotorProperties(),
-                getTubeProperties()
+                getTubeProperties(),
+                getMotorCalcRecords()       // sets motorCalcRecords for runPostAIValidations; null without the document
             ]);
 
             const CONCURRENCY = 2;
@@ -1560,7 +1570,7 @@ ${feedbackExamples}
                     (data.lineItems || []).forEach(item => {
                         if (item.fabricValidation || item.colourValidation || item.motorValidation || item.torqueValidation || item.controlValidation || item.minWidthValidation || item.valanceValidation) hasAlert = true;
                         if (item.motorTableValidation && item.motorTableValidation.type !== 'info') hasAlert = true;
-                        ['chainValidation', 'rollerValidation'].forEach(k => { if (item[k] && item[k].type !== 'info') hasAlert = true; });
+                        ['chainValidation', 'rollerValidation', 'batteryValidation'].forEach(k => { if (item[k] && item[k].type !== 'info') hasAlert = true; });
                         Object.values(item).forEach(field => {
                             if (field && (field.result === 'MISMATCH' || field.result === 'OMISSION')) hasMismatch = true;
                         });
@@ -1914,12 +1924,15 @@ ${feedbackExamples}
                     const infoClass = 'bg-blue-100 text-blue-800';
                     const infoParts = [];
                     if (lineItem.blindWeight) infoParts.push(`Weight: ${lineItem.blindWeight} kg`);
-                    if (lineItem.requiredTorque) infoParts.push(`RQD Torque: ${lineItem.requiredTorque} Nm${lineItem.requiredTorqueSafety ? ` (+20% safety: ${lineItem.requiredTorqueSafety} Nm)` : ''}`);
+                    // torqueMethod 'lift': the lift at the heaviest point with the bearing friction (js/roller-motor-calc.js),
+                    // which needs no 20 % on top; the other lines keep weight × radius and its +20 %
+                    if (lineItem.requiredTorque) infoParts.push(`RQD Torque: ${lineItem.requiredTorque} Nm${lineItem.torqueMethod === 'lift' ? ' (lift and friction, with the fabric rolled on the tube)' : (lineItem.requiredTorqueSafety ? ` (+20% safety: ${lineItem.requiredTorqueSafety} Nm)` : '')}`);
                     validationHtml += `<div class="p-2 text-sm font-semibold ${infoClass} flex items-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" /></svg> ${infoParts.join(' · ')}</div>`;
                 }
                  if (lineItem.torqueValidation) {
-                    const alertClass = 'bg-red-100 text-red-800';
-                    validationHtml += `<div class="p-2 text-sm font-semibold ${alertClass} flex items-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.21 3.03-1.742 3.03H4.42c-1.532 0-2.492-1.696-1.742-3.03l5.58-9.92zM10 13a1 1 0 110-2 1 1 0 010 2zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" /></svg> ${lineItem.torqueValidation.message}</div>`;
+                    // red: the motor is too weak; yellow (type 'warning'): the blind is over the maker's weight capacity for it
+                    const alertClass = lineItem.torqueValidation.type === 'warning' ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800';
+                    validationHtml += `<div class="p-2 text-sm font-semibold ${alertClass} flex items-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.21 3.03-1.742 3.03H4.42c-1.532 0-2.492-1.696-1.742-3.03l5.58-9.92zM10 13a1 1 0 110-2 1 1 0 010 2zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" /></svg> ${escapeHtml(lineItem.torqueValidation.message)}</div>`;
                 }
                  if (lineItem.motorTableValidation) {
                     // the Zip X motor table (js/outdoor-motors.js): red = a smaller motor than the table, yellow = no motor on the table at this size, blue = the table's motor
@@ -1931,8 +1944,8 @@ ${feedbackExamples}
                     const alertClass = 'bg-red-100 text-red-800';
                     validationHtml += `<div class="p-2 text-sm font-semibold ${alertClass} flex items-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.21 3.03-1.742 3.03H4.42c-1.532 0-2.492-1.696-1.742-3.03l5.58-9.92zM10 13a1 1 0 110-2 1 1 0 010 2zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" /></svg> ${lineItem.minWidthValidation.message}</div>`;
                 }
-                 // chain (3b) and Roller System 40 / 55 (js/roller-selector.js): red error, yellow warning, blue advice
-                 ['chainValidation', 'rollerValidation'].forEach(k => {
+                 // chain (3b), Roller System 40 / 55 and the battery's life (js/roller-selector.js): red error, yellow warning, blue advice
+                 ['chainValidation', 'rollerValidation', 'batteryValidation'].forEach(k => {
                     const v = lineItem[k];
                     if (!v) return;
                     const alertClass = v.type === 'error' ? 'bg-red-100 text-red-800' : (v.type === 'info' ? 'bg-blue-100 text-blue-800' : 'bg-yellow-100 text-yellow-800');
@@ -2345,7 +2358,7 @@ ${feedbackExamples}
                 dropZone.classList.remove('drag-over');
                 const file = e.dataTransfer.files[0];
                 if (file && file.name.endsWith('.csv')) {
-                    showConfirmModal("This will delete all existing fabric properties, their \"Also known as\" names included, and replace them with this file's contents (aliases come from an optional 5th column). Are you sure?", () => {
+                    showConfirmModal("This will delete all existing fabric properties, their \"Also known as\" names included, and replace them with this file's contents (aliases come from an optional 5th column, the thickness in mm from an optional 6th). Are you sure?", () => {
                         processFabricFile(file);
                     });
                 }
@@ -2376,7 +2389,7 @@ ${feedbackExamples}
         allDomElements.fabricCsvUpload.addEventListener('change', (event) => {
              const file = event.target.files[0];
              if (file) {
-                 showConfirmModal("This will delete all existing fabric properties, their \"Also known as\" names included, and replace them with this file's contents (aliases come from an optional 5th column). Are you sure?", () => {
+                 showConfirmModal("This will delete all existing fabric properties, their \"Also known as\" names included, and replace them with this file's contents (aliases come from an optional 5th column, the thickness in mm from an optional 6th). Are you sure?", () => {
                      processFabricFile(file);
                  });
              }
@@ -2406,12 +2419,16 @@ ${feedbackExamples}
 
                     if (name && !isNaN(weight) && !isNaN(width) && canTurn) {
                         // optional 5th column: other spellings, separated by "|"
+                        // optional 6th column: the fabric's thickness in mm (its spec sheet's nominal thickness), for the torque
+                        const thickness = parseFloat((columns[5] || '').replace(',', '.'));
+                        if ((columns[5] || '') !== '' && !(thickness > 0 && thickness <= 3)) console.warn('Fabric CSV: thickness ignored (mm expected, e.g. 0.55):', rowText);
                         data.push({
                             fabricName: name,
                             fabricWeight: weight,
                             fabricWidth: width,
                             canTurn: canTurn,
-                            aliases: aliasList(columns[4] || '')
+                            aliases: aliasList(columns[4] || ''),
+                            fabricThickness: thickness > 0 && thickness <= 3 ? thickness : null
                         });
                     } else {
                         console.warn('Skipping malformed CSV row:', rowText, 'Parsed as:', columns);
@@ -2461,7 +2478,7 @@ ${feedbackExamples}
         function renderFabricRow(id, data, isNew = false) {
             const listEl = allDomElements.fabricPropertiesList;
             const fabricRow = document.createElement('div');
-            fabricRow.className = 'fabric-row p-2 bg-slate-50 rounded-lg grid grid-cols-[1fr,auto,auto,auto,1fr,auto] items-center gap-2';
+            fabricRow.className = 'fabric-row p-2 bg-slate-50 rounded-lg grid grid-cols-[1.3fr,auto,auto,auto,auto,1fr,auto] items-center gap-2';
             fabricRow.dataset.id = id;
 
             fabricRow.innerHTML = `
@@ -2478,6 +2495,10 @@ ${feedbackExamples}
                     <label class="text-xs text-slate-500">Turn:</label>
                     <input type="text" value="${data.canTurn || ''}" placeholder="Yes/No/Out" class="fabric-turn-input w-20 p-1 border rounded text-sm">
                 </div>
+                <div class="flex items-center gap-1" title="The fabric's thickness in mm, from its spec sheet (Nominal Thickness). Used for the torque a motor must give; 0.48 mm is taken when it is empty">
+                    <label class="text-xs text-slate-500">Thick:</label>
+                    <input type="number" step="0.01" min="0" placeholder="mm" class="fabric-thickness-input w-16 p-1 border rounded text-sm">
+                </div>
                 <div class="flex items-center gap-1" title="Other spellings that mean this fabric, separated by commas: BlindIQ's range name when it differs (e.g. Didsbury Block), dealer spellings">
                     <label class="text-xs text-slate-500 whitespace-nowrap">Also known as:</label>
                     <input type="text" placeholder="e.g. Didsbury Block, Bird Song" class="fabric-aliases-input w-full p-1 border rounded text-sm">
@@ -2490,6 +2511,7 @@ ${feedbackExamples}
             listEl.appendChild(fabricRow);
             // set as a property, not in the HTML: other spellings can hold quotes
             fabricRow.querySelector('.fabric-aliases-input').value = aliasList(data.aliases).join(', ');
+            fabricRow.querySelector('.fabric-thickness-input').value = parseFloat(data.fabricThickness) > 0 ? data.fabricThickness : '';
 
             // Attach event listeners
             fabricRow.querySelector('.save-fabric-btn').addEventListener('click', async () => {
@@ -2519,6 +2541,14 @@ ${feedbackExamples}
                     showToast("Weight is in kg/m²: 0.45, not 450.", 'warning');
                     return;
                 }
+                // the thickness is optional, in mm (a fabric of 0.55 mm; no fabric here is over 3 mm)
+                const thicknessText = fabricRow.querySelector('.fabric-thickness-input').value.trim();
+                const newThickness = parseFloat(thicknessText);
+                if (thicknessText && !(newThickness > 0 && newThickness <= 3)) {
+                    showToast("Thickness is in mm: 0.55, not 55.", 'warning');
+                    return;
+                }
+                dataToSave.fabricThickness = thicknessText ? newThickness : null;
 
                 try {
                     if (isNew) {
@@ -2823,7 +2853,15 @@ ${feedbackExamples}
                  validateMotorDependencies(comparisonData, motorProperties, tubeProperties, fabricProperties);
             }
 
-            // --- 4b. Roller System 40 / 55: selling limits, System 55's 11.5 kg, which tube the motors fit ---
+            // --- 4b. Roller System 40 / 55 motors: the torque each blind needs, and how long a battery lasts ---
+            // (js/roller-motor-calc.js; Russel, 13 Nov 2026.) After the motor table's checks:
+            // on these lines it replaces their weight × radius + 20 % torque and its alert. Before the System 40 / 55
+            // limits, which read its torque. motorCalcRecords: the makers' own motor records, when Firestore has them.
+            if (typeof validateRollerMotors === 'function') {
+                validateRollerMotors(comparisonData, { fabrics: fabricProperties, motorTable: motorProperties, records: typeof motorCalcRecords !== 'undefined' ? motorCalcRecords : null });
+            }
+
+            // --- 4c. Roller System 40 / 55: selling limits, System 55's 11.5 kg, which tube the motors fit ---
             // (Roller System Selector, js/roller-selector.js; Russel, Nov 2026)
             validateRollerSystems(comparisonData);
 
@@ -3395,6 +3433,19 @@ ${feedbackExamples}
             return motorList;
         }
 
+        // The makers' own motor records for the battery calculation: one optional document, orderbot_motor_calc/records
+        // = { motors, packs, cells } (the shape js/motor-calc/builders.js links). Read once; without it, or when it
+        // can't be read, the battery life is an estimate from the datasheets (js/roller-motor-calc.js).
+        function getMotorCalcRecords() {
+            if (!db) return Promise.resolve(null);
+            if (!motorCalcPromise) {
+                motorCalcPromise = getDoc(doc(db, 'orderbot_motor_calc', 'records'))
+                    .then(snap => { motorCalcRecords = snap.exists() ? snap.data() : null; return motorCalcRecords; })
+                    .catch(e => { console.info('No motor records: battery life is estimated from the datasheets.', e && e.code); motorCalcPromise = null; return null; });
+            }
+            return motorCalcPromise;
+        }
+
         // --- TUBE PROPERTIES ---
         function setupTubeDropZone() {
             const dropZone = allDomElements.tubeCsvDropZone;
@@ -3587,6 +3638,7 @@ ${feedbackExamples}
         loadAndDisplayFabricProperties();
         loadAndDisplayMotorProperties();
         loadAndDisplayTubeProperties();
+        getMotorCalcRecords();      // ready for the converter's checks and the Roller check view
         setupCollapsible(allDomElements.guidelinesHeader, allDomElements.guidelinesContent, 'ob_guidelines_open');
         setupCollapsible(allDomElements.fabricPropertiesHeader, allDomElements.fabricPropertiesContent, 'ob_fabric_open');
         setupCollapsible(allDomElements.motorPropertiesHeader, allDomElements.motorPropertiesContent, 'ob_motor_open');

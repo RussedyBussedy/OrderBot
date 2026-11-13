@@ -10,7 +10,7 @@ The spreadsheet it comes from is `Sales Resource / Calculation Tools / Roller Bl
 |---|---|---|
 | Weight | fabric kg/m² × width × drop + bottom bar kg/m × width (aluminium / oval 0.28, SmartRail 0.36, plastic 0.20) | Selector |
 | Torque | The lift at the blind's heaviest point of travel, with the fabric already rolled on the tube and the bearing friction; a motor fits when its rated torque is at least that. Until 13 Nov 2026: weight × 9.81 × tube radius (System 40 0.020 m, System 55 0.0275 m) + 20 % | The motor-calc pack (Russel, 13 Nov 2026; [below](#torque-and-battery-life)); before, the Selector |
-| Weight capacity | A One Touch motor must also be within the weight Louvolite publishes for it: 3.5 kg (1.1 and 1.2 Nm), 6 kg (1.8 and 2 Nm battery), 8.5 kg (3 Nm), 5 kg (220 V 2 Nm), 12 kg (220 V 6 Nm) | Louvolite's spec sheets and Quick Motor Guide |
+| Weight capacity | A One Touch motor must also be within the weight Louvolite publishes for it: 3.5 kg (1.1 and 1.2 Nm), 6 kg (1.8 and 2 Nm battery, and the 220 V 2 Nm), 8.5 kg (3 Nm), 12 kg (220 V 6 Nm) | Louvolite's spec sheets and Quick Motor Guide |
 | Battery | A battery motor's charge should last six months at one up and down a day | Blind Designs' motorisation brochure ("Simply charge every six months") |
 | Sizes | System 40 to 3200 × 3400 mm; System 55 to 4000 × 4500 mm and 11.5 kg. Beyond them: Out of Warranty, ask the factory | Selector, price list (also `BIQ_SELL_LIMITS` in the converter) |
 | Fabric width | wider than the roll + 35 mm: turned if the fabric may be turned and the drop fits the roll; turning "out" fabrics is Out of Warranty | Selector's Fabric Data; the 35 mm is review queue #26, as in the converter |
@@ -85,12 +85,12 @@ Louvolite gives every One Touch motor a weight capacity ("Motor weight capacity 
 | One Touch Dual 1.1 Nm (also Short), One Touch + 1.2 Nm (also Short) | 3.5 kg |
 | One Touch Dual 2 Nm battery (also Matter & Thread), One Touch + 1.8 Nm (battery and 220 V) | 6 kg |
 | One Touch Dual 3 Nm (also Matter & Thread) | 8.5 kg |
-| One Touch Dual 220 V 2 Nm (also Matter & Thread) | 5 kg |
+| One Touch Dual 220 V 2 Nm (also Matter & Thread) | 6 kg |
 | One Touch Dual 220 V 6 Nm | 12 kg |
 
 - The blind's weight is worked out from nominal figures, so it is over only when it is more than 50 g over.
 - The selector never offers a motor past its capacity and says which ones the torque alone would have allowed. A motor on the order past it is amber.
-- **Open with Louvolite:** the 220 V 2 Nm is 5 kg in the Quick Motor Guide of January 2026 and on page 1 of its spec sheet ("5kg for blinds up to 3m"), and 6 kg in the table on page 2. The lower figure is used.
+- **The 220 V 2 Nm is 6 kg** (Russel, 13 November 2026: "make it 6"). Louvolite's own papers disagree: 5 kg in the Quick Motor Guide of January 2026 and on page 1 of its spec sheet ("5kg for blinds up to 3m"), 6 kg in the table on page 2. It was 5 kg for the first hours of 13 November.
 - Somfy and Motion motors carry no weight capacity: their torque decides.
 
 ### Battery life
@@ -126,7 +126,7 @@ Six months is what Blind Designs' motorisation brochure promises ("Simply charge
 | One Touch Dual 2 Nm, and Matter & Thread | 7.4 V 2500 mAh | 20 rpm | None | 2000 DC spec sheet (2600 mAh), Quick Motor Guide of January 2026 (2500): the lower |
 | One Touch Dual 3 Nm, and Matter & Thread | 10.8 V 5000 mAh | 20 rpm | None | 3000 DC spec sheet |
 
-The Sonesse 28 Zigbee "No Battery" and the One Touch + 1.2 Nm "Short Ext Bat" have no published battery, so they get no figure. One Touch Dual motors are delivered at their slowest speed, 20 rpm. The two Motion motors are held as 220 V motors (`MOTORS`); Sales Resource has no sheet for them.
+The Sonesse 28 Zigbee "No Battery" and the One Touch + 1.2 Nm "Short Ext Bat" have no published battery, so they get no figure. One Touch Dual motors are delivered at their slowest speed, 20 rpm. The two Motion motors are 220 V (Russel, 13 November 2026), so they have no battery figure.
 
 **The same range's motor with the bigger battery.** Russel (13 Nov 2026): "if someone has spec'd a one touch dual 2nm motor and the battery autonomy would only be 2 months, could you give them what a 3nm one touch dual motor would be as a comparison?" When a charge lasts under six months, flagged or not, the line also says what that motor would give on the same blind (`biggerBatteryMotor` in `js/roller-selector.js`):
 
@@ -134,7 +134,8 @@ The Sonesse 28 Zigbee "No Battery" and the One Touch + 1.2 Nm "Short Ext Bat" ha
 
 - **Which motor.** It must have the bigger battery by its datasheet, a tenth or more in volts × mAh (`biggerBattery`). That is a published fact; how much current each motor draws is mostly assumed, so a motor is never named for drawing less. Of those, the one that lasts longest, and only when that is a quarter longer (`BATTERY.altGain`).
 - **It must be a motor the blind can take as it stands:** the same brand and protocol (a Matter & Thread motor for a Matter & Thread one), not a short or no-battery version, for the blind's own tube, strong enough, within its weight capacity, and not longer than the blind is wide.
-- **The narrowest blind** is Louvolite's "Blind width min" (Quick Motor Guide of January 2026, `minWidthMm` in `MOTOR_DATA`): 520 mm for the One Touch Dual 1.1 Nm, 400 for the short 1.1 Nm, 630 for the 2 Nm, 665 for the 3 Nm, 560 for the 220 V 2 Nm and 650 for the 220 V 6 Nm. The comparison also uses the motor table's **Min W** for the motor, the larger of the two. Somfy publishes none, so in the view a Somfy motor is named whatever the width.
+- **The narrowest blind is OrderBot's own figure:** the motor table's **Min W** for the motor (`tableMinWidth`), in the comparison and in the view (Russel, 13 November 2026: "Stay with our min widths"). It is the motor's row for the blind's own roller system, else its row for the other. The table has 655 mm for the One Touch Dual Matter & Thread 3 Nm, so that motor is named from 655 mm.
+- **Louvolite's figure is the fallback** for a motor the table has no Min W for, and when the table can't be loaded: its "Blind width min" (Quick Motor Guide of January 2026, `minWidthMm` in `MOTOR_DATA`) is 520 mm for the One Touch Dual 1.1 Nm, 400 for the short 1.1 Nm, 630 for the 2 Nm, 665 for the 3 Nm (also Matter & Thread), 560 for the 220 V 2 Nm and 650 for the 220 V 6 Nm. A motor with neither figure is named whatever the width.
 - **What comes of it:** the 3 Nm for a One Touch Dual 1.1 or 2 Nm (the 1.1 and 2 Nm batteries are the same size), the Matter & Thread 3 Nm for the Matter & Thread 2 Nm, the Sonesse 28 for a Roll Up Basic 28, and on a System 55 tube the Sonesse 40 Wire Free for a Sonesse 30. A Sonesse 30 on a System 40 tube has none, and neither has a One Touch + 1.2 Nm (the 1.8 Nm's battery is bigger, but by Louvolite's own currents it lasts no longer).
 - **How much longer.** Over twice as long for the 3 Nm against the 2 Nm, not the 2.9 times of its battery: the estimate gives the bigger motor a bigger draw. Both figures are estimates built the same way, and the sentence says so. When the two figures are of different kinds it says which the second is.
 - The comparison keeps it on the line as `batteryValidation.alternative` (`motor`, `months`, `days`, `basis`). It changes no flag.
@@ -159,7 +160,7 @@ The Sonesse 28 Zigbee "No Battery" and the One Touch + 1.2 Nm "Short Ext Bat" ha
 The latest check of every order from 1 August to 10 November 2026 (4,908 orders, 25,133 lines), through the code before and after:
 
 - **Torque:** 13,269 Roller System 40 / 55 lines get the new torque. The old rule raised no torque alert on any of them; the new one makes three lines red: BDO673291 C and D (One Touch Dual 1.1 Nm on 4.66 and 4.49 kg of 3 Screen) and BDO674642 B (Optuo 3 Nm on 9.15 kg on System 55).
-- **Weight capacity:** five lines amber: BDO667608 AI, AJ and AL (5.2 to 5.8 kg on the 220 V 2 Nm), BDO673178 D (6.6 kg on the same), BDO675210 C (3.55 kg on the 1.1 Nm).
+- **Weight capacity:** two lines amber: BDO673178 D (6.63 kg on the 220 V 2 Nm, whose capacity is 6 kg) and BDO675210 C (3.55 kg on the 1.1 Nm, 3.5 kg). At the 5 kg first used for the 220 V 2 Nm, BDO667608 AI, AJ and AL (5.2 to 5.8 kg) were amber too.
 - **Battery:** 676 lines on 173 orders get a battery line. No other validation changes.
 
 | Motor | Lines | Days per charge (lowest, middle, highest) | Flagged, estimates only | Flagged, with the motor records (the live site) |
@@ -189,7 +190,7 @@ The latest check of every order from 1 August to 10 November 2026 (4,908 orders,
 
 The table is by datasheet estimates only. With the motor records the Sonesse and Roll Up Basic figures are longer, so 227 lines are under six months and 217 name a motor, all of them One Touch Dual.
 
-**As it runs live.** Since 13 November 2026 Firestore holds the motor records and the spec-sheet thickness of 45 fabrics (Russel: "can you populate all known fabric thickness"). With both, the same replay gives the same three red and five amber lines, 57 battery lines flagged on 20 orders, and a bigger-battery motor named on 214 of the 223 lines under six months. Two thicknesses were judgement calls: Filter is 0.61 mm on its 2021 sheet and 0.29 mm on the 2018 one (0.61 is entered), and Oxford is taken as Oxford Filter (0.51 mm, the same weight).
+**As it runs live.** Since 13 November 2026 Firestore holds the motor records and the spec-sheet thickness of 45 fabrics (Russel: "can you populate all known fabric thickness"). With both, the same replay gives the same three red and two amber lines, 57 battery lines flagged on 20 orders, and a bigger-battery motor named on 214 of the 223 lines under six months. Two thicknesses were judgement calls: Filter is 0.61 mm on its 2021 sheet and 0.29 mm on the 2018 one (0.61 is entered), and Oxford is taken as Oxford Filter (0.51 mm, the same weight).
 
 ## The view
 
@@ -198,7 +199,7 @@ The **Roller check** pill sits between Orders and Drawings and is visible to eve
 - **Inputs:** fabric (or its kg/m²), width, drop, bottom bar, system (worked out, or fixed at 40 or 55) and chain or motorised.
 - **A typed weight is for a fabric that isn't listed** (or one the list has no usable weight for). A listed fabric's own weight is always used, and a blue line says so when a different weight is in the box (Nov 2026). Before that the typed weight replaced the list's without a word, and Copy carried it to the next blind: 5 Screen at 2450 × 2600 with a left-over 0.2 read 1.96 kg and "Standard 1:1 chain" where the list's 0.569 gives 4.31 kg and the 1.5:1. To work with your own weight for a listed fabric, clear the fabric box.
 - **Chain blinds:** whether the order already has the 1.5:1 control or the Lift Assisting Spring.
-- **Motorised blinds:** brand, power and protocol narrow the motors. "Motor on the order" checks one motor against the blind: whether it fits the tube the blind needs (also without a fabric weight), whether its torque is enough, whether the blind is within Louvolite's weight capacity for it, and how long its battery lasts.
+- **Motorised blinds:** brand, power and protocol narrow the motors. "Motor on the order" checks one motor against the blind: whether it fits the tube the blind needs (also without a fabric weight), whether its torque is enough, whether the blind is within Louvolite's weight capacity for it, and how long its battery lasts. The view also reads OrderBot's motor table when the page has it, for the narrowest blind a longer-lasting motor goes in.
 
 Results show the weight, the torque a motor must give on both tubes ("Torque needed": the lift and the friction), the system, the chain or the lightest motor that lifts the blind (plus up to three others), and **every** warning; the selector only showed the first. A battery motor carries its life beside its name ("· battery about 8½ months", with "(est.)" when it is an estimate), and a charge that won't last is an amber line. Under six months the line also says what the same range's motor with the bigger battery would give on that blind (the One Touch Dual 3 Nm for a 2 Nm). A One Touch motor past its weight capacity is never offered, and a blue line names the ones the torque alone would have allowed. When there is no motor of the chosen brand, power or protocol for the tube at all, it says so rather than "not strong enough". The fabric list is read from Firestore when the view opens. If it can't load (or the page isn't signed in yet), the view says so with a **Try again** button and asks for each fabric's weight. The lines are kept in `localStorage` (`ob_roller_lines`) for that browser only, and the view writes nothing to Firestore.
 
@@ -264,7 +265,7 @@ Without them, those ranges (about 8,000 lines a year) lose the converter's Out o
 - **Tests** (regression package, see [Testing](testing.md)):
   - `new-tests/biq-roller-selector.test.mjs` (33 checks) covers the rules and their wiring into index.html and the converter. Four checks cover the motor check: kit spellings, remotes found by name, the note for an order with no remote, and no control characters in index.html.
   - `new-tests/biq-chain-15.test.mjs` (28 checks, review package "Chain 1.5 red 2026-11") covers the red 1.5:1: `chainCheck`, section 3b, the critical issues, the converter's flags and this view.
-  - `new-tests/biq-motor-calc.test.mjs` (130 checks, review package "Motor calc 2026-11") covers the torque and the battery life: the published torque grid, each motor's data, the estimates and their flag, records passed in, the selector, the pairing in a comparison, the motor with the bigger battery, index.html's wiring, the converter's check panel, the fabric thickness and this view. Six of its checks need the motor-calc pack on the PC (`MOTOR_CALC_PACK`): they compare the repository's engine with the pack's and run the pack's 141 reference cycles and the motor records. Without the pack they are skipped.
+  - `new-tests/biq-motor-calc.test.mjs` (137 checks, review package "Motor calc 2026-11") covers the torque and the battery life: the published torque grid, each motor's data, the estimates and their flag, records passed in, the selector, the pairing in a comparison, the motor with the bigger battery, index.html's wiring, the converter's check panel, the fabric thickness and this view. Six of its checks need the motor-calc pack on the PC (`MOTOR_CALC_PACK`): they compare the repository's engine with the pack's and run the pack's 141 reference cycles and the motor records. Without the pack they are skipped.
   - `new-tests/_maps.mjs` gives the converter tests the fabric list (`fixtures/fabric_properties_2026-11-02.json`).
   - `tests/biq-converter.test.mjs` and `tests/biq-coupled-control.test.mjs` pass the module's functions into the code they lift from index.html.
 

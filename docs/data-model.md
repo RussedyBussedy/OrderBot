@@ -1,6 +1,6 @@
 # Data model
 
-OrderBot keeps its shared data in nine Firestore collections. The browser reads and writes them directly with the Firebase JS SDK (11.6.1), signed in anonymously, and the only other writer is the Daily Cost Report on the office PC. This page lists every collection, document and field the code uses, the queries it runs, the browser storage keys and the in-memory caches.
+OrderBot keeps its shared data in nine Firestore collections, plus one optional document of motor records (`orderbot_motor_calc`, Nov 2026). The browser reads and writes them directly with the Firebase JS SDK (11.6.1), signed in anonymously, and the only other writer is the Daily Cost Report on the office PC. This page lists every collection, document and field the code uses, the queries it runs, the browser storage keys and the in-memory caches.
 
 ## Overview
 
@@ -50,8 +50,9 @@ Every user reads all of these except `orderbot_cost_report`, which only the admi
 | `orderbot_biq_mappings` | The converter's mappings and BlindIQ catalogue | The category name, plus `<category>__2` and up for shards | `saveCategory` (`js/biq-converter-ui.js`, admin mode) | `loadMappings`, then `onSnapshot` |
 | `orderbot_customer_formats` | Per-customer format profiles | `all` | `saveFormats` (admin mode) | `loadFormats`, then `onSnapshot` |
 | `orderbot_cost_report` | The Daily Cost Report's settings and last run | `settings`, `catalog`, `status` | The page writes `settings`. The office PC writes `catalog` and `status`. | Both |
+| `orderbot_motor_calc` | The makers' own motor records for the battery calculation. Optional: the collection is empty until someone adds the document. | `records` | Nothing in the app (added by hand, see below) | `getMotorCalcRecords` (`index.html`), once per page load |
 
-`CLAUDE.md`'s architecture sketch says six collections and its table lists seven. The code uses the nine above.
+`CLAUDE.md`'s architecture sketch says six collections and its table lists seven. The code uses the ten above.
 
 ## orderbot_comparisons
 
@@ -72,7 +73,7 @@ Every user reads all of these except `orderbot_cost_report`, which only the admi
 | `userId` | string | The anonymous Firebase user ID |
 | `promptVersion` | string | `PROMPT_VERSION`, for example `v2.4` |
 | Pipeline summaries | various | `_secondReading` (`lines`, `flags`, `why`), `_autoMatched`, `_ruleFlags` and `_exactChanges` (counts), `_reasoningFlags` (array) and `exactReading` (`source`, `lines`, `paired`) |
-| Validation results | objects | For the order: `motorValidation` and `valanceValidation`. For each line: `fabricValidation`, `colourValidation`, `controlValidation`, `chainValidation`, `motorValidation`, `torqueValidation`, `minWidthValidation`, `valanceValidation` and `motorTableValidation`. |
+| Validation results | objects | For the order: `motorValidation` and `valanceValidation`. For each line: `fabricValidation`, `colourValidation`, `controlValidation`, `chainValidation`, `motorValidation`, `torqueValidation`, `minWidthValidation`, `valanceValidation`, `motorTableValidation`, `rollerValidation` and, since 13 Nov 2026, `batteryValidation` (`type`, `message`, `months`, `days`, `basis`, `motor`, and under six months `alternative`: the `motor`, `months`, `days` and `basis` of the same range's motor with the bigger battery, when there is one). A line also keeps `blindWeight`, `requiredTorque` and either `requiredTorqueSafety` or `torqueMethod: 'lift'` ([validations](comparison/validations.md#weight-and-required-torque)). |
 
 A **compared field** has `customerValue`, `blindIQValue`, `result` and `confidence`. `result` is one of `RESULT_VALUES` (MATCH, MISMATCH, OMISSION, NOTE, NOT_SPECIFIED; see the [glossary](glossary.md)). The second pass, the rule checks and the confidence step may add `aiResult`, `aiCustomerValue`, `autoMatched`, `ruleFlag`, `secondReading`, `exact`, `pass2`, `_fromPass2`, `notSpecifiedCritical` and `confidenceOverride`. What these mean is in [comparison/pipeline.md](comparison/pipeline.md), [comparison/rule-checks.md](comparison/rule-checks.md) and [comparison/validations.md](comparison/validations.md).
 
@@ -130,8 +131,9 @@ All three work the same way:
 | `fabricWidth` | integer | The roll width in mm |
 | `canTurn` | string | `Yes`, `No` or `Out`: the fabric can be turned, can't, or only [out of warranty](glossary.md) |
 | `aliases` | array of strings, optional | Other spellings (Blind IQ range names, dealer spellings), from the panel's **Also known as** box or the CSV's 5th column (Nov 2026) |
+| `fabricThickness` | number or null, optional | The fabric's thickness in mm (its spec sheet's "Nominal Thickness"), from the panel's **Thick** box or the CSV's 6th column (13 Nov 2026). It feeds the torque a motor must give and the battery's life; without it 0.48 mm is taken. A value that isn't between 0 and 3 mm is ignored. |
 
-CSV columns, in order: name, weight, width, turn, and optionally aliases (separated by `|`). An upload replaces every document, so a file without the 5th column also removes every alias.
+CSV columns, in order: name, weight, width, turn, and optionally aliases (separated by `|`) and the thickness in mm. An upload replaces every document, so a file without the 5th and 6th columns also removes every alias and thickness.
 
 **`orderbot_motor_properties`**
 
@@ -145,6 +147,23 @@ CSV columns, in order: name, weight, width, turn, and optionally aliases (separa
 | `addedOn` | string, optional | The date a row was added in bulk ("2026-11-02" for the 51 rows of that day's corrections), so the batch can be undone. The app doesn't read it, and a CSV upload drops it. |
 
 CSV columns: the fields above in that order (not `addedOn`), with `minWidth` as an optional ninth column. Quoted cells are allowed. `getMotorProperties` returns an array, and a motor that fits several blind types has one row for each.
+
+Since 13 Nov 2026 the `torque` column no longer decides the torque check on Roller System 40 / 55 lines for a motor OrderBot knows: there the motor's rating is BlindIQ's own (`MOTORS` in `js/roller-selector.js`). It still does for an older motor only the table knows ("Roll Up 28 Rts 1.1/28"), and on other blind types that have a tube row.
+
+## orderbot_motor_calc (optional)
+
+One document, `records`, in the shape the motor-calc pack's data file exports and `catalogFrom` (`js/motor-calc/builders.js`) links:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `motors` | array of objects | A maker's record of a motor: `id`, `name`, `maxTorqueNm`, `cutoffV`, `standbyUa`, `awakeMa`, the current and speed curves, `massKg`, `packIds`. Optional `blindIqNames` (array of BlindIQ motor names) ties a record to motors by name. |
+| `packs` | array of objects | Battery packs: `id`, `cellsSeries`, `cellsParallel`, `cellId`, `dropV` |
+| `cells` | array of objects | Cells with their discharge tables |
+
+- **What it is for.** With a record, a battery motor's life is worked out from the maker's own figures (`basis: 'measured'`) instead of an estimate from its datasheet. See [Roller check](roller-check.md#battery-life).
+- **It is optional.** Without the document, or when it can't be read, `getMotorCalcRecords` returns `null` and every battery figure is an estimate. Nothing else depends on it.
+- **The records are not published figures.** They must never be committed to this repository or put in any file the site serves. Russel decided on 13 November 2026 to hold them here, so the document has the records OrderBot uses and no others: the Sonesse 30, Sonesse 28 and Roll Up Basic 28 (RTS Li-ion, which also serve the Zigbee Sonesse 30 and 28), with their two battery packs and cells.
+- **Nothing in the app writes it.** The document is written by a one-off page on Russel's PC, from the pack's data file. To add a maker's record for another motor, add it to the three arrays the same way, with a `blindIqNames` list on the motor.
 
 **`orderbot_tube_properties`**
 

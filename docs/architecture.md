@@ -115,7 +115,7 @@ None of them have integrity (SRI) hashes. Upgrades are on the [roadmap](known-is
 
 ## Data
 
-Firestore holds nine collections, all prefixed `orderbot_`: `comparisons`, `feedback`, `guidelines`, `fabric_properties`, `motor_properties`, `tube_properties`, `biq_mappings`, `customer_formats` and `cost_report`. Every browser signs in anonymously. The browser also keeps a few preferences in `localStorage`: admin mode (`biq_admin`), which panels are open, and the cost report editor's name. Shapes, writers and readers are in [data-model.md](data-model.md).
+Firestore holds nine collections, all prefixed `orderbot_`: `comparisons`, `feedback`, `guidelines`, `fabric_properties`, `motor_properties`, `tube_properties`, `biq_mappings`, `customer_formats` and `cost_report`. A tenth, `motor_calc`, is optional: one document of the makers' own motor records for the battery calculation, read when it is there. Every browser signs in anonymously. The browser also keeps a few preferences in `localStorage`: admin mode (`biq_admin`), which panels are open, and the cost report editor's name. Shapes, writers and readers are in [data-model.md](data-model.md).
 
 ## Key design choices
 

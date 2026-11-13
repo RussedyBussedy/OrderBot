@@ -179,7 +179,7 @@ Unverified: spreadsheets (`.xlsx`, `.xls`) and TIFF or BMP images go to Gemini a
 
 "Run torque & spec checks" (`runChecks`) loads the fabric, motor and tube tables through the injected getters and converts the order with `biqToComparisonShape`. It then runs the comparison's own `runPostAIValidations` on that copy and reads the flags back with `biqExtractCheckResults`: the fabric, colour, control, chain, roller, torque, minimum-width and motor checks and, since Nov 2026, the Zip X motor table's verdict (`motorTableValidation`). Blue `info` results are left out.
 
-- Flags appear under each line, with blind weights and the torque needed summarised.
+- Flags appear under each line, with blind weights and the torque needed summarised. A Roller System 40 / 55 line's torque is the lift and the friction (no 20 % on top), and a battery motor's line adds how long a charge lasts ("A 4.72kg / needs 1.20Nm / battery about 3 months"). A charge that won't last is a flag on the row, and says what the same range's motor with the bigger battery would give; the months alone aren't a flag.
 - Ranges with no fabric properties are listed, because their weight and torque can't be worked out.
 - The flags stay until the checks run again or another order is loaded.
 
